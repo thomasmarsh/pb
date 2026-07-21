@@ -405,6 +405,7 @@ appendCallSites pool css = appendRow pool "call_sites" $ \app ->
     aText     app (csToName cs)
     aText     app (csCallType cs)
     aMaybeInt app (csLine cs)
+    aMaybeText app (csReceiverObject cs)
 
 appendGlobalVars :: AppenderPool -> [GlobalVar] -> IO ()
 appendGlobalVars _    [] = pure ()

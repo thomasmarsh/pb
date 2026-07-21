@@ -6,11 +6,10 @@
 -- call-target return-type lookup ('ExCall'\/'ExMethodCall'), literal
 -- @CREATE@ typing ('ExCreate'\/'ExCreateUsing'), and multi-hop member-chain
 -- resolution ('ExLvalue' with 2+ segments) — reusing
--- 'PB.Analysis.TypeResolve''s identity-resolution primitives
--- ('resolveVirtual'\/'resolveStaticCall') and
--- 'PB.Analysis.ControlHierarchy.resolveMemberChainType' rather than
--- re-deriving a second resolver. 'Nothing' means "cannot determine
--- statically" — never a guess, the same precedent
+-- 'PB.Analysis.TypeResolve''s identity-resolution primitive
+-- ('resolveVirtual') and 'PB.Analysis.ControlHierarchy.resolveMemberChainType'
+-- rather than re-deriving a second resolver. 'Nothing' means "cannot
+-- determine statically" — never a guess, the same precedent
 -- 'PB.Analysis.TypeResolve.extractDwControlBindings' already sets.
 --
 -- 'checkBody' is the single traversal that replaces the former
@@ -47,10 +46,10 @@ import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText)
 import PB.Analysis.ControlHierarchy (resolveMemberChainType)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
 import PB.Analysis.TypeFamily
 import PB.Analysis.TypeResolve
-  ( resolveVirtual, resolveStaticCall, parseParams, srFileObject
+  ( resolveVirtual, parseParams, srFileObject
   , buildProcMap, buildInheritsMap
   )
 import qualified Data.Map.Strict as Map
@@ -223,7 +222,7 @@ classifyClassName ctx cls
 -- covering params\/body-locals.
 scopeFamily :: TypeCheckCtx -> Ident -> Maybe TypeFamily
 scopeFamily ctx n =
-  (\t -> classifyFamily t (tcObjects ctx) (tcUserTypes ctx)) <$> lookupScopedVar n (tcEnv ctx)
+  (\t -> classifyFamily t (tcObjects ctx) (tcUserTypes ctx)) <$> lookupScopedVarOrSelf n (tcEnv ctx)
 
 -- | Combine two already-typed operand families through a 'BinOp'. Mirrors
 -- 'PB.Compile.ValueModel.evalBinOp'\/'numericOp''s existing runtime widening
@@ -263,20 +262,18 @@ combineBinOp BopXor _          _          = Nothing
 -- *inferred* type rather than the caller's object — 'resolveVirtual' is
 -- generic in its starting object, so this is the same primitive applied at
 -- a different root, not a second resolver.
+-- Every real 'ExCall' produced by parsing is a bare, unqualified call (Plan
+-- 195 Phase B: a receiver-qualified 'receiver.method()' always parses as
+-- 'ExMethodCall', never a dotted 'ExCall.callee') -- no dotted-name static
+-- lookup is reachable here.
 resolveCallTarget :: TypeCheckCtx -> Expr -> Maybe (Text, Text)
-resolveCallTarget ctx ExCall { callee = lv } =
-  case segments lv of
-    [LvSegment nameIdent _] ->
-      if identCanon nameIdent `Set.member` tcBuiltinFns ctx
-        then Nothing
-        else case resolveVirtual nameIdent (mkIdent (steObject (tcEnv ctx))) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
-               (Just o, Just p, _, _) -> Just (o, p)
-               _                      -> Nothing
-    _ ->
-      let toName = T.intercalate "." (map (identOrig . segName) (segments lv))
-      in case resolveStaticCall toName (tcProcMap ctx) of
+resolveCallTarget ctx ExCall { callee = Lvalue [LvSegment nameIdent _] } =
+  if identCanon nameIdent `Set.member` tcBuiltinFns ctx
+    then Nothing
+    else case resolveVirtual nameIdent (mkIdent (steObject (tcEnv ctx))) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
            (Just o, Just p, _, _) -> Just (o, p)
            _                      -> Nothing
+resolveCallTarget _ ExCall {} = Nothing
 resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
   if identCanon m `Set.member` tcBuiltinMethods ctx
     then Nothing

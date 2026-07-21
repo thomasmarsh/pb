@@ -12,11 +12,12 @@ module PB.Analysis.TypeEnv
   , buildWorkspaceEnv
   , procEnv
   , lookupScopedVar
+  , lookupScopedVarOrSelf
   ) where
 
 import PB.Prelude
 import PB.AST.BodyStmt (BodyStmt (..))
-import PB.AST.Ident    (Ident, identCanon, mkIdent)
+import PB.AST.Ident    (Ident, identCanon, identOrig, mkIdent)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
@@ -193,3 +194,18 @@ lookupScopedVar name env =
   Map.lookup name (steLocal env)
   <|> Map.lookup name (steInstance env)
   <|> Map.lookup name (steGlobal env)
+
+-- | Like 'lookupScopedVar', but resolves the PowerScript keywords @this@
+-- (the enclosing object's own type) and @super@ (its immediate ancestor,
+-- one hop up 'steHierarchy') before falling back to an ordinary variable
+-- lookup. Neither keyword is ever a declared variable, so 'lookupScopedVar'
+-- alone always misses them -- every single-segment receiver/lvalue-type
+-- resolution in the codebase (call classification, type inference, call
+-- resolution) shares this one function so a @this.foo()@/@super.foo()@ call
+-- resolves consistently everywhere rather than in some consumers and not
+-- others.
+lookupScopedVarOrSelf :: Ident -> ScopedTypeEnv -> Maybe PbType
+lookupScopedVarOrSelf n env
+  | identCanon n == "this"  = Just (PtUserDefined (steObject env))
+  | identCanon n == "super" = PtUserDefined . identOrig <$> Map.lookup (mkIdent (steObject env)) (steHierarchy env)
+  | otherwise               = lookupScopedVar n env

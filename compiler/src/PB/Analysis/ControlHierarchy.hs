@@ -64,12 +64,15 @@ module PB.Analysis.ControlHierarchy
   , buildControlIndex
   , resolveMemberChainType
   , resolveMemberChainDwBinding
+  , findLiteralDataObject
   ) where
 
 import PB.Prelude
+import PB.AST.BodyStmt    (BodyStmt (..))
+import PB.AST.Expr        (Expr (..))
 import PB.AST.Ident       (Ident, mkIdent, identOrig, identCanon)
+import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
-import PB.Analysis.TypeResolve (findLiteralDataObject)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 
@@ -210,3 +213,16 @@ lookupScoped idx inh root0 owner0 name = go Set.empty root0 owner0
       | Just parent <- Map.lookup root inh              =
           go (Set.insert root seen) parent (if coupled then parent else owner)
       | otherwise                                       = Nothing
+
+-- | The literal string value of a @dataobject@ property set directly in a
+-- 'TypeBlock's body (via a 'BsLocalVar' with a string-literal initializer),
+-- if any. Shared by 'PB.Analysis.TypeResolve.extractDwControlBindings'
+-- (per-file) and 'buildControlIndex' (workspace-wide).
+findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
+findLiteralDataObject stmts = case
+  [ s
+  | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
+  , identCanon n == "dataobject"
+  ] of
+    (s:_) -> Just s
+    []    -> Nothing

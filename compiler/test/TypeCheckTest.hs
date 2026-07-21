@@ -195,14 +195,6 @@ tests = testGroup "TypeCheck"
           let ctx = baseCtx { tcBuiltinFns = Set.singleton "messagebox" }
           in inferExpr ctx (callE "MessageBox") @?= Nothing
 
-      , testCase "dotted static call to another object's function -> declared return type" $
-          let ctx = baseCtx
-                { tcProcMap = identMapFromList [("n_util", identSetFromList ["of_helper"])]
-                , tcParams  = Map.fromList [(("n_util", "of_helper"), [ProcSignature [] (Just (PtPrimitive "boolean"))])]
-                }
-              e = ExCall { callee = Lvalue [LvSegment "n_util" Nothing, LvSegment "of_helper" Nothing], callArgs = [] }
-          in inferExpr ctx e @?= Just FamBoolean
-
       , testCase "method call on an object-typed local var -> resolved method's return type" $
           let ctx = (withVars [("lu_helper", PtUserDefined "n_util")] baseCtx)
                 { tcObjects = identSetSingleton "n_util"

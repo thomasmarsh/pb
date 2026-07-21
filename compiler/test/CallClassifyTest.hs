@@ -3,9 +3,11 @@ module CallClassifyTest (tests) where
 import PB.Prelude
 import PB.AST.Expr             (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Ident            (mkIdent)
+import PB.AST.SourceFile       (SrFile (..), TypeBlock (..), mkTypeDecl)
 import PB.AST.Type              (PbType (..))
 import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), classifyExpr,
                                   classifyEffects, resolveReceiverType)
+import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.TypeEnv      (ScopedTypeEnv (..))
 import ControlHierarchyTest     (withFyloFixture)
 
@@ -15,6 +17,9 @@ import qualified Data.Text       as T
 
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (testCase, (@?=))
+
+emptyFile :: SrFile
+emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
 
 -- | Bare (unsubscripted) lvalue segment.
 seg :: Text -> LvSegment
@@ -69,6 +74,40 @@ tests = testGroup "CallClassify"
               }
             recv = ExLvalue (lv ["dw_1"])
         in classifyExpr env (ExMethodCall recv "retrieve" []) @?= SuspendCall
+
+    , testCase "single-segment receiver never in steLocal/steInstance/steGlobal falls back to a 1-hop ControlIndex lookup (Plan 195 Phase D)" $
+        -- A visual control (e.g. dw_1) is declared as its own nested
+        -- TypeBlock, never as a BsLocalVar -- steInstance alone can never
+        -- see it. resolveLvalueType's single-segment branch must fall back
+        -- to the same ControlIndex the 2+-segment chain branch already uses.
+        let idx = buildControlIndex
+              [ emptyFile { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_main" "window" Nothing) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  ] } ]
+            env = ScopedTypeEnv
+              { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = idx
+              }
+            recv = ExLvalue (lv ["dw_1"])
+        in do
+          resolveReceiverType env recv @?= Just "datawindow"
+          classifyExpr env (ExMethodCall recv "retrieve" []) @?= SuspendCall
+
+    , testCase "'this' receiver resolves to the enclosing object's own type" $
+        let env = ScopedTypeEnv
+              { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              }
+        in resolveReceiverType env (ExLvalue (lv ["this"])) @?= Just "w_main"
+
+    , testCase "'super' receiver resolves to the enclosing object's immediate ancestor" $
+        let env = ScopedTypeEnv
+              { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
+              , steHierarchy = Map.singleton "w_child" "w_parent"
+              , steObject = "w_child", steControlIndex = Map.empty
+              }
+        in resolveReceiverType env (ExLvalue (lv ["super"])) @?= Just "w_parent"
     ]
   , testGroup "effect tags (T0-6)" $
     [ testCase (T.unpack ("builtin free fn " <> name <> " -> " <> T.pack (show (Set.toList tags)))) $

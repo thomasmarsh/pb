@@ -133,7 +133,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \var_name TEXT, raw_type TEXT, is_param BOOLEAN, scope_line INTEGER)"
       , "CREATE TABLE IF NOT EXISTS call_sites \
         \(file TEXT, object TEXT, from_proc TEXT, \
-        \to_name TEXT, call_type TEXT, line INTEGER)"
+        \to_name TEXT, call_type TEXT, line INTEGER, receiver_object TEXT)"
       , "CREATE TABLE IF NOT EXISTS global_vars \
         \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)"
       , "CREATE TABLE IF NOT EXISTS proc_defs \

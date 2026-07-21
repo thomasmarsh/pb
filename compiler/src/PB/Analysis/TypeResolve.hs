@@ -4,16 +4,25 @@
 -- Pure module — no I/O.  Public API:
 --
 --   extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]
---   extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
+--   extractCallSites  :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [CallSite]
 --   extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 --   resolveTypes      :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 --   resolveCalls      :: [CallSite] -> IdentMap IdentSet -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 --   resolveVirtual    :: Ident -> Text -> IdentMap IdentSet -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
---   resolveStaticCall :: Text -> IdentMap IdentSet -> (Maybe Text, Maybe Text, Text, Text)
 --   buildInheritsMap  :: [SrFile] -> Map Text Text
 --   buildProcMap      :: [SrFile] -> IdentMap IdentSet
 --   buildObjectSet    :: [SrFile] -> IdentSet
 --   buildUserTypeSet  :: [SrFile] -> IdentSet
+--
+-- 'extractCallSites' resolves each 'ExMethodCall' receiver's declared type
+-- at extraction time via 'PB.Analysis.CallClassify.resolveReceiverType'
+-- ('CallSite.csReceiverObject') — that machinery needs a per-procedure
+-- 'ScopedTypeEnv' (params + body locals + workspace instance/global maps)
+-- and the workspace-wide 'ControlIndex', neither of which exist yet at
+-- Pass 5's later, DB-round-tripped 'resolveCalls' stage. 'resolveOne'
+-- then just walks 'csReceiverObject' through the same 'resolveVirtual'
+-- ancestor-chain combinator every other call kind already uses — no second
+-- resolution algorithm.
 module PB.Analysis.TypeResolve
   ( LocalVar (..)
   , CallSite (..)
@@ -26,12 +35,10 @@ module PB.Analysis.TypeResolve
   , extractDwCallSites
   , extractGlobalVars
   , extractDwControlBindings
-  , findLiteralDataObject
   , resolveTypes
   , resolveGlobalTypes
   , resolveCalls
   , resolveVirtual
-  , resolveStaticCall
   , ancestorChain
   , buildInheritsMap
   , buildProcMap
@@ -44,6 +51,7 @@ module PB.Analysis.TypeResolve
   , parseParams
   , paramsToVars
   , callSitesExpr
+  , walkBodyCallSites
   , srFileObject
   ) where
 
@@ -57,6 +65,9 @@ import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapEmpty,
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
+import PB.Analysis.CallClassify   (collectBodyLocals, resolveReceiverType)
+import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject)
+import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), procEnv)
 
 import Data.Aeson         (ToJSON (..), (.=))
 import qualified Data.Aeson as A
@@ -152,22 +163,29 @@ instance ToJSON LocalVar where
     ]
 
 data CallSite = CallSite
-  { csFile     :: Text
-  , csObject   :: Text
-  , csFromProc :: Text
-  , csToName   :: Text
-  , csCallType :: Text
-  , csLine     :: Maybe Int
+  { csFile           :: Text
+  , csObject         :: Text
+  , csFromProc       :: Text
+  , csToName         :: Text
+  , csCallType       :: Text
+  , csLine           :: Maybe Int
+  , csReceiverObject :: Maybe Text
+    -- ^ 'ExMethodCall' only: the receiver's resolved declared type (lowercase),
+    -- via 'PB.Analysis.CallClassify.resolveReceiverType'. 'Nothing' for
+    -- 'ExCall'\/'ExDispatch', and for an 'ExMethodCall' whose receiver isn't
+    -- statically resolvable (e.g. a chained-call receiver such as
+    -- @a.b().c()@'s @c@ -- skipped rather than guessed).
   } deriving (Eq, Show)
 
 instance ToJSON CallSite where
   toJSON cs = A.object
-    [ "file"     .= csFile     cs
-    , "object"   .= csObject   cs
-    , "fromProc" .= csFromProc cs
-    , "toName"   .= csToName   cs
-    , "callType" .= csCallType cs
-    , "line"     .= csLine     cs
+    [ "file"           .= csFile           cs
+    , "object"         .= csObject         cs
+    , "fromProc"       .= csFromProc       cs
+    , "toName"         .= csToName         cs
+    , "callType"       .= csCallType       cs
+    , "line"           .= csLine           cs
+    , "receiverObject" .= csReceiverObject cs
     ]
 
 data GlobalVar = GlobalVar
@@ -354,59 +372,62 @@ paramsToVars file obj procN paramsText scopeLine =
 -- ---------------------------------------------------------------------------
 -- Call site extraction
 
-walkBodyCallSites :: Text -> Text -> Text -> [Located BodyStmt] -> [CallSite]
-walkBodyCallSites file obj proc_ = foldStmts classify
+walkBodyCallSites :: ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [CallSite]
+walkBodyCallSites env file obj proc_ = foldStmts classify
   where
     classify (Located line stmt) = case stmt of
-      BsCall expr        -> callSitesExpr file obj proc_ (Just line) expr
-      BsAssign _ rhs     -> callSitesExpr file obj proc_ (Just line) rhs
-      BsAssignExpr l rhs -> callSitesExpr file obj proc_ (Just line) l
-                         <> callSitesExpr file obj proc_ (Just line) rhs
-      BsReturn (Just e)  -> callSitesExpr file obj proc_ (Just line) e
-      BsLocalVar { varInit = Just e } -> callSitesExpr file obj proc_ (Just line) e
-      BsIf IfStmt { ifCond = c } -> callSitesExpr file obj proc_ (Just line) c
+      BsCall expr        -> callSitesExpr env file obj proc_ (Just line) expr
+      BsAssign _ rhs     -> callSitesExpr env file obj proc_ (Just line) rhs
+      BsAssignExpr l rhs -> callSitesExpr env file obj proc_ (Just line) l
+                         <> callSitesExpr env file obj proc_ (Just line) rhs
+      BsReturn (Just e)  -> callSitesExpr env file obj proc_ (Just line) e
+      BsLocalVar { varInit = Just e } -> callSitesExpr env file obj proc_ (Just line) e
+      BsIf IfStmt { ifCond = c } -> callSitesExpr env file obj proc_ (Just line) c
       BsFor ForStmt { forFrom = fr, forTo = to_, forStep = step } ->
-        callSitesExpr file obj proc_ (Just line) fr
-        <> callSitesExpr file obj proc_ (Just line) to_
-        <> maybe [] (callSitesExpr file obj proc_ (Just line)) step
+        callSitesExpr env file obj proc_ (Just line) fr
+        <> callSitesExpr env file obj proc_ (Just line) to_
+        <> maybe [] (callSitesExpr env file obj proc_ (Just line)) step
       BsDo DoStmt { doCond = pre, doLoop = post } ->
         condCallSites line pre <> condCallSites line post
-      BsChoose ChooseStmt { chooseExpr = x } -> callSitesExpr file obj proc_ (Just line) x
+      BsChoose ChooseStmt { chooseExpr = x } -> callSitesExpr env file obj proc_ (Just line) x
       _ -> []
 
     condCallSites _    Nothing            = []
-    condCallSites line (Just (DoWhile e)) = callSitesExpr file obj proc_ (Just line) e
-    condCallSites line (Just (DoUntil e)) = callSitesExpr file obj proc_ (Just line) e
+    condCallSites line (Just (DoWhile e)) = callSitesExpr env file obj proc_ (Just line) e
+    condCallSites line (Just (DoUntil e)) = callSitesExpr env file obj proc_ (Just line) e
 
-callSitesExpr :: Text -> Text -> Text -> Maybe Int -> Expr -> [CallSite]
-callSitesExpr file obj proc_ mLine = foldExprs classify
+callSitesExpr :: ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Expr -> [CallSite]
+callSitesExpr env file obj proc_ mLine = foldExprs classify
   where
     classify ExCall { callee = lv } =
       [ CallSite
-          { csFile     = file
-          , csObject   = obj
-          , csFromProc = proc_
-          , csToName   = lvalueName lv
-          , csCallType = "ExCall"
-          , csLine     = mLine
+          { csFile           = file
+          , csObject         = obj
+          , csFromProc       = proc_
+          , csToName         = lvalueName lv
+          , csCallType       = "ExCall"
+          , csLine           = mLine
+          , csReceiverObject = Nothing
           } ]
-    classify ExMethodCall { method = m } =
+    classify ExMethodCall { receiver = recv, method = m } =
       [ CallSite
-          { csFile     = file
-          , csObject   = obj
-          , csFromProc = proc_
-          , csToName   = identOrig m
-          , csCallType = "ExMethodCall"
-          , csLine     = mLine
+          { csFile           = file
+          , csObject         = obj
+          , csFromProc       = proc_
+          , csToName         = identOrig m
+          , csCallType       = "ExMethodCall"
+          , csLine           = mLine
+          , csReceiverObject = resolveReceiverType env recv
           } ]
     classify (ExDispatch de) =
       [ CallSite
-          { csFile     = file
-          , csObject   = obj
-          , csFromProc = proc_
-          , csToName   = dispatchName de
-          , csCallType = "ExDispatch"
-          , csLine     = mLine
+          { csFile           = file
+          , csObject         = obj
+          , csFromProc       = proc_
+          , csToName         = dispatchName de
+          , csCallType       = "ExDispatch"
+          , csLine           = mLine
+          , csReceiverObject = Nothing
           } ]
     classify _ = []
 
@@ -432,27 +453,50 @@ extractLocalVars file obj sf = concat
     ) (srOnBlocks sf)
   ]
 
--- | Extract call sites from all procedure bodies.
-extractCallSites :: Text -> Text -> SrFile -> [CallSite]
-extractCallSites file obj sf = concat
-  [ concatMap (\fb -> walkBodyCallSites file obj (identOrig (fnsName (fbSig fb))) (fbBody fb))
-      (srFunctions sf)
-  , concatMap (\sb -> walkBodyCallSites file obj (identOrig (ssName (sbSig sb))) (sbBody sb))
-      (srSubroutines sf)
-  , concatMap (\ev -> walkBodyCallSites file obj (identOrig (esName (evSig ev))) (evBody ev))
-      (srEvents sf)
-  , concatMap (\ob -> walkBodyCallSites file obj (obEvent ob) (obBody ob))
-      (srOnBlocks sf)
+-- | Extract call sites from all procedure bodies. Each procedure's
+-- 'ScopedTypeEnv' (params + its own body locals, matching
+-- 'PB.Pipeline.Runner.compileOne''s @procEnvWithLocals@) is built fresh here
+-- so 'callSitesExpr' can resolve an 'ExMethodCall' receiver's declared type
+-- via 'PB.Analysis.CallClassify.resolveReceiverType' -- see this module's
+-- header comment for why that resolution happens at extraction time rather
+-- than in Pass 5.
+extractCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [CallSite]
+extractCallSites wsEnv controlIdx file obj sf = concat
+  [ concatMap (\fb ->
+      let body = fbBody fb
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (fnsParams (fbSig fb))))
+      in walkBodyCallSites env file obj (identOrig (fnsName (fbSig fb))) body
+    ) (srFunctions sf)
+  , concatMap (\sb ->
+      let body = sbBody sb
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (ssParams (sbSig sb))))
+      in walkBodyCallSites env file obj (identOrig (ssName (sbSig sb))) body
+    ) (srSubroutines sf)
+  , concatMap (\ev ->
+      let body = evBody ev
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (esRawSig (evSig ev))))
+      in walkBodyCallSites env file obj (identOrig (esName (evSig ev))) body
+    ) (srEvents sf)
+  , concatMap (\ob ->
+      let body = obBody ob
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj [])
+      in walkBodyCallSites env file obj (obEvent ob) body
+    ) (srOnBlocks sf)
   ]
+  where
+    withBodyLocals body baseEnv = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
 
 -- | Extract call sites from DataWindow control expressions and format strings.
--- Uses fromProc = "" (no containing procedure) and no line information.
-extractDwCallSites :: Text -> Text -> DataWindowFile -> [CallSite]
-extractDwCallSites file obj dw = concatMap fromCtrl (dwControls dw)
+-- Uses fromProc = "" (no containing procedure) and no line information; the
+-- env carries only params/body-locals-free workspace scope (a DW control
+-- expression has no enclosing procedure to seed locals from).
+extractDwCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Text -> DataWindowFile -> [CallSite]
+extractDwCallSites wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls dw)
   where
+    env = procEnv wsEnv controlIdx obj []
     fromCtrl ctrl =
-      foldMap (callSitesExpr file obj "" Nothing) (dwcParsedExpression ctrl)
-      <> foldMap (callSitesExpr file obj "" Nothing) (dwcParsedFormat ctrl)
+      foldMap (callSitesExpr env file obj "" Nothing) (dwcParsedExpression ctrl)
+      <> foldMap (callSitesExpr env file obj "" Nothing) (dwcParsedFormat ctrl)
 
 -- | Extract global variable declarations (variables block + global instances).
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
@@ -521,19 +565,6 @@ extractDwControlBindings file sf =
           Nothing     -> (tdName decl, "this")
   , Just dwName <- [findLiteralDataObject (tbBody tb)]
   ]
-
--- | The literal string value of a @dataobject@ property set directly in a
--- 'TypeBlock's body (via a 'BsLocalVar' with a string-literal initializer),
--- if any. Shared by 'extractDwControlBindings' (per-file) and
--- 'PB.Analysis.ControlHierarchy.buildControlIndex' (workspace-wide).
-findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
-findLiteralDataObject stmts = case
-  [ s
-  | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
-  , identCanon n == "dataobject"
-  ] of
-    (s:_) -> Just s
-    []    -> Nothing
 
 -- ---------------------------------------------------------------------------
 -- Workspace-level graph builders
@@ -712,31 +743,6 @@ resolveVirtual toNameIdent objN procMap inherits =
               [(objIdent, orig)] -> (Just (identOrig objIdent), Just (identOrig orig), "virtual", "high")
               _                  -> (Nothing, Nothing, "unresolved", "low")
 
--- | Resolve a dotted @ClassName.procName@ static\/global call reference
--- against the workspace proc map (does not consult @inherits@ — a static
--- reference names its target class directly, no ancestor walk). Exported so
--- 'PB.Analysis.TypeCheck.inferExpr''s 'ExCall' case can resolve the same
--- dotted-call shape directly from an 'Expr' node rather than re-deriving
--- this dispatch a second time. Both the class and procedure segments are
--- minted into 'Ident's here — this is their true origin, carved out of one
--- compound dotted 'Text' for the first time — and matched case-insensitively;
--- the returned object name is recovered from 'procMap''s own declared-casing
--- key via a direct canonical 'identMapLookup' (Plan 179 procMap-outer-key
--- fix — previously a linear scan over the workspace's objects), not the
--- call site's own spelling, so the result round-trips through
--- 'PB.Analysis.TypeCheck.tcParams''s exact-Text keying.
-resolveStaticCall :: Text -> IdentMap IdentSet -> (Maybe Text, Maybe Text, Text, Text)
-resolveStaticCall toName procMap =
-  let firstSeg      = T.takeWhile (/= '.') toName
-      lastSeg       = T.takeWhileEnd (/= '.') toName
-      firstSegIdent = mkIdent firstSeg
-  in case identMapLookup firstSegIdent procMap of
-       Nothing -> (Nothing, Nothing, "unresolved", "low")
-       Just (objIdent, procsForObj) ->
-         case identSetLookup (mkIdent lastSeg) procsForObj of
-           Just orig -> (Just (identOrig objIdent), Just (identOrig orig), "static", "high")
-           Nothing   -> (Just (identOrig objIdent), Nothing, "static", "medium")
-
 -- | Resolve all call sites to their targets using cross-file proc and inherits maps.
 resolveCalls
   :: [CallSite]
@@ -771,19 +777,21 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
        }
   where
     dispatch site = case csCallType site of
+      -- Every real 'ExCall' produced by parsing is a bare, unqualified call
+      -- (Plan 195 Phase B: a receiver-qualified 'receiver.method()' always
+      -- parses as 'ExMethodCall', never a dotted 'ExCall.callee') -- no
+      -- dotted-name special case needed here.
       "ExCall" ->
-        let toName = csToName site
-        in if "." `T.isInfixOf` toName
-             then resolveStaticCall toName procMap
-             else
-               let toNameIdent = mkIdent toName
-               in if identCanon toNameIdent `Set.member` builtinFns
-                    then (Nothing, Nothing, "builtin", "high")
-                    else resolveVirtual toNameIdent (mkIdent (csObject site)) procMap inherits
+        let toNameIdent = mkIdent (csToName site)
+        in if identCanon toNameIdent `Set.member` builtinFns
+             then (Nothing, Nothing, "builtin", "high")
+             else resolveVirtual toNameIdent (mkIdent (csObject site)) procMap inherits
       "ExCallArg"    -> resolveVirtual (mkIdent (csToName cs)) (mkIdent (csObject cs)) procMap inherits
       "ExMethodCall" ->
         if identCanon (mkIdent (csToName site)) `Set.member` builtinMethods
           then (Nothing, Nothing, "builtin", "high")
-          else (Nothing, Nothing, "unresolved", "low")
+          else case csReceiverObject site of
+                 Just recvTy -> resolveVirtual (mkIdent (csToName site)) (mkIdent recvTy) procMap inherits
+                 Nothing     -> (Nothing, Nothing, "unresolved", "low")
       "ExDispatch"   -> (Nothing, Nothing, "unresolved", "low")
       _              -> (Nothing, Nothing, "unresolved", "low")

@@ -29,7 +29,7 @@ import PB.AST.Ident      (Ident, identCanon, identOrig)
 import PB.AST.Located    (Located (..))
 import PB.AST.Type       (PbType, renderPbType)
 import PB.Analysis.ControlHierarchy (resolveMemberChainType)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, isDescendantOf)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, lookupScopedVarOrSelf, isDescendantOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -196,15 +196,22 @@ typedEffectTags inh ty meth
   | isDescendantOf inh ty transTypes = Map.findWithDefault Set.empty meth transMethodEffectTags
   | otherwise                        = Set.empty
 
--- | Resolve an lvalue's declared/effective type. A bare single segment is a
--- local\/instance\/global variable lookup; two or more segments is a dotted
--- control chain (e.g. @tab1.page1.uo_epidom@), resolved via the workspace-wide
--- 'ControlIndex' starting from the enclosing object ('steObject'). Falls
--- back to 'Nothing' on any unresolvable hop rather than guessing.
+-- | Resolve an lvalue's declared/effective type. A bare single segment is
+-- first checked as a param\/local\/instance\/global variable (or the
+-- @this@\/@super@ keyword, via 'lookupScopedVarOrSelf'); on a miss it falls
+-- back to a 1-hop 'ControlIndex' lookup, since a visual control (e.g.
+-- @dw_1@) is declared as its own nested 'TypeBlock', never as a
+-- 'BsLocalVar' -- 'lookupScopedVar' alone can never see it. Two or more
+-- segments is a dotted control chain (e.g. @tab1.page1.uo_epidom@),
+-- resolved via the same workspace-wide 'ControlIndex' starting from the
+-- enclosing object ('steObject'). Falls back to 'Nothing' on any
+-- unresolvable hop rather than guessing.
 resolveLvalueType :: ScopedTypeEnv -> Lvalue -> Maybe Text
 resolveLvalueType env lv = case segments lv of
   []   -> Nothing
-  [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName s) env)
+  [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVarOrSelf (segName s) env)
+          <|> resolveMemberChainType (steControlIndex env) (steHierarchy env)
+                                     (steObject env) [identCanon (segName s)]
   segs -> resolveMemberChainType (steControlIndex env) (steHierarchy env)
                                  (steObject env) (map (identCanon . segName) segs)
 

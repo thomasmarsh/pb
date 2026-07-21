@@ -20,6 +20,8 @@ import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Lexing.Splitter  (Statement (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
+import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv)
 import PB.Analysis.TypeResolve
 
 -- ---------------------------------------------------------------------------
@@ -71,6 +73,15 @@ callStmt callee_ line = Located line
     { callee   = Lvalue [LvSegment (mkIdent callee_) Nothing]
     , callArgs = []
     }))
+
+-- | Empty workspace-wide env\/control index -- sufficient for every
+-- 'extractCallSites' test that only checks call-site enumeration
+-- (name\/type\/line), not receiver-type resolution.
+emptyWsEnv :: WorkspaceEnv
+emptyWsEnv = buildWorkspaceEnv []
+
+emptyControlIdx :: ControlIndex
+emptyControlIdx = buildControlIndex []
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -252,12 +263,12 @@ tests = testGroup "TypeResolve"
 
   , testGroup "extractCallSites"
       [ testCase "empty SrFile → []" $
-          extractCallSites "test.srw" "w_test" emptySrFile @?= []
+          extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" emptySrFile @?= []
 
       , testCase "ExCall from BsCall" $ do
           let body  = [ callStmt "f_helper" 5 ]
               sf    = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
-          case extractCallSites "test.srw" "w_test" sf of
+          case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [s] -> do
               csToName   s @?= "f_helper"
               csCallType s @?= "ExCall"
@@ -272,7 +283,7 @@ tests = testGroup "TypeResolve"
                     , methodArgs = []
                     })) ]
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
-          case extractCallSites "test.srw" "w_test" sf of
+          case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [s] -> do
               csToName   s @?= "retrieve"
               csCallType s @?= "ExMethodCall"
@@ -288,7 +299,7 @@ tests = testGroup "TypeResolve"
                     , ifElse    = Nothing
                     }) ]
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
-          case extractCallSites "test.srw" "w_test" sf of
+          case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [s] -> csToName s @?= "f_inner"
             other -> assertFailure ("expected 1 site, got " ++ show (length other))
 
@@ -305,7 +316,7 @@ tests = testGroup "TypeResolve"
                     , ifElse    = Nothing
                     }) ]
               sf = emptySrFile { srFunctions = [ mkFn "clicked" "" body ] }
-          case extractCallSites "test.srw" "w_test" sf of
+          case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [s] -> csToName s @?= "of_checkdelete"
             other -> assertFailure ("expected 1 site, got " ++ show (length other))
 
@@ -314,7 +325,7 @@ tests = testGroup "TypeResolve"
                 [ callStmt "f_try" 11 ]
                 [ CatchClause "Exception" "e" [ callStmt "f_catch" 12 ] ])) ]
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
-          case extractCallSites "test.srw" "w_test" sf of
+          case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [s1, s2] -> do
               csToName s1 @?= "f_try"
               csToName s2 @?= "f_catch"
@@ -337,11 +348,41 @@ tests = testGroup "TypeResolve"
                   , methodArgs = []
                   })) ]
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
-          case extractCallSites "test.srw" "w_test" sf of
+          case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [s1, s2] -> do
               csToName s1 @?= "c"
               csToName s2 @?= "b"
             other -> assertFailure ("expected 2 sites, got " ++ show (length other))
+
+      , testCase "ExMethodCall receiver resolves this/super/a bare control name (Plan 195 Phase D)" $ do
+          -- 'this' -> the enclosing object itself; 'super' -> one hop up
+          -- 'weHierarchy' (both via 'lookupScopedVarOrSelf'); 'dw_1' -> a
+          -- nested TypeBlock control, only reachable via 'ControlIndex'
+          -- ('resolveLvalueType''s single-segment fallback) since a control
+          -- is never a 'BsLocalVar', so it can never appear in
+          -- 'steLocal'\/'steInstance'\/'steGlobal'.
+          let recvCall recv line = Located line
+                (BsCall (ExMethodCall
+                  { receiver   = ExLvalue (Lvalue [LvSegment recv Nothing])
+                  , method     = "retrieve"
+                  , methodArgs = []
+                  }))
+              body = [ recvCall "this" 5, recvCall "super" 6, recvCall "dw_1" 7 ]
+              sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractCallSites wsEnv idx "test.srw" "w_test" sf of
+            [s1, s2, s3] -> do
+              csReceiverObject s1 @?= Just "w_test"     -- this
+              csReceiverObject s2 @?= Just "window"     -- super
+              csReceiverObject s3 @?= Just "datawindow" -- dw_1 (control, via ControlIndex)
+            other -> assertFailure ("expected 3 sites, got " ++ show (length other))
       ]
 
   , testGroup "buildInheritsMap"
@@ -473,6 +514,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "f_helper"
                 , csCallType = "ExCall"
                 , csLine     = Just 5
+                , csReceiverObject = Nothing
                 }
               pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
@@ -491,6 +533,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "f_base"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
               pm  = identMapFromList
                       [ ("w_child",  identSetEmpty)
@@ -511,6 +554,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "f_ghost"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
             [rc] -> do
@@ -528,6 +572,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "trn"
                 , csCallType = "ExCall"
                 , csLine     = Just 10
+                , csReceiverObject = Nothing
                 }
               pm = identMapFromList
                      [ ("w_main", identSetEmpty)
@@ -550,6 +595,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "f_helper"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
               pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
@@ -560,14 +606,18 @@ tests = testGroup "TypeResolve"
             [rc] -> rcKind rc @?= "unresolved"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
-      , testCase "dotted ExCall to known object → static high" $ do
+      , testCase "ExMethodCall with resolved receiver_object → virtual high (Plan 195 Phase D)" $ do
+          -- 'csReceiverObject' is populated at extraction time (see
+          -- 'extractCallSites'); 'resolveOne' just walks it through the same
+          -- 'resolveVirtual' every other call kind already uses.
           let site = CallSite
                 { csFile     = "t.srw"
                 , csObject   = "w_t"
                 , csFromProc = "f_go"
-                , csToName   = "w_other.f_method"
-                , csCallType = "ExCall"
+                , csToName   = "f_method"
+                , csCallType = "ExMethodCall"
                 , csLine     = Nothing
+                , csReceiverObject = Just "w_other"
                 }
               pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
@@ -575,13 +625,34 @@ tests = testGroup "TypeResolve"
                      ]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
-              rcKind rc         @?= "static"
+              rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
               rcTargetObject rc @?= Just "w_other"
               rcTargetProc   rc @?= Just "f_method"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
-      , testCase "ExMethodCall → unresolved" $ do
+      , testCase "ExMethodCall with resolved receiver_object whose ancestor declares the method → inherited high" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "f_method"
+                , csCallType = "ExMethodCall"
+                , csLine     = Nothing
+                , csReceiverObject = Just "w_child"
+                }
+              pm = identMapFromList
+                     [ ("w_child",  identSetEmpty)
+                     , ("w_parent", identSetSingleton "f_method")
+                     ]
+              inh = Map.singleton "w_child" "w_parent"
+          case resolveCalls [site] pm inh Set.empty Set.empty of
+            [rc] -> do
+              rcKind rc         @?= "inherited"
+              rcTargetObject rc @?= Just "w_parent"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "ExMethodCall with unresolvable receiver (csReceiverObject = Nothing) → unresolved" $ do
           let site = CallSite
                 { csFile     = "t.srw"
                 , csObject   = "w_t"
@@ -589,8 +660,24 @@ tests = testGroup "TypeResolve"
                 , csToName   = "retrieve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
+            [rc] -> rcKind rc @?= "unresolved"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "ExMethodCall with resolved receiver_object but method not found → unresolved" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "ghost_method"
+                , csCallType = "ExMethodCall"
+                , csLine     = Nothing
+                , csReceiverObject = Just "w_other"
+                }
+              pm = identMapFromList [("w_other", identSetEmpty)]
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
@@ -602,6 +689,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "F_Helper"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
               pm = identMapFromList [("w_t", identSetFromList ["f_helper"])]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
@@ -611,14 +699,15 @@ tests = testGroup "TypeResolve"
               rcTargetProc   rc @?= Just "f_helper"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
-      , testCase "dotted ExCall with both segments in different case than declared → static high, declared casing recovered" $ do
+      , testCase "ExMethodCall with receiver_object/method in different case than declared → virtual high, declared casing recovered" $ do
           let site = CallSite
                 { csFile     = "t.srw"
                 , csObject   = "w_t"
                 , csFromProc = "f_go"
-                , csToName   = "W_Other.F_Method"
-                , csCallType = "ExCall"
+                , csToName   = "F_Method"
+                , csCallType = "ExMethodCall"
                 , csLine     = Nothing
+                , csReceiverObject = Just "W_Other"
                 }
               pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
@@ -626,7 +715,7 @@ tests = testGroup "TypeResolve"
                      ]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
-              rcKind rc         @?= "static"
+              rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
               rcTargetObject rc @?= Just "w_other"
               rcTargetProc   rc @?= Just "f_method"
@@ -642,6 +731,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "MessageBox"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty (Set.singleton "messagebox") Set.empty of
             [rc] -> do
@@ -659,6 +749,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "Retrieve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty Set.empty (Set.singleton "retrieve") of
             [rc] -> do
@@ -676,6 +767,7 @@ tests = testGroup "TypeResolve"
                 , csToName   = "f_helper"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
+                , csReceiverObject = Nothing
                 }
               pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
@@ -686,13 +778,13 @@ tests = testGroup "TypeResolve"
     [ testCase "empty DW yields no call sites" $ do
         case parseDataWindow dwMin of
           Left err -> assertFailure ("parse error: " <> T.unpack err)
-          Right dw -> extractDwCallSites "test.srd" "dw_test" dw @?= []
+          Right dw -> extractDwCallSites emptyWsEnv emptyControlIdx "test.srd" "dw_test" dw @?= []
 
     , testCase "compute expression ExCall becomes a call site" $ do
         let src = dwMin <> "\ncompute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_foo()\" )"
         case parseDataWindow src of
           Left err -> assertFailure ("parse error: " <> T.unpack err)
-          Right dw -> case extractDwCallSites "test.srd" "dw_test" dw of
+          Right dw -> case extractDwCallSites emptyWsEnv emptyControlIdx "test.srd" "dw_test" dw of
             [cs] -> do
               csObject   cs @?= "dw_test"
               csFromProc cs @?= ""
@@ -706,7 +798,7 @@ tests = testGroup "TypeResolve"
         case parseDataWindow src of
           Left err -> assertFailure ("parse error: " <> T.unpack err)
           Right dw ->
-            let names = map csToName (extractDwCallSites "test.srd" "dw_test" dw)
+            let names = map csToName (extractDwCallSites emptyWsEnv emptyControlIdx "test.srd" "dw_test" dw)
             in  names @?= ["fn_a", "fn_b"]
 
     , testCase "format ExCall after ~t separator becomes a call site" $ do
@@ -714,7 +806,7 @@ tests = testGroup "TypeResolve"
         case parseDataWindow src of
           Left err -> assertFailure ("parse error: " <> T.unpack err)
           Right dw ->
-            let names = map csToName (extractDwCallSites "test.srd" "dw_test" dw)
+            let names = map csToName (extractDwCallSites emptyWsEnv emptyControlIdx "test.srd" "dw_test" dw)
             in  names @?= ["fn_val", "fn_mask"]
     ]
 

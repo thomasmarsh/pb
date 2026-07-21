@@ -247,7 +247,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
           <> map (identCanon . ssName  . sbSig) (srSubroutines sf)
         mkProcEnv params = procEnv wsEnv controlIdx obj (parseParams params)
         lvs  = extractLocalVars  fp obj sf
-        css  = extractCallSites  fp obj sf
+        css  = extractCallSites  wsEnv controlIdx fp obj sf
         gvs  = extractGlobalVars fp obj sf
         controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
         -- Shared by both 'aliasBindings' and 'procs' below, so the
@@ -429,7 +429,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                     (dwcX c) (dwcY c) (dwcWidth c) (dwcHeight c)
                     (dwcExpression c)
                 | c <- dwControls dw ]
-        css   = extractDwCallSites fpT obj dw
+        css   = extractDwCallSites wsEnv controlIdx fpT obj dw
         retrieveSql = fmap reconstructRetrieveSql (dwTable dw >>= dtRetrieve)
         rtbls = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) ->

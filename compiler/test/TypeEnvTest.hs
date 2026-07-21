@@ -11,7 +11,7 @@ import PB.AST.Type           (PbType (..), parseTypeText)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
                               lookupBaseType, isDescendantOf,
                               ScopedTypeEnv (..), buildWorkspaceEnv,
-                              procEnv, lookupScopedVar)
+                              procEnv, lookupScopedVar, lookupScopedVarOrSelf)
 import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
@@ -304,6 +304,48 @@ tests = testGroup "TypeEnv"
             ws = buildWorkspaceEnv [sf]
         in lookupScopedVar "li_count" (procEnv ws Map.empty "obj_a" []) @?= Just (PtPrimitive "integer")
 
+    ]
+
+  , testGroup "lookupScopedVarOrSelf (this/super)"
+    [ testCase "'this' resolves to the enclosing object's own type, regardless of steLocal/steInstance/steGlobal" $
+        let env = ScopedTypeEnv
+              { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              }
+        in lookupScopedVarOrSelf "this" env @?= Just (PtUserDefined "w_main")
+
+    , testCase "'super' resolves one hop up steHierarchy from the enclosing object" $
+        let env = ScopedTypeEnv
+              { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
+              , steHierarchy = Map.singleton "w_child" "w_parent"
+              , steObject = "w_child", steControlIndex = Map.empty
+              }
+        in lookupScopedVarOrSelf "super" env @?= Just (PtUserDefined "w_parent")
+
+    , testCase "'super' with no ancestor in steHierarchy -> Nothing (never guess)" $
+        let env = ScopedTypeEnv
+              { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              }
+        in lookupScopedVarOrSelf "super" env @?= Nothing
+
+    , testCase "'this'/'super' are case-insensitive keywords" $
+        let env = ScopedTypeEnv
+              { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
+              , steHierarchy = Map.singleton "w_child" "w_parent"
+              , steObject = "w_child", steControlIndex = Map.empty
+              }
+        in do
+          lookupScopedVarOrSelf "This"  env @?= Just (PtUserDefined "w_child")
+          lookupScopedVarOrSelf "SUPER" env @?= Just (PtUserDefined "w_parent")
+
+    , testCase "any other name falls back to ordinary lookupScopedVar" $
+        let env = ScopedTypeEnv
+              { steLocal = Map.singleton "ls_x" (PtPrimitive "string")
+              , steInstance = Map.empty, steGlobal = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              }
+        in lookupScopedVarOrSelf "ls_x" env @?= Just (PtPrimitive "string")
     ]
 
   , testGroup "isDescendantOf"

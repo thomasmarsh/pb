@@ -76,7 +76,7 @@ instance FromRow LocalVar where
       }
 
 instance FromRow CallSite where
-  fromRow = CallSite <$> field <*> field <*> field <*> field <*> field <*> field
+  fromRow = CallSite <$> field <*> field <*> field <*> field <*> field <*> field <*> field
 
 instance FromRow GlobalVar where
   fromRow = do
@@ -188,7 +188,7 @@ queryLocalVars conn = queryHandle conn
 
 queryCallSites :: Handle -> IO [CallSite]
 queryCallSites conn = queryHandle conn
-  "SELECT file, object, from_proc, to_name, call_type, line FROM call_sites"
+  "SELECT file, object, from_proc, to_name, call_type, line, receiver_object FROM call_sites"
 
 queryGlobalVars :: Handle -> IO [GlobalVar]
 queryGlobalVars conn = queryHandle conn
