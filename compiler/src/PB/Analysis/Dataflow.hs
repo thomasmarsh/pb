@@ -107,9 +107,9 @@ lvRoot lv = case segments lv of
 -- point where these particular occurrences become identity-comparable) --
 -- nothing downstream re-derives canonicalization.
 walkExprIdents :: Expr -> Set.Set Ident
-walkExprIdents = go
+walkExprIdents = foldExprs identOf
   where
-    go (ExLvalue lv) =
+    identOf (ExLvalue lv) =
       -- Root ident, plus any identifiers in the lvalue's own subscript
       -- expressions (e.g. `arr[i+1]` reads `i` to compute which slot to
       -- address) -- covers a subscripted lvalue read anywhere in an
@@ -118,21 +118,20 @@ walkExprIdents = go
       -- 'extractUseVars' for that LHS case since the LHS is never itself
       -- wrapped in an 'ExLvalue' node).
       maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv
-    go (ExCall lv args) =
+    identOf (ExCall lv args) =
       let root = maybe Set.empty Set.singleton (lvRoot lv)
       in root <> argTokenIdents args
-    go (ExMethodCall recv _ args) =
-      go recv <> argTokenIdents args
-    go (ExBinOp l _ r) = go l <> go r
-    go (ExNot e) = go e
-    go (ExNeg e) = go e
-    go (ExArray es) = Set.unions (map go es)
-    go (ExCreateUsing e) = go e
-    go (ExDispatch de) =
-      let objIdents = maybe Set.empty go (fmap ExLvalue (object de))
+    -- Receiver identifiers come from 'foldExprs' recursing via
+    -- 'exprChildren' (ExMethodCall's receiver is a child); this leaf only
+    -- contributes the method's own argument-token identifiers.
+    identOf (ExMethodCall _ _ args) = argTokenIdents args
+    identOf (ExDispatch de) =
+      let objIdents = maybe Set.empty
+            (\lv -> maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv)
+            (object de)
       in objIdents <> argTokenIdents (args de)
-    go (ExRaw toks) = identTexts toks
-    go _ = Set.empty
+    identOf (ExRaw toks) = identTexts toks
+    identOf _ = Set.empty
 
 -- | Mint an 'Ident', in order, for every token in a flat list whose text is
 -- a valid identifier -- the one mint point for token-list identifier

@@ -6,6 +6,8 @@ module PB.AST.Expr
   , DispatchMode (..)
   , DispatchExpr (..)
   , Expr (..)
+  , exprChildren
+  , foldExprs
   ) where
 
 import PB.Prelude
@@ -79,6 +81,23 @@ data Expr
   | ExHostVar     Lvalue            -- SQL host variable :varname
   | ExRaw         [Text]            -- unrecognised / SQL fragment tokens
   deriving (Eq, Show, Generic)
+
+-- | Direct child expressions of a compound Expr. Note: callArgs/methodArgs/
+-- dispatchArgs are [[Token]], not [Expr], so ExCall/ExDispatch have no Expr
+-- children here -- recovering typed Expr nodes from those token lists is
+-- 'PB.Grammar.Body.parseExpr''s job, not this traversal's.
+exprChildren :: Expr -> [Expr]
+exprChildren (ExBinOp l _ r)      = [l, r]
+exprChildren (ExNot e)            = [e]
+exprChildren (ExNeg e)            = [e]
+exprChildren (ExMethodCall r _ _) = [r]
+exprChildren (ExCreateUsing e)    = [e]
+exprChildren (ExArray es)         = es
+exprChildren _                    = []
+
+-- | Monoidal pre-order fold over every Expr node in an expression tree.
+foldExprs :: Monoid m => (Expr -> m) -> Expr -> m
+foldExprs f e = f e <> foldMap (foldExprs f) (exprChildren e)
 
 instance NFData LvSegment
 instance NFData Lvalue

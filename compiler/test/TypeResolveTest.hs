@@ -236,6 +236,18 @@ tests = testGroup "TypeResolve"
               lvVarName a @?= "ll_rows"
               lvVarName b @?= "i"
             other -> assertFailure ("expected 2 vars, got " ++ show (length other))
+
+      , testCase "BsLocalVar nested inside try-body and catch-body" $ do
+          let stmt = Located 15 (BsTry (TryStmt
+                [ localVarStmt "li_try" (PtPrimitive "integer") 16 ]
+                [ CatchClause "Exception" "e"
+                    [ localVarStmt "li_catch" (PtPrimitive "integer") 17 ] ]))
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" [stmt] ] }
+          case extractLocalVars "test.srw" "w_test" sf of
+            [a, b] -> do
+              lvVarName a @?= "li_try"
+              lvVarName b @?= "li_catch"
+            other -> assertFailure ("expected 2 vars, got " ++ show (length other))
       ]
 
   , testGroup "extractCallSites"
@@ -296,6 +308,40 @@ tests = testGroup "TypeResolve"
           case extractCallSites "test.srw" "w_test" sf of
             [s] -> csToName s @?= "of_checkdelete"
             other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "calls extracted from try-body and catch-body" $ do
+          let body = [ Located 10 (BsTry (TryStmt
+                [ callStmt "f_try" 11 ]
+                [ CatchClause "Exception" "e" [ callStmt "f_catch" 12 ] ])) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractCallSites "test.srw" "w_test" sf of
+            [s1, s2] -> do
+              csToName s1 @?= "f_try"
+              csToName s2 @?= "f_catch"
+            other -> assertFailure ("expected 2 sites, got " ++ show (length other))
+
+      , testCase "nested ExMethodCall receiver: a.b().c() yields call sites for both b and c" $ do
+          -- Plan 195's confirmed 'ExMethodCall.receiver under-recursion' bug:
+          -- the receiver of an ExMethodCall is itself a call and must be
+          -- walked, not just the outer method. foldExprs is pre-order (node
+          -- before children), so the outer call (c) is reported before the
+          -- inner receiver call (b).
+          let body = [ Located 5
+                (BsCall (ExMethodCall
+                  { receiver = ExMethodCall
+                      { receiver   = ExLvalue (Lvalue [LvSegment "a" Nothing])
+                      , method     = "b"
+                      , methodArgs = []
+                      }
+                  , method     = "c"
+                  , methodArgs = []
+                  })) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractCallSites "test.srw" "w_test" sf of
+            [s1, s2] -> do
+              csToName s1 @?= "c"
+              csToName s2 @?= "b"
+            other -> assertFailure ("expected 2 sites, got " ++ show (length other))
       ]
 
   , testGroup "buildInheritsMap"

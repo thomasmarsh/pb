@@ -12,12 +12,14 @@ module PB.AST.BodyStmt
   , ChooseStmt (..)
   , CatchClause (..)
   , TryStmt (..)
+  , stmtChildren
+  , foldStmts
   ) where
 
 import PB.Prelude
 import PB.AST.Expr        (Expr, Lvalue)
 import PB.AST.Ident       (Ident)
-import PB.AST.Located     (Located)
+import PB.AST.Located     (Located (..))
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
 import Control.DeepSeq    (NFData)
@@ -118,6 +120,28 @@ data BodyStmt
   | BsThrow      Expr
   | BsRaw       Text                  -- SQL, event decls, unclassified (source text)
   deriving (Eq, Show, Generic)
+
+-- | All direct child statement groups of a compound BodyStmt. Returns []
+-- for leaf statements. This is the single authoritative place that
+-- describes which constructors recurse and into which fields -- a new
+-- compound constructor added here without an arm keeps returning [] from
+-- the catch-all, which is a deliberate hole, not a warning.
+stmtChildren :: BodyStmt -> [[Located BodyStmt]]
+stmtChildren (BsIf (IfStmt _ th eis mel)) =
+  th : map eifBody eis ++ maybeToList mel
+stmtChildren (BsFor    (ForStmt _ _ _ _ body)) = [body]
+stmtChildren (BsDo     (DoStmt _ body _))       = [body]
+stmtChildren (BsChoose (ChooseStmt _ clauses)) = map ccBody clauses
+stmtChildren (BsTry    (TryStmt body catches)) = body : map catchBody catches
+stmtChildren _                                  = []
+
+-- | Monoidal pre-order fold over every node in a statement tree. Applies f
+-- to each Located BodyStmt and recurses into compound forms via
+-- 'stmtChildren' -- callers cannot forget to recurse, since the recursion
+-- lives in this combinator rather than in each analysis.
+foldStmts :: Monoid m => (Located BodyStmt -> m) -> [Located BodyStmt] -> m
+foldStmts f = foldMap go
+  where go ls@(Located _ s) = f ls <> foldStmts f (concat (stmtChildren s))
 
 instance NFData AugOp
 instance NFData PbCall

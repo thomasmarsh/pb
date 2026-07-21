@@ -1,7 +1,7 @@
 module TaintTest (tests) where
 
 import PB.Prelude
-import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..))
+import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..), TryStmt (..), CatchClause (..))
 import PB.AST.Expr         (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.Ident        (mkIdent)
@@ -377,6 +377,16 @@ tests = testGroup "Taint"
                         ]] [] [] []
             tfi = extractTaintInputs "w.srf" sf
         in length (tfiSqlStmts tfi) @?= 1
+
+    , testCase "SQL nested inside try-body and catch-body is found by extractTaintInputs" $
+        let sf = mkSf [mkFn "of_try" [] ""
+                        [ at 1 (BsTry (TryStmt
+                            [ at 2 (BsRaw "SELECT col INTO :ls_val FROM tbl") ]
+                            [ CatchClause "Exception" "e"
+                                [ at 3 (BsRaw "SELECT col2 INTO :ls_val2 FROM tbl2") ] ]))
+                        ]] [] [] []
+            tfi = extractTaintInputs "w.srf" sf
+        in length (tfiSqlStmts tfi) @?= 2
     ]
 
   , testGroup "GlobalVarRow"

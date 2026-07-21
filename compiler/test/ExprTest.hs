@@ -1,7 +1,7 @@
 module ExprTest (tests) where
 
 import PB.Prelude
-import PB.AST.Expr        (BinOp (..), DispatchExpr (..), DispatchMode (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr        (BinOp (..), DispatchExpr (..), DispatchMode (..), Expr (..), LvSegment (..), Lvalue (..), exprChildren, foldExprs)
 import PB.AST.Ident        (mkIdent)
 import PB.Grammar.Body    (parseExpr)
 import PB.Grammar.Unparse (unparseExpr)
@@ -24,6 +24,9 @@ import qualified Test.Tasty.SmallCheck as SC
 
 mkTok :: TokenKind -> Text -> Token
 mkTok k t = Token k t (SourceSpan 1 1 1)
+
+countNodes :: [()] -> Int
+countNodes = length
 
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
@@ -592,6 +595,45 @@ tests = testGroup "Expr"
   , localOption (SmallCheckDepth 3) $ testGroup "unparse exhaustive round-trip (SmallCheck)"
     [ SC.testProperty "round-trip: parse . unparse . parse == parse, exhaustive to depth 3"
         prop_exprSmallCheck
+    ]
+
+  , testGroup "exprChildren"
+    [ testCase "ExBool -> []" $ exprChildren (ExBool True) @?= []
+    , testCase "ExCall -> [] (args are [[Token]])" $
+        exprChildren (ExCall (Lvalue [LvSegment "f" Nothing]) [[tok "x"]]) @?= []
+    , testCase "ExBinOp -> [lhs, rhs]" $
+        exprChildren (ExBinOp (ExInt "1") BopAdd (ExInt "2")) @?= [ExInt "1", ExInt "2"]
+    , testCase "ExNot -> [e]" $
+        exprChildren (ExNot (ExBool True)) @?= [ExBool True]
+    , testCase "ExNeg -> [e]" $
+        exprChildren (ExNeg (ExInt "1")) @?= [ExInt "1"]
+    , testCase "ExMethodCall -> [receiver]" $
+        exprChildren (ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "retrieve" [])
+          @?= [ExLvalue (Lvalue [LvSegment "dw_1" Nothing])]
+    , testCase "ExCreateUsing -> [e]" $
+        exprChildren (ExCreateUsing (ExLvalue (Lvalue [LvSegment "x" Nothing])))
+          @?= [ExLvalue (Lvalue [LvSegment "x" Nothing])]
+    , testCase "ExArray -> elements" $
+        exprChildren (ExArray [ExInt "1", ExInt "2", ExInt "3"])
+          @?= [ExInt "1", ExInt "2", ExInt "3"]
+    ]
+
+  , testGroup "foldExprs"
+    [ testCase "leaf: ExInt visited once" $
+        length (foldExprs (const [()]) (ExInt "1")) @?= 1
+    , testCase "ExBinOp (ExInt, ExNot (ExBool)): 4 nodes in pre-order" $
+        countNodes (foldExprs (const [()]) (ExBinOp (ExInt "1") BopAdd (ExNot (ExBool True))))
+          @?= 4
+    , testCase "ExArray [ExBool True, ExBool False]: 3 nodes total (array + 2 elements)" $
+        countNodes (foldExprs (const [()]) (ExArray [ExBool True, ExBool False]))
+          @?= 3
+    , testCase "nested ExMethodCall receiver chain visited: a.b().c() visits both ExMethodCall nodes" $
+        let expr = ExMethodCall
+              (ExMethodCall (ExLvalue (Lvalue [LvSegment "a" Nothing])) "b" [])
+              "c" []
+            isMethodCall ExMethodCall{} = [()]
+            isMethodCall _              = []
+        in countNodes (foldExprs isMethodCall expr) @?= 2
     ]
 
   , testGroup "LvSegment case-insensitive equality (Plan 178 Phase 2)"

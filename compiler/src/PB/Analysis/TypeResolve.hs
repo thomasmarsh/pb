@@ -320,30 +320,21 @@ srFileObject = identOrig . fst . srPrimaryObject
 -- Local variable extraction
 
 walkBodyLocalVars :: Text -> Text -> Text -> [Located BodyStmt] -> [LocalVar]
-walkBodyLocalVars file obj proc_ = concatMap (walkStmtLocalVars file obj proc_)
-
-walkStmtLocalVars :: Text -> Text -> Text -> Located BodyStmt -> [LocalVar]
-walkStmtLocalVars file obj proc_ (Located line stmt) = case stmt of
-  BsLocalVar { varType = ty, varName = n } ->
-    [ LocalVar
-        { lvFile      = file
-        , lvObject    = obj
-        , lvProcName  = proc_
-        , lvVarName   = identOrig n
-        , lvRawType   = renderPbType ty
-        , lvIsParam   = False
-        , lvScopeLine = line
-        , lvPbType    = ty
-        } ]
-  BsIf IfStmt { ifThen = t, ifElseIfs = eis, ifElse = e } ->
-    walkBodyLocalVars file obj proc_ t
-    <> concatMap (\ei -> walkBodyLocalVars file obj proc_ (eifBody ei)) eis
-    <> maybe [] (walkBodyLocalVars file obj proc_) e
-  BsFor ForStmt { forBody = b }   -> walkBodyLocalVars file obj proc_ b
-  BsDo DoStmt { doBody = b }      -> walkBodyLocalVars file obj proc_ b
-  BsChoose ChooseStmt { chooseClauses = cs } ->
-    concatMap (\c -> walkBodyLocalVars file obj proc_ (ccBody c)) cs
-  _ -> []
+walkBodyLocalVars file obj proc_ = foldStmts classify
+  where
+    classify (Located line stmt) = case stmt of
+      BsLocalVar { varType = ty, varName = n } ->
+        [ LocalVar
+            { lvFile      = file
+            , lvObject    = obj
+            , lvProcName  = proc_
+            , lvVarName   = identOrig n
+            , lvRawType   = renderPbType ty
+            , lvIsParam   = False
+            , lvScopeLine = line
+            , lvPbType    = ty
+            } ]
+      _ -> []
 
 paramsToVars :: Text -> Text -> Text -> Text -> Int -> [LocalVar]
 paramsToVars file obj procN paramsText scopeLine =
@@ -364,76 +355,60 @@ paramsToVars file obj procN paramsText scopeLine =
 -- Call site extraction
 
 walkBodyCallSites :: Text -> Text -> Text -> [Located BodyStmt] -> [CallSite]
-walkBodyCallSites file obj proc_ = concatMap (walkStmtCallSites file obj proc_)
-
-walkStmtCallSites :: Text -> Text -> Text -> Located BodyStmt -> [CallSite]
-walkStmtCallSites file obj proc_ (Located line stmt) = case stmt of
-  BsCall expr        -> callSitesExpr file obj proc_ (Just line) expr
-  BsAssign _ rhs     -> callSitesExpr file obj proc_ (Just line) rhs
-  BsAssignExpr l rhs -> callSitesExpr file obj proc_ (Just line) l
-                     <> callSitesExpr file obj proc_ (Just line) rhs
-  BsReturn (Just e)  -> callSitesExpr file obj proc_ (Just line) e
-  BsLocalVar { varInit = Just e } -> callSitesExpr file obj proc_ (Just line) e
-  BsIf IfStmt { ifCond = c, ifThen = t, ifElseIfs = eis, ifElse = e } ->
-    callSitesExpr file obj proc_ (Just line) c
-    <> walkBodyCallSites file obj proc_ t
-    <> concatMap (\ei -> callSitesExpr file obj proc_ (Just line) (eifCond ei)
-                      <> walkBodyCallSites file obj proc_ (eifBody ei)) eis
-    <> maybe [] (walkBodyCallSites file obj proc_) e
-  BsFor ForStmt { forFrom = fr, forTo = to_, forStep = step, forBody = b } ->
-    callSitesExpr file obj proc_ (Just line) fr
-    <> callSitesExpr file obj proc_ (Just line) to_
-    <> maybe [] (callSitesExpr file obj proc_ (Just line)) step
-    <> walkBodyCallSites file obj proc_ b
-  BsDo DoStmt { doCond = pre, doBody = b, doLoop = post } ->
-    condCallSites pre
-    <> walkBodyCallSites file obj proc_ b
-    <> condCallSites post
-  BsChoose ChooseStmt { chooseExpr = x, chooseClauses = cs } ->
-    callSitesExpr file obj proc_ (Just line) x
-    <> concatMap (\c -> walkBodyCallSites file obj proc_ (ccBody c)) cs
-  _ -> []
+walkBodyCallSites file obj proc_ = foldStmts classify
   where
-    condCallSites Nothing                = []
-    condCallSites (Just (DoWhile e))     = callSitesExpr file obj proc_ (Just line) e
-    condCallSites (Just (DoUntil e))     = callSitesExpr file obj proc_ (Just line) e
+    classify (Located line stmt) = case stmt of
+      BsCall expr        -> callSitesExpr file obj proc_ (Just line) expr
+      BsAssign _ rhs     -> callSitesExpr file obj proc_ (Just line) rhs
+      BsAssignExpr l rhs -> callSitesExpr file obj proc_ (Just line) l
+                         <> callSitesExpr file obj proc_ (Just line) rhs
+      BsReturn (Just e)  -> callSitesExpr file obj proc_ (Just line) e
+      BsLocalVar { varInit = Just e } -> callSitesExpr file obj proc_ (Just line) e
+      BsIf IfStmt { ifCond = c } -> callSitesExpr file obj proc_ (Just line) c
+      BsFor ForStmt { forFrom = fr, forTo = to_, forStep = step } ->
+        callSitesExpr file obj proc_ (Just line) fr
+        <> callSitesExpr file obj proc_ (Just line) to_
+        <> maybe [] (callSitesExpr file obj proc_ (Just line)) step
+      BsDo DoStmt { doCond = pre, doLoop = post } ->
+        condCallSites line pre <> condCallSites line post
+      BsChoose ChooseStmt { chooseExpr = x } -> callSitesExpr file obj proc_ (Just line) x
+      _ -> []
+
+    condCallSites _    Nothing            = []
+    condCallSites line (Just (DoWhile e)) = callSitesExpr file obj proc_ (Just line) e
+    condCallSites line (Just (DoUntil e)) = callSitesExpr file obj proc_ (Just line) e
 
 callSitesExpr :: Text -> Text -> Text -> Maybe Int -> Expr -> [CallSite]
-callSitesExpr file obj proc_ mLine expr = case expr of
-  ExCall { callee = lv } ->
-    [ CallSite
-        { csFile     = file
-        , csObject   = obj
-        , csFromProc = proc_
-        , csToName   = lvalueName lv
-        , csCallType = "ExCall"
-        , csLine     = mLine
-        } ]
-  ExMethodCall { method = m } ->
-    [ CallSite
-        { csFile     = file
-        , csObject   = obj
-        , csFromProc = proc_
-        , csToName   = identOrig m
-        , csCallType = "ExMethodCall"
-        , csLine     = mLine
-        } ]
-  ExDispatch de ->
-    [ CallSite
-        { csFile     = file
-        , csObject   = obj
-        , csFromProc = proc_
-        , csToName   = dispatchName de
-        , csCallType = "ExDispatch"
-        , csLine     = mLine
-        } ]
-  ExBinOp { lhs = l, rhs = r } ->
-    callSitesExpr file obj proc_ mLine l
-    <> callSitesExpr file obj proc_ mLine r
-  ExNot e    -> callSitesExpr file obj proc_ mLine e
-  ExNeg e    -> callSitesExpr file obj proc_ mLine e
-  ExArray es -> concatMap (callSitesExpr file obj proc_ mLine) es
-  _          -> []
+callSitesExpr file obj proc_ mLine = foldExprs classify
+  where
+    classify ExCall { callee = lv } =
+      [ CallSite
+          { csFile     = file
+          , csObject   = obj
+          , csFromProc = proc_
+          , csToName   = lvalueName lv
+          , csCallType = "ExCall"
+          , csLine     = mLine
+          } ]
+    classify ExMethodCall { method = m } =
+      [ CallSite
+          { csFile     = file
+          , csObject   = obj
+          , csFromProc = proc_
+          , csToName   = identOrig m
+          , csCallType = "ExMethodCall"
+          , csLine     = mLine
+          } ]
+    classify (ExDispatch de) =
+      [ CallSite
+          { csFile     = file
+          , csObject   = obj
+          , csFromProc = proc_
+          , csToName   = dispatchName de
+          , csCallType = "ExDispatch"
+          , csLine     = mLine
+          } ]
+    classify _ = []
 
 -- ---------------------------------------------------------------------------
 -- Exported extraction functions

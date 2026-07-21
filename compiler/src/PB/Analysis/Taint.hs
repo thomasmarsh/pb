@@ -36,11 +36,7 @@ module PB.Analysis.Taint
   ) where
 
 import PB.Prelude
-import PB.AST.BodyStmt
-  ( BodyStmt (..)
-  , IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..)
-  , ChooseStmt (..), CaseClause (..)
-  )
+import PB.AST.BodyStmt     (BodyStmt (..), foldStmts)
 import PB.AST.Ident        (Ident, identOrig, mkIdent)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
@@ -305,24 +301,17 @@ hasIntoClause txt =
 
 -- | Walk AST body statements to extract SQL statements.
 extractSqlStmts :: Text -> Text -> Text -> [Located BodyStmt] -> [SqlStmt]
-extractSqlStmts file obj procName = concatMap go
+extractSqlStmts file obj procName = foldStmts classify
   where
-    go (Located line (BsRaw txt)) =
+    classify (Located line (BsRaw txt)) =
       let op = classifyOperation txt
-      in if T.null op || op == "DECLARE" || op == "OPEN"
-            || op == "FETCH" || op == "CLOSE" || op == "COMMIT"
-            || op == "ROLLBACK" || op == "CONNECT" || op == "DISCONNECT"
-         then []
-         else [SqlStmt file obj procName (Just line) op txt (hasIntoClause txt)]
-    go (Located _ (BsIf (IfStmt _ then_ eis mel))) =
-      concatMap go then_
-      <> concatMap (concatMap go . eifBody) eis
-      <> maybe [] (concatMap go) mel
-    go (Located _ (BsFor (ForStmt _ _ _ _ body)))   = concatMap go body
-    go (Located _ (BsDo (DoStmt _ body _)))          = concatMap go body
-    go (Located _ (BsChoose (ChooseStmt _ clauses))) =
-      concatMap (concatMap go . ccBody) clauses
-    go _ = []
+      in if T.null op || op `elem` ignoredSqlOps
+         then [] else [SqlStmt file obj procName (Just line) op txt (hasIntoClause txt)]
+    classify _ = []
+
+ignoredSqlOps :: [Text]
+ignoredSqlOps =
+  ["DECLARE", "OPEN", "FETCH", "CLOSE", "COMMIT", "ROLLBACK", "CONNECT", "DISCONNECT"]
 
 -- | Extract procedure metadata from AST blocks.
 extractProcMeta :: Text -> SrFile -> [ProcMeta]

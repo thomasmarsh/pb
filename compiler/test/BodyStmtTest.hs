@@ -5,6 +5,7 @@ import PB.AST.BodyStmt
   ( AugOp (..), BodyStmt (..), CaseClause (..), CatchClause (..)
   , ChooseStmt (..), DoCondition (..), DoStmt (..), ElseIf (..)
   , ForStmt (..), IfStmt (..), PbCall (..), TryStmt (..)
+  , foldStmts, stmtChildren
   )
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Ident           (identOrig, mkIdent)
@@ -44,6 +45,15 @@ tok t = case lexResult (tokenizeLine ll) of
   Right (tk:_) -> tk
   _            -> Token TkIdent t (SourceSpan 1 1 1)
   where ll = LogicalLine t 1 1
+
+at :: Int -> BodyStmt -> Located BodyStmt
+at = Located
+
+rawTexts :: [Located BodyStmt] -> [Text]
+rawTexts = foldStmts classify
+  where
+    classify (Located _ (BsRaw t)) = [t]
+    classify _                     = []
 
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
@@ -558,6 +568,85 @@ tests = testGroup "Body"
 
   , testGroup "unparse control-flow (Plan 14 Phase C)"
     [ testProperty "round-trip control-flow: parse . unparse . parse == parse" propUnparseControlFlowRoundtrip
+    ]
+
+  , testGroup "stmtChildren"
+    [ testCase "BsRaw -> []" $
+        stmtChildren (BsRaw "x") @?= []
+
+    , testCase "BsAssign -> []" $
+        stmtChildren (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "1")) @?= []
+
+    , testCase "BsIf with no elseifs, no else -> [then]" $
+        let th = [at 1 (BsRaw "a")]
+        in stmtChildren (BsIf (IfStmt (ExBool True) th [] Nothing)) @?= [th]
+
+    , testCase "BsIf with elseifs and else -> [then, ei1, ei2, else] (4 groups)" $
+        let th  = [at 1 (BsRaw "a")]
+            ei1 = ElseIf (ExBool True)  [at 2 (BsRaw "b")]
+            ei2 = ElseIf (ExBool False) [at 3 (BsRaw "c")]
+            el  = [at 4 (BsRaw "d")]
+        in stmtChildren (BsIf (IfStmt (ExBool True) th [ei1, ei2] (Just el)))
+             @?= [th, eifBody ei1, eifBody ei2, el]
+
+    , testCase "BsFor -> [body]" $
+        let body = [at 1 (BsRaw "a")]
+        in stmtChildren (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing]) (ExInt "1") (ExInt "10") Nothing body))
+             @?= [body]
+
+    , testCase "BsDo -> [body]" $
+        let body = [at 1 (BsRaw "a")]
+        in stmtChildren (BsDo (DoStmt Nothing body Nothing)) @?= [body]
+
+    , testCase "BsChoose with two clauses -> [c1 body, c2 body]" $
+        let c1 = CaseClause Nothing [at 1 (BsRaw "a")]
+            c2 = CaseClause Nothing [at 2 (BsRaw "b")]
+        in stmtChildren (BsChoose (ChooseStmt (ExInt "1") [c1, c2]))
+             @?= [ccBody c1, ccBody c2]
+
+    , testCase "BsTry with two catches -> [body, cat1 body, cat2 body] (3 groups)" $
+        let body = [at 1 (BsRaw "a")]
+            cat1 = CatchClause "Exception" "e1" [at 2 (BsRaw "b")]
+            cat2 = CatchClause "Error"     "e2" [at 3 (BsRaw "c")]
+        in stmtChildren (BsTry (TryStmt body [cat1, cat2]))
+             @?= [body, catchBody cat1, catchBody cat2]
+    ]
+
+  , testGroup "foldStmts"
+    [ testCase "flat list collected in order" $
+        rawTexts [at 1 (BsRaw "a"), at 2 (BsRaw "b")] @?= ["a", "b"]
+
+    , testCase "BsRaw inside BsFor body found via recursion" $
+        rawTexts [at 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing]) (ExInt "1") (ExInt "10") Nothing
+                    [at 2 (BsRaw "inner")]))]
+          @?= ["inner"]
+
+    , testCase "BsRaw inside BsTry try-body found via recursion" $
+        rawTexts [at 1 (BsTry (TryStmt [at 2 (BsRaw "in try")] []))]
+          @?= ["in try"]
+
+    , testCase "BsRaw inside BsTry catch-body found via recursion" $
+        rawTexts [at 1 (BsTry (TryStmt [] [CatchClause "Exception" "e" [at 2 (BsRaw "in catch")]]))]
+          @?= ["in catch"]
+
+    , testCase "BsRaw inside BsIf-then inside BsFor inside BsTry, found at depth 3" $
+        let deep = BsTry (TryStmt
+              [ at 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing]) (ExInt "1") (ExInt "10") Nothing
+                  [ at 2 (BsIf (IfStmt (ExBool True) [at 3 (BsRaw "deepest")] [] Nothing)) ]))
+              ] [])
+        in rawTexts [at 0 deep] @?= ["deepest"]
+
+    , testCase "visits every node exactly once (no dup, no miss)" $
+        let tree =
+              [ at 1 (BsRaw "a")
+              , at 2 (BsIf (IfStmt (ExBool True)
+                  [at 3 (BsRaw "b")]
+                  [ElseIf (ExBool False) [at 4 (BsRaw "c")]]
+                  (Just [at 5 (BsRaw "d")])))
+              , at 6 (BsTry (TryStmt [at 7 (BsRaw "e")] [CatchClause "Exception" "x" [at 8 (BsRaw "f")]]))
+              ]
+            visited = foldStmts (const [()]) tree
+        in length visited @?= 8
     ]
 
   , testGroup "no-crash fuzzing"
