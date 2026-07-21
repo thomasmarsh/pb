@@ -385,6 +385,165 @@ tests = testGroup "TypeResolve"
             other -> assertFailure ("expected 3 sites, got " ++ show (length other))
       ]
 
+  , testGroup "extractVarRefs"
+      [ testCase "empty SrFile -> []" $
+          extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" emptySrFile @?= []
+
+      , testCase "local var: write then read" $ do
+          let body = [ localVarStmt "ll_x" (PtPrimitive "long") 5
+                     , Located 6 (BsAssign (Lvalue [LvSegment "ll_x" Nothing]) (ExInt "1"))
+                     , Located 7 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ll_x" Nothing]))))
+                     ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [w, r] -> do
+              (rvrName w, rvrAccess w, rvrKind w, rvrLine w) @?= ("ll_x", "write", "local", Just 6)
+              (rvrName r, rvrAccess r, rvrKind r, rvrLine r) @?= ("ll_x", "read",  "local", Just 7)
+            other -> assertFailure ("expected 2 refs, got " ++ show (length other))
+
+      , testCase "param: read in return" $ do
+          let body = [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "al_row" Nothing])))) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "long al_row" body ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> (rvrKind r, rvrAccess r) @?= ("param", "read")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "instance var: own object's TypeBlock BsLocalVar" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ai_count" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> (rvrKind r, rvrTargetObject r) @?= ("instance", Just "w_test")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "write access to an instance var via BsAssign" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsAssign (Lvalue [LvSegment "ai_count" Nothing]) (ExInt "1")) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> (rvrAccess r, rvrKind r) @?= ("write", "instance")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "instance var declared only on an ancestor object resolves through extraction" $ do
+          let sfParent = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_parent" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ] }
+              sfChild = emptySrFile
+                { srTypeBlocks = [ mkTB "w_child" "w_parent" ]
+                , srFunctions  = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ai_count" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sfParent, sfChild]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_child" sfChild of
+            [r] -> (rvrKind r, rvrTargetObject r) @?= ("instance", Just "w_parent")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "own instance var shadows a same-named ancestor var (duplicate-key adversarial case)" $ do
+          let sfParent = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_parent" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ] }
+              sfChild = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_child" "w_parent" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "string") "ai_count" Nothing) ] ]
+                , srFunctions  = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ai_count" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sfParent, sfChild]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_child" sfChild of
+            [r] -> rvrTargetObject r @?= Just "w_child"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "global var" $ do
+          let sf = emptySrFile
+                { srVariables = [ VariablesBlock GlobalVars [ VarDecl [] "boolean" "ig_flag" ] ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ig_flag" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> rvrKind r @?= "global"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "this/super/control root segments" $ do
+          let body = [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "this" Nothing]))))
+                     , Located 6 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "super" Nothing]))))
+                     , Located 7 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "dw_1" Nothing]))))
+                     ]
+              sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [r1, r2, r3] -> do
+              (rvrKind r1, rvrTargetObject r1) @?= ("class",   Just "w_test")
+              (rvrKind r2, rvrTargetObject r2) @?= ("class",   Just "window")
+              (rvrKind r3, rvrTargetObject r3) @?= ("control", Just "datawindow")
+            other -> assertFailure ("expected 3 refs, got " ++ show (length other))
+
+      , testCase "dotted: cross-object instance var (uo_1.ai_count)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "uo_1" "u_helper" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "uo_1" Nothing, LvSegment "ai_count" Nothing])))) ] ]
+                }
+              sfHelper = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "u_helper" "userobject" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ] }
+              wsEnv = buildWorkspaceEnv [sf, sfHelper]
+              idx   = buildControlIndex [sf, sfHelper]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [r] -> (rvrName r, rvrKind r, rvrTargetObject r) @?= ("ai_count", "instance", Just "u_helper")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "dotted: builtin property when the receiver resolves to a known builtin class" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "dw_1" Nothing, LvSegment "some_prop" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [r] -> rvrKind r @?= "builtin_property"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "dotted: unresolvable receiver -> unresolved, no guessing" $ do
+          let sf = emptySrFile { srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "unknown_ctrl" Nothing, LvSegment "prop" Nothing])))) ] ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> (rvrKind r, rvrConfidence r, rvrTargetObject r) @?= ("unresolved", "unresolved", Nothing)
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "single segment matching nothing in scope -> unresolved" $ do
+          let sf = emptySrFile { srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ls_unknown" Nothing])))) ] ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> rvrKind r @?= "unresolved"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+      ]
+
   , testGroup "buildInheritsMap"
       [ testCase "builds from srTypeBlocks" $ do
           let sf = emptySrFile { srTypeBlocks = [ mkTB "w_child" "w_parent" ] }
@@ -808,6 +967,21 @@ tests = testGroup "TypeResolve"
           Right dw ->
             let names = map csToName (extractDwCallSites emptyWsEnv emptyControlIdx "test.srd" "dw_test" dw)
             in  names @?= ["fn_val", "fn_mask"]
+    ]
+
+  , testGroup "extractDwVarRefs"
+    [ testCase "empty DW yields no var refs" $ do
+        case parseDataWindow dwMin of
+          Left err -> assertFailure ("parse error: " <> T.unpack err)
+          Right dw -> extractDwVarRefs emptyWsEnv emptyControlIdx "test.srd" "dw_test" dw @?= []
+
+    , testCase "compute expression identifier becomes a read var ref" $ do
+        let src = dwMin <> "\ncompute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"li_count\" )"
+        case parseDataWindow src of
+          Left err -> assertFailure ("parse error: " <> T.unpack err)
+          Right dw -> case extractDwVarRefs emptyWsEnv emptyControlIdx "test.srd" "dw_test" dw of
+            [r] -> (rvrName r, rvrAccess r) @?= ("li_count", "read")
+            other -> assertFailure ("expected 1 var ref, got " <> show (length other))
     ]
 
   , testGroup "classifyControlType"

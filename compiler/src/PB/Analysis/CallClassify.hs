@@ -17,6 +17,7 @@ module PB.Analysis.CallClassify
   , isBuiltinSuspendFn
   , isTypedSuspend
   , resolveReceiverType
+  , resolveLvalueType
   , segName
   , lvHead
   , collectBodyLocals

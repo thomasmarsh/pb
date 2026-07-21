@@ -111,6 +111,36 @@ tests = testGroup "ControlHierarchy"
             idx = buildControlIndex [sf]
         in resolveMemberChainType idx Map.empty "w_main" ["dw_1"] @?= Just "datawindow"
 
+    , testCase "a 2-hop chain rooted at \"this\" resolves the same as the bare control name" $
+        -- Regression: continuing a chain after a "this" hop used to pass the
+        -- literal "this" placeholder itself as the next hop's owner, which
+        -- never matches any real control's (root, owner, name) index entry
+        -- (a real child's owner is always the object's own name) -- so
+        -- this.dw_1 always missed the direct declaration and fell through to
+        -- the has-a branch, which jumps straight to the object's ancestor.
+        let sf = emptyFile
+              { srTypeBlocks =
+                  [ topLevel "w_main"
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  ] }
+            idx = buildControlIndex [sf]
+        in resolveMemberChainType idx Map.empty "w_main" ["this", "dw_1"] @?= Just "datawindow"
+
+    , testCase "a 2-hop chain rooted at \"this\" still finds a control declared directly on this object, not just an inherited one" $
+        -- Same regression as above, but with an ancestor in the chain too --
+        -- confirms the fix doesn't accidentally skip the object's own
+        -- declaration in favor of the (wrong) ancestor fallback when both
+        -- exist.
+        let sfParent = emptyFile { srTypeBlocks = [topLevel "w_parent"] }
+            sfChild = emptyFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_child" "w_parent" Nothing) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_child")) []
+                  ] }
+            idx = buildControlIndex [sfParent, sfChild]
+            inh = buildInheritsMap [sfParent, sfChild]
+        in resolveMemberChainType idx inh "w_child" ["this", "dw_1"] @?= Just "datawindow"
+
     , testCase "unknown starting object returns Nothing" $
         let sf = emptyFile
               { srTypeBlocks =

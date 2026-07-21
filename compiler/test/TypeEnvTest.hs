@@ -11,7 +11,8 @@ import PB.AST.Type           (PbType (..), parseTypeText)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
                               lookupBaseType, isDescendantOf,
                               ScopedTypeEnv (..), buildWorkspaceEnv,
-                              procEnv, lookupScopedVar, lookupScopedVarOrSelf)
+                              procEnv, lookupScopedVar, lookupScopedVarOrSelf,
+                              lookupInstanceVarOwner)
 import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
@@ -243,7 +244,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.singleton "x" (PtPrimitive "integer")
               , steGlobal   = Map.empty
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVar "x" env @?= Just (PtPrimitive "string")
 
@@ -253,7 +254,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.singleton "y" (PtPrimitive "long")
               , steGlobal   = Map.singleton "y" (PtPrimitive "integer")
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVar "y" env @?= Just (PtPrimitive "long")
 
@@ -263,7 +264,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.empty
               , steGlobal   = Map.singleton "z" (PtPrimitive "boolean")
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVar "z" env @?= Just (PtPrimitive "boolean")
 
@@ -273,7 +274,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.empty
               , steGlobal   = Map.empty
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVar "FOO" env @?= Just (PtPrimitive "string")
 
@@ -304,13 +305,68 @@ tests = testGroup "TypeEnv"
             ws = buildWorkspaceEnv [sf]
         in lookupScopedVar "li_count" (procEnv ws Map.empty "obj_a" []) @?= Just (PtPrimitive "integer")
 
+    , testCase "procEnv resolves an instance var declared only on the ancestor object" $
+        let sfParent = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_parent" "window" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "integer") "ai_count" Nothing)]] }
+            sfChild = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_child" "w_parent" Nothing) []] }
+            ws = buildWorkspaceEnv [sfParent, sfChild]
+        in lookupScopedVar "ai_count" (procEnv ws Map.empty "w_child" []) @?= Just (PtPrimitive "integer")
+
+    , testCase "procEnv's own instance var shadows a same-named ancestor var" $
+        let sfParent = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_parent" "window" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "integer") "ai_count" Nothing)]] }
+            sfChild = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_child" "w_parent" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "string") "ai_count" Nothing)]] }
+            ws = buildWorkspaceEnv [sfParent, sfChild]
+        in lookupScopedVar "ai_count" (procEnv ws Map.empty "w_child" []) @?= Just (PtPrimitive "string")
+    ]
+
+  , testGroup "lookupInstanceVarOwner"
+    [ testCase "finds the object's own declared instance var" $
+        let sf = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_main" "window" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "integer") "ai_count" Nothing)]] }
+            ws = buildWorkspaceEnv [sf]
+        in fmap (\(o, t) -> (identOrig o, t)) (lookupInstanceVarOwner ws "w_main" "ai_count")
+             @?= Just ("w_main", PtPrimitive "integer")
+
+    , testCase "walks the ancestor chain to find a var declared only there" $
+        let sfParent = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_parent" "window" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "integer") "ai_count" Nothing)]] }
+            sfChild = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_child" "w_parent" Nothing) []] }
+            ws = buildWorkspaceEnv [sfParent, sfChild]
+        in fmap (\(o, t) -> (identOrig o, t)) (lookupInstanceVarOwner ws "w_child" "ai_count")
+             @?= Just ("w_parent", PtPrimitive "integer")
+
+    , testCase "own declaration wins over an ancestor's same-named var (nearest first)" $
+        let sfParent = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_parent" "window" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "integer") "ai_count" Nothing)]] }
+            sfChild = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_child" "w_parent" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "string") "ai_count" Nothing)]] }
+            ws = buildWorkspaceEnv [sfParent, sfChild]
+        in fmap (\(o, t) -> (identOrig o, t)) (lookupInstanceVarOwner ws "w_child" "ai_count")
+             @?= Just ("w_child", PtPrimitive "string")
+
+    , testCase "returns Nothing when no object in the chain declares the var" $
+        let sf = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "w_main" "window" Nothing) []] }
+            ws = buildWorkspaceEnv [sf]
+        in lookupInstanceVarOwner ws "w_main" "nonexistent" @?= Nothing
     ]
 
   , testGroup "lookupScopedVarOrSelf (this/super)"
     [ testCase "'this' resolves to the enclosing object's own type, regardless of steLocal/steInstance/steGlobal" $
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVarOrSelf "this" env @?= Just (PtUserDefined "w_main")
 
@@ -318,14 +374,14 @@ tests = testGroup "TypeEnv"
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
               , steHierarchy = Map.singleton "w_child" "w_parent"
-              , steObject = "w_child", steControlIndex = Map.empty
+              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVarOrSelf "super" env @?= Just (PtUserDefined "w_parent")
 
     , testCase "'super' with no ancestor in steHierarchy -> Nothing (never guess)" $
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVarOrSelf "super" env @?= Nothing
 
@@ -333,7 +389,7 @@ tests = testGroup "TypeEnv"
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
               , steHierarchy = Map.singleton "w_child" "w_parent"
-              , steObject = "w_child", steControlIndex = Map.empty
+              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty
               }
         in do
           lookupScopedVarOrSelf "This"  env @?= Just (PtUserDefined "w_child")
@@ -343,7 +399,7 @@ tests = testGroup "TypeEnv"
         let env = ScopedTypeEnv
               { steLocal = Map.singleton "ls_x" (PtPrimitive "string")
               , steInstance = Map.empty, steGlobal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty
               }
         in lookupScopedVarOrSelf "ls_x" env @?= Just (PtPrimitive "string")
     ]

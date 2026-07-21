@@ -158,9 +158,23 @@ resolveChain idx inh root owner (seg:rest) = do
   (dwBinding, decl) <- resolveHop idx inh root owner seg
   if null rest
     then Just (dwBinding, decl)
-    else case resolveChain idx inh root (cdName decl) rest of
+    else case resolveChain idx inh root (nextOwner decl) rest of
            Just r  -> Just r
            Nothing -> resolveChain idx inh (cdAncestorType decl) (cdAncestorType decl) rest
+  where
+    -- A resolved hop whose own name is the "this" sentinel (the enclosing
+    -- object's own top-level 'TypeBlock', per 'buildControlIndex') has no
+    -- real control named "this" for the next hop to be declared @within@ --
+    -- continuing the visual-tree lookup must use the object's own identity
+    -- ('cdOwner', which 'buildControlIndex' sets to the object name itself
+    -- for a top-level block), not the literal placeholder. Without this,
+    -- a 2+-hop chain rooted at @this@ (e.g. @this.dw_1.Retrieve()@) always
+    -- missed the visual-tree lookup and fell through to the has-a branch,
+    -- which jumps straight to the object's ancestor and skips its own
+    -- direct declarations.
+    nextOwner decl
+      | identCanon (cdName decl) == "this" = cdOwner decl
+      | otherwise                          = cdName decl
 
 -- | Resolve one segment under one (root, owner) scope: direct-or-inherited
 -- lookup, then unwind any D1 override chain. Returns the closest-wins DW

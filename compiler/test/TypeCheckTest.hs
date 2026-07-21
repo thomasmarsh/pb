@@ -26,6 +26,7 @@ baseCtx = TypeCheckCtx
       { steGlobal       = Map.empty
       , steInstance     = Map.empty
       , steLocal        = Map.empty
+      , steParams       = Set.empty
       , steHierarchy    = Map.empty
       , steObject       = "w_main"
       , steControlIndex = Map.empty

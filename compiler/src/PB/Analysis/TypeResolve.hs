@@ -29,10 +29,13 @@ module PB.Analysis.TypeResolve
   , GlobalVar (..)
   , ResolvedType (..)
   , ResolvedCall (..)
+  , ResolvedVarRef (..)
   , DwControlBinding (..)
   , extractLocalVars
   , extractCallSites
   , extractDwCallSites
+  , extractVarRefs
+  , extractDwVarRefs
   , extractGlobalVars
   , extractDwControlBindings
   , resolveTypes
@@ -52,6 +55,9 @@ module PB.Analysis.TypeResolve
   , paramsToVars
   , callSitesExpr
   , walkBodyCallSites
+  , classifyLvalueRef
+  , varRefsExpr
+  , walkBodyVarRefs
   , srFileObject
   ) where
 
@@ -65,9 +71,10 @@ import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapEmpty,
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
-import PB.Analysis.CallClassify   (collectBodyLocals, resolveReceiverType)
-import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject)
-import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), procEnv)
+import PB.Analysis.CallClassify   (collectBodyLocals, resolveReceiverType, resolveLvalueType)
+import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType)
+import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
+                                    lookupInstanceVarOwner, procEnv)
 
 import Data.Aeson         (ToJSON (..), (.=))
 import qualified Data.Aeson as A
@@ -255,6 +262,38 @@ instance ToJSON ResolvedCall where
     , "targetProc"   .= rcTargetProc   rc
     , "kind"         .= rcKind         rc
     , "confidence"   .= rcConfidence   rc
+    ]
+
+-- | One resolved read\/write reference to a named identifier -- the
+-- canonical variable\/property cross-reference relation, parallel to
+-- 'ResolvedCall'. Fully resolved at extraction time, unlike 'ResolvedCall'
+-- -- a variable reference is always scoped to the current
+-- procedure's own 'PB.Analysis.TypeEnv.ScopedTypeEnv' plus the
+-- workspace-wide 'ControlIndex', never an ancestor-chain call dispatch, so
+-- no Pass-5 cross-file closure is needed the way 'resolveCalls' needs one.
+data ResolvedVarRef = ResolvedVarRef
+  { rvrFile         :: Text
+  , rvrObject       :: Text
+  , rvrFromProc     :: Text
+  , rvrLine         :: Maybe Int
+  , rvrName         :: Text
+  , rvrAccess       :: Text          -- "read" | "write"
+  , rvrTargetObject :: Maybe Text
+  , rvrKind         :: Text   -- "local" | "param" | "instance" | "global" | "control" | "class" | "builtin_property" | "unresolved"
+  , rvrConfidence   :: Text   -- "high" | "unresolved"
+  } deriving (Eq, Show)
+
+instance ToJSON ResolvedVarRef where
+  toJSON rvr = A.object
+    [ "file"         .= rvrFile         rvr
+    , "object"       .= rvrObject       rvr
+    , "fromProc"     .= rvrFromProc     rvr
+    , "line"         .= rvrLine         rvr
+    , "name"         .= rvrName         rvr
+    , "access"       .= rvrAccess       rvr
+    , "targetObject" .= rvrTargetObject rvr
+    , "kind"         .= rvrKind         rvr
+    , "confidence"   .= rvrConfidence   rvr
     ]
 
 -- ---------------------------------------------------------------------------
@@ -498,6 +537,160 @@ extractDwCallSites wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls
       foldMap (callSitesExpr env file obj "" Nothing) (dwcParsedExpression ctrl)
       <> foldMap (callSitesExpr env file obj "" Nothing) (dwcParsedFormat ctrl)
 
+-- ---------------------------------------------------------------------------
+-- Variable/property reference extraction
+
+-- | Classify one lvalue occurrence (a read or a write) into a
+-- 'ResolvedVarRef'. A single segment resolves against the procedure's own
+-- scope (@this@\/@super@, param\/local, instance -- walking the object's
+-- own ancestor chain via 'lookupInstanceVarOwner', global), falling back to
+-- a 1-hop 'ControlIndex' lookup for a visual control (e.g. @dw_1@) -- the
+-- same fallback order 'PB.Analysis.CallClassify.resolveLvalueType' already
+-- uses for a call receiver. Two or more segments resolve every segment but
+-- the last via 'resolveLvalueType' itself (not just the 'ControlIndex'
+-- chain directly) -- a receiver is just as often a plain variable of a
+-- structure\/object type (e.g. a global structure var's own
+-- @gv.member@ access) as it is a nested visual control, and
+-- 'resolveLvalueType''s own single-segment branch already tries the
+-- variable lookup before falling back to 'ControlIndex'. The trailing
+-- segment is then classified relative to that resolved receiver type: a
+-- cross-object instance\/structure-member var if the receiver type
+-- declares one, a @builtin_property@ if the receiver is merely a known
+-- builtin class, else @unresolved@ -- no guessing past what the workspace
+-- actually declares. Subscript-expression identifiers (e.g. the @i@ in
+-- @arr[i]@) are not covered here; see 'PB.Analysis.Dataflow.walkExprIdents'
+-- for that concern.
+classifyLvalueRef
+  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Text -> Lvalue -> ResolvedVarRef
+classifyLvalueRef wsEnv env file obj proc_ mLine access lv =
+  case reverse (segments lv) of
+    []                  -> ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved"
+    (finalSeg : restRev) ->
+      let nm = identOrig (segName finalSeg)
+          (kind, tgt, conf) = case reverse restRev of
+            []         -> classifyRoot (segName finalSeg)
+            prefixSegs -> classifyMember prefixSegs (segName finalSeg)
+      in ResolvedVarRef file obj proc_ mLine nm access tgt kind conf
+  where
+    classifyRoot n
+      | identCanon n == "this"  = ("class", Just obj, "high")
+      | identCanon n == "super" =
+          case Map.lookup (mkIdent obj) (steHierarchy env) of
+            Just anc -> ("class", Just (identOrig anc), "high")
+            Nothing  -> ("unresolved", Nothing, "unresolved")
+      | Map.member n (steLocal env) =
+          ( if n `Set.member` steParams env then "param" else "local"
+          , Nothing, "high" )
+      | Just (ancIdent, _) <- lookupInstanceVarOwner wsEnv (mkIdent obj) n =
+          ("instance", Just (identOrig ancIdent), "high")
+      | Map.member n (steGlobal env) = ("global", Nothing, "high")
+      | Just ctrlTy <- resolveMemberChainType (steControlIndex env) (steHierarchy env) obj [identCanon n] =
+          ("control", Just ctrlTy, "high")
+      | otherwise = ("unresolved", Nothing, "unresolved")
+
+    classifyMember prefixSegs finalName =
+      case resolveLvalueType env (Lvalue prefixSegs) of
+        Nothing -> ("unresolved", Nothing, "unresolved")
+        Just recvTy
+          | Just (ancIdent, _) <- lookupInstanceVarOwner wsEnv (mkIdent recvTy) finalName ->
+              ("instance", Just (identOrig ancIdent), "high")
+          | identCanon (mkIdent recvTy) `Set.member` builtinClassNames
+            || identCanon (mkIdent recvTy) `Set.member` pbBuiltins ->
+              ("builtin_property", Nothing, "high")
+          | otherwise -> ("unresolved", Nothing, "unresolved")
+
+-- | Read references to every named identifier appearing in an expression
+-- tree (RHS, conditions, call args, returns, ...) -- calls
+-- 'classifyLvalueRef' on every 'ExLvalue' node 'foldExprs' reaches.
+varRefsExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Expr -> [ResolvedVarRef]
+varRefsExpr wsEnv env file obj proc_ mLine = foldExprs classify
+  where
+    classify (ExLvalue lv) = [classifyLvalueRef wsEnv env file obj proc_ mLine "read" lv]
+    classify _              = []
+
+-- | Walk one procedure body, emitting a 'ResolvedVarRef' for every named
+-- read\/write reference. Mirrors 'walkBodyCallSites''s traversal shape and
+-- timing (per-procedure 'ScopedTypeEnv', built once by the caller) but
+-- covers every statement shape that reads or writes an 'Lvalue', not just
+-- call sites.
+walkBodyVarRefs :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [ResolvedVarRef]
+walkBodyVarRefs wsEnv env file obj proc_ = foldStmts classify
+  where
+    classify (Located line stmt) = case stmt of
+      BsLocalVar { varInit = Just e }               -> readsIn line e
+      BsAssign lv rhs                                -> writeRef line lv <> readsIn line rhs
+      BsAugAssign lv _ _                             -> writeRef line lv <> readRef line lv
+      BsInc lv                                       -> writeRef line lv <> readRef line lv
+      BsDec lv                                       -> writeRef line lv <> readRef line lv
+      BsCall expr                                    -> readsIn line expr
+      BsReturn (Just e)                              -> readsIn line e
+      BsIf IfStmt { ifCond = c }                     -> readsIn line c
+      BsFor ForStmt { forVar = fv, forFrom = fr, forTo = to_, forStep = step } ->
+        writeRef line fv <> readsIn line fr <> readsIn line to_ <> maybe [] (readsIn line) step
+      BsDo DoStmt { doCond = pre, doLoop = post }    -> condRefs line pre <> condRefs line post
+      BsChoose ChooseStmt { chooseExpr = x }         -> readsIn line x
+      BsDestroy lv                                   -> readRef line lv
+      BsAssignExpr l rhs                             -> lhsRefs line l <> readsIn line rhs
+      BsThrow e                                      -> readsIn line e
+      _                                              -> []
+
+    readsIn line = varRefsExpr wsEnv env file obj proc_ (Just line)
+
+    readRef  line lv = [classifyLvalueRef wsEnv env file obj proc_ (Just line) "read"  lv]
+    writeRef line lv = [classifyLvalueRef wsEnv env file obj proc_ (Just line) "write" lv]
+
+    condRefs _    Nothing            = []
+    condRefs line (Just (DoWhile e)) = readsIn line e
+    condRefs line (Just (DoUntil e)) = readsIn line e
+
+    lhsRefs line (ExLvalue lv) = writeRef line lv
+    lhsRefs line e             = readsIn line e
+
+-- | Extract every variable\/property read\/write reference from all
+-- procedure bodies, resolved at extraction time -- see 'ResolvedVarRef''s
+-- header comment for why this needs no later cross-file stage, unlike
+-- 'extractCallSites'. Reuses the identical per-procedure 'ScopedTypeEnv'
+-- construction 'extractCallSites' builds (params + body locals);
+-- deliberately a second pass over each body rather than merged with
+-- 'extractCallSites''s own traversal, since the two extractions serve
+-- different consumers and this keeps 'extractCallSites''s own shape and
+-- tests untouched.
+extractVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [ResolvedVarRef]
+extractVarRefs wsEnv controlIdx file obj sf = concat
+  [ concatMap (\fb ->
+      let body = fbBody fb
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (fnsParams (fbSig fb))))
+      in walkBodyVarRefs wsEnv env file obj (identOrig (fnsName (fbSig fb))) body
+    ) (srFunctions sf)
+  , concatMap (\sb ->
+      let body = sbBody sb
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (ssParams (sbSig sb))))
+      in walkBodyVarRefs wsEnv env file obj (identOrig (ssName (sbSig sb))) body
+    ) (srSubroutines sf)
+  , concatMap (\ev ->
+      let body = evBody ev
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (esRawSig (evSig ev))))
+      in walkBodyVarRefs wsEnv env file obj (identOrig (esName (evSig ev))) body
+    ) (srEvents sf)
+  , concatMap (\ob ->
+      let body = obBody ob
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj [])
+      in walkBodyVarRefs wsEnv env file obj (obEvent ob) body
+    ) (srOnBlocks sf)
+  ]
+  where
+    withBodyLocals body baseEnv = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
+
+-- | Extract variable\/property references from DataWindow control
+-- expressions and format strings, mirroring 'extractDwCallSites'.
+extractDwVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Text -> DataWindowFile -> [ResolvedVarRef]
+extractDwVarRefs wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls dw)
+  where
+    env = procEnv wsEnv controlIdx obj []
+    fromCtrl ctrl =
+      foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedExpression ctrl)
+      <> foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedFormat ctrl)
+
 -- | Extract global variable declarations (variables block + global instances).
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 extractGlobalVars file obj sf =
@@ -686,18 +879,6 @@ resolveGlobalTypes vars objs userTypes = map resolve vars
 
 -- ---------------------------------------------------------------------------
 -- Call resolution
-
--- | Walk the inheritance chain from a starting object, including itself.
--- 'Ident'-keyed (Plan 179 Phase 5) so the walk is case-insensitive at every
--- hop, matching PB's own identifier semantics.
-ancestorChain :: Ident -> Map.Map Ident Ident -> [Ident]
-ancestorChain start inherits = go [start] start
-  where
-    go chain cur = case Map.lookup cur inherits of
-      Nothing     -> chain
-      Just parent ->
-        if parent `elem` chain then chain
-        else go (chain <> [parent]) parent
 
 -- | Resolve a non-dotted call via the caller's own procs and ancestor chain.
 -- @toName@ is the call site's identifier, minted once by the caller (either

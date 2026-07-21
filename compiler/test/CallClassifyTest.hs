@@ -31,7 +31,7 @@ lv = Lvalue . map seg
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv
   { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-  , steHierarchy = Map.empty, steObject = "", steControlIndex = Map.empty
+  , steHierarchy = Map.empty, steObject = "", steControlIndex = Map.empty, steParams = Set.empty
   }
 
 tests :: TestTree
@@ -41,7 +41,7 @@ tests = testGroup "CallClassify"
         withFyloFixture $ \idx inh -> do
           let env = ScopedTypeEnv
                 { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx
+                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx, steParams = Set.empty
                 }
               expr = ExCall (lv ["tab1", "page1", "uo_epidom", "dw", "retrieve"]) []
           classifyExpr env expr @?= SuspendCall
@@ -50,7 +50,7 @@ tests = testGroup "CallClassify"
         withFyloFixture $ \idx inh -> do
           let env = ScopedTypeEnv
                 { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx
+                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx, steParams = Set.empty
                 }
               recv = ExLvalue (lv ["tab1", "page1", "uo_epidom", "dw"])
           resolveReceiverType env recv @?= Just "datawindow"
@@ -60,7 +60,7 @@ tests = testGroup "CallClassify"
         withFyloFixture $ \idx inh -> do
           let env = ScopedTypeEnv
                 { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx
+                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx, steParams = Set.empty
                 }
               expr = ExCall (lv ["nonexistent_ctrl", "sub_ctrl", "retrieve"]) []
           classifyExpr env expr @?= PureCall
@@ -70,7 +70,7 @@ tests = testGroup "CallClassify"
               { steGlobal = Map.empty
               , steInstance = Map.singleton "dw_1" (PtPrimitive "datawindow")
               , steLocal = Map.empty
-              , steHierarchy = Map.empty, steObject = "", steControlIndex = Map.empty
+              , steHierarchy = Map.empty, steObject = "", steControlIndex = Map.empty, steParams = Set.empty
               }
             recv = ExLvalue (lv ["dw_1"])
         in classifyExpr env (ExMethodCall recv "retrieve" []) @?= SuspendCall
@@ -87,7 +87,7 @@ tests = testGroup "CallClassify"
                   ] } ]
             env = ScopedTypeEnv
               { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = idx
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = idx, steParams = Set.empty
               }
             recv = ExLvalue (lv ["dw_1"])
         in do
@@ -97,7 +97,7 @@ tests = testGroup "CallClassify"
     , testCase "'this' receiver resolves to the enclosing object's own type" $
         let env = ScopedTypeEnv
               { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty
               }
         in resolveReceiverType env (ExLvalue (lv ["this"])) @?= Just "w_main"
 
@@ -105,7 +105,7 @@ tests = testGroup "CallClassify"
         let env = ScopedTypeEnv
               { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
               , steHierarchy = Map.singleton "w_child" "w_parent"
-              , steObject = "w_child", steControlIndex = Map.empty
+              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty
               }
         in resolveReceiverType env (ExLvalue (lv ["super"])) @?= Just "w_parent"
     ]
@@ -133,7 +133,7 @@ tests = testGroup "CallClassify"
         withFyloFixture $ \idx inh -> do
           let env = ScopedTypeEnv
                 { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx
+                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx, steParams = Set.empty
                 }
               expr = ExCall (lv ["tab1", "page1", "uo_epidom", "dw", "retrieve"]) []
           Set.member Suspends (classifyEffects env expr) @?= (classifyExpr env expr == SuspendCall)
@@ -141,7 +141,7 @@ tests = testGroup "CallClassify"
         withFyloFixture $ \idx inh -> do
           let env = ScopedTypeEnv
                 { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
-                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx
+                , steHierarchy = inh, steObject = "w_misth_fylo_form", steControlIndex = idx, steParams = Set.empty
                 }
               expr = ExCall (lv ["nonexistent_ctrl", "sub_ctrl", "retrieve"]) []
           Set.member Suspends (classifyEffects env expr) @?= (classifyExpr env expr == SuspendCall)

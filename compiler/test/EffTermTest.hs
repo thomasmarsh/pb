@@ -59,7 +59,7 @@ buildInstrGraphFromEffTerm :: EffTerm () () -> InstrGraph
 buildInstrGraphFromEffTerm = linearize P.. buildEffGraphNamed
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty "" Map.empty
 
 -- | Tokenize a single source snippet into one 'Token' via the real lexer
 -- (mirrors 'InstrGraphTest.hs's identical helper) — used to build genuine
@@ -193,7 +193,7 @@ dwEnv = ScopedTypeEnv
   , steLocal        = Map.empty
   , steHierarchy    = Map.empty
   , steObject       = ""
-  , steControlIndex = Map.empty
+  , steControlIndex = Map.empty, steParams = Set.empty
   }
 
 -- | Run a bare, sharing-free 'Eff' term through 'foldFreydOp' to 'Interp',

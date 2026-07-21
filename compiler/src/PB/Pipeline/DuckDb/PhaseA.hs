@@ -32,6 +32,7 @@ module PB.Pipeline.DuckDb.PhaseA
   , appendDeadVars
   , appendTypeMismatches
   , appendCallSites
+  , appendVarRefs
   , appendGlobalVars
   , appendProcDefs
   , appendProcUses
@@ -52,7 +53,7 @@ module PB.Pipeline.DuckDb.PhaseA
 
 import PB.Prelude
 import PB.AST.Ident             (identOrig)
-import PB.Analysis.TypeResolve  (LocalVar (..), CallSite (..), GlobalVar (..))
+import PB.Analysis.TypeResolve  (LocalVar (..), CallSite (..), GlobalVar (..), ResolvedVarRef (..))
 import PB.Analysis.Dataflow     qualified as Dataflow
 import PB.Analysis.TaintEdges   qualified as TaintEdges
 import PB.Analysis.DeadVars     (DeadVarFinding (..), deadVarKindText)
@@ -406,6 +407,20 @@ appendCallSites pool css = appendRow pool "call_sites" $ \app ->
     aText     app (csCallType cs)
     aMaybeInt app (csLine cs)
     aMaybeText app (csReceiverObject cs)
+
+appendVarRefs :: AppenderPool -> [ResolvedVarRef] -> IO ()
+appendVarRefs _    [] = pure ()
+appendVarRefs pool rvrs = appendRow pool "resolved_var_refs" $ \app ->
+  forEachRow app rvrs $ \_ rvr -> do
+    aText      app (rvrFile         rvr)
+    aText      app (rvrObject       rvr)
+    aText      app (rvrFromProc     rvr)
+    aMaybeInt  app (rvrLine         rvr)
+    aText      app (rvrName         rvr)
+    aText      app (rvrAccess       rvr)
+    aMaybeText app (rvrTargetObject rvr)
+    aText      app (rvrKind         rvr)
+    aText      app (rvrConfidence   rvr)
 
 appendGlobalVars :: AppenderPool -> [GlobalVar] -> IO ()
 appendGlobalVars _    [] = pure ()

@@ -49,7 +49,7 @@ import Test.Tasty.Hedgehog  (testProperty)
 -- Fixtures
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty "" Map.empty
 
 ctx0 :: FunctorCtx
 ctx0 = FunctorCtx

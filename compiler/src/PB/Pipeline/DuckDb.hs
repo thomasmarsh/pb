@@ -134,6 +134,13 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       , "CREATE TABLE IF NOT EXISTS call_sites \
         \(file TEXT, object TEXT, from_proc TEXT, \
         \to_name TEXT, call_type TEXT, line INTEGER, receiver_object TEXT)"
+      -- The canonical variable/property cross-reference relation
+      -- (PB.Analysis.TypeResolve.ResolvedVarRef), parallel to resolved_calls
+      -- but fully resolved at extraction time (no later cross-file stage
+      -- needed -- see that type's own header comment for why).
+      , "CREATE TABLE IF NOT EXISTS resolved_var_refs \
+        \(file TEXT, object TEXT, from_proc TEXT, line INTEGER, \
+        \name TEXT, access TEXT, target_object TEXT, kind TEXT, confidence TEXT)"
       , "CREATE TABLE IF NOT EXISTS global_vars \
         \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)"
       , "CREATE TABLE IF NOT EXISTS proc_defs \

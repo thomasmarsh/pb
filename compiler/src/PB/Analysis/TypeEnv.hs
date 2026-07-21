@@ -13,6 +13,8 @@ module PB.Analysis.TypeEnv
   , procEnv
   , lookupScopedVar
   , lookupScopedVarOrSelf
+  , lookupInstanceVarOwner
+  , ancestorChain
   ) where
 
 import PB.Prelude
@@ -135,6 +137,13 @@ data ScopedTypeEnv = ScopedTypeEnv
   { steGlobal       :: Map.Map Ident PbType
   , steInstance     :: Map.Map Ident PbType
   , steLocal        :: Map.Map Ident PbType   -- params only in P2a; body locals added in P2b
+  , steParams       :: Set.Set Ident          -- ^ the subset of 'steLocal' that are params --
+                                               -- 'procEnv' seeds 'steLocal' with params, and
+                                               -- 'PB.Analysis.TypeResolve.extractCallSites''s
+                                               -- @withBodyLocals@ then merges body locals into that same
+                                               -- map, so 'steLocal' alone can no longer tell param from
+                                               -- local; this set is fixed at 'procEnv' time and never
+                                               -- touched by that later merge.
   , steHierarchy    :: Map.Map Ident Ident
   , steObject       :: Text          -- enclosing object name; root for multi-hop chain resolution
   , steControlIndex :: ControlIndex  -- workspace-wide control index; see PB.Analysis.ControlHierarchy
@@ -177,12 +186,21 @@ extractInstanceVars sf = Map.fromList
   ]
 
 -- | Build a ScopedTypeEnv for one (object, params) pair from a WorkspaceEnv.
+-- 'steInstance' merges every ancestor's own instance vars, nearest first
+-- ('Map.unions' is left-biased, so 'objName''s own declaration shadows an
+-- ancestor's same-named var) -- an instance var declared only on an
+-- ancestor class was previously invisible to any procedure of a descendant
+-- object, since the pre-Plan-195-Phase-E version looked up 'weInstanceVars'
+-- for 'objName' alone with no chain walk.
 procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTypeEnv
 procEnv ws idx objName params = ScopedTypeEnv
   { steGlobal       = weGlobals ws
-  , steInstance     = fromMaybe Map.empty
-                         (Map.lookup (mkIdent objName) (weInstanceVars ws))
+  , steInstance     = Map.unions
+                         [ fromMaybe Map.empty (Map.lookup anc (weInstanceVars ws))
+                         | anc <- ancestorChain (mkIdent objName) (weHierarchy ws)
+                         ]
   , steLocal        = Map.fromList [(mkIdent n, ty) | (n, ty) <- params]
+  , steParams       = Set.fromList [mkIdent n | (n, _) <- params]
   , steHierarchy    = weHierarchy ws
   , steObject       = objName
   , steControlIndex = idx
@@ -209,3 +227,34 @@ lookupScopedVarOrSelf n env
   | identCanon n == "this"  = Just (PtUserDefined (steObject env))
   | identCanon n == "super" = PtUserDefined . identOrig <$> Map.lookup (mkIdent (steObject env)) (steHierarchy env)
   | otherwise               = lookupScopedVar n env
+
+-- | Walk the inheritance chain from a starting object, including itself.
+-- Lives here (rather than in 'PB.Analysis.TypeResolve', which re-exports
+-- it) so 'procEnv' can reuse the exact same chain walk for ancestor-aware
+-- instance-var lookup instead of re-implementing it -- 'PB.Analysis.TypeResolve'
+-- and 'PB.Analysis.TypeFamily' both still reach this via their existing
+-- 'ancestorChain' import. 'Ident'-keyed so the walk is case-insensitive at
+-- every hop, matching PB's own identifier semantics.
+ancestorChain :: Ident -> Map.Map Ident Ident -> [Ident]
+ancestorChain start inherits = go [start] start
+  where
+    go chain cur = case Map.lookup cur inherits of
+      Nothing     -> chain
+      Just parent ->
+        if parent `elem` chain then chain
+        else go (chain <> [parent]) parent
+
+-- | Find which object in @start@'s own ancestor chain (including itself)
+-- actually declares an instance var named @name@, nearest first. The
+-- provenance-preserving counterpart of 'procEnv''s 'steInstance', which
+-- folds every ancestor's instance vars into one 'Map.unions'\'d map for
+-- ordinary lookup -- fine for "what type is this," but it loses which
+-- ancestor actually declared the entry, which a cross-reference consumer
+-- needs as its \"declared on\" target.
+lookupInstanceVarOwner :: WorkspaceEnv -> Ident -> Ident -> Maybe (Ident, PbType)
+lookupInstanceVarOwner ws start name = go (ancestorChain start (weHierarchy ws))
+  where
+    go [] = Nothing
+    go (anc:rest) = case Map.lookup anc (weInstanceVars ws) >>= Map.lookup name of
+      Just ty -> Just (anc, ty)
+      Nothing -> go rest

@@ -50,8 +50,9 @@ import PB.Analysis.SchFootprint
 import PB.Analysis.DwFootprint
   ( DwFootprintCtx, mkDwFootprintCtx, dwRetrieveFootprint )
 import PB.Analysis.TypeResolve
-  ( LocalVar (..), CallSite, GlobalVar (..)
+  ( LocalVar (..), CallSite, GlobalVar (..), ResolvedVarRef
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
+  , extractVarRefs, extractDwVarRefs
   , extractDwControlBindings
   , parseParams, paramsToVars
   )
@@ -94,7 +95,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
   , appendDwWriteColumns, appendDwWhereColumns, appendDwJoins
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
-  , appendLocalVars, appendDeadVars, appendTypeMismatches, appendCallSites, appendGlobalVars
+  , appendLocalVars, appendDeadVars, appendTypeMismatches, appendCallSites, appendVarRefs, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
   , appendCatFootprintColumns
@@ -153,6 +154,7 @@ data CompiledPs = CompiledPs
   , cpsDeadVars      :: [DeadVarFinding]
   , cpsTypeMismatches :: [TypeMismatchFinding]
   , cpsCallSites     :: [CallSite]
+  , cpsVarRefs       :: [ResolvedVarRef]
   , cpsGlobalVars    :: [GlobalVar]
   , cpsProcFlows     :: [(Text, Text, Text, Dataflow.ProcFlow)]
   , cpsSqlStmts      :: [SqlStmtRow]
@@ -180,6 +182,7 @@ data CompiledDw = CompiledDw
   , cdDwJoins          :: [DwJoinRow]
   , cdDwRetrieveWhere  :: [DwRetrieveWhereRow]
   , cdCallSites        :: [CallSite]
+  , cdVarRefs          :: [ResolvedVarRef]
   , cdSourceContent    :: Maybe SourceFileRow
   }
 
@@ -248,6 +251,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         mkProcEnv params = procEnv wsEnv controlIdx obj (parseParams params)
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  wsEnv controlIdx fp obj sf
+        vrs  = extractVarRefs    wsEnv controlIdx fp obj sf
         gvs  = extractGlobalVars fp obj sf
         controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
         -- Shared by both 'aliasBindings' and 'procs' below, so the
@@ -406,6 +410,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
       , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _) <- procs ]
       , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms, _, _) <- procs ]
       , cpsCallSites     = css
+      , cpsVarRefs       = vrs
       , cpsGlobalVars    = gvs
       , cpsProcFlows     = [ f | (_, f, _, _, _, _, _) <- procs ]
       , cpsSqlStmts      = sqlRows
@@ -430,6 +435,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                     (dwcExpression c)
                 | c <- dwControls dw ]
         css   = extractDwCallSites wsEnv controlIdx fpT obj dw
+        vrs   = extractDwVarRefs   wsEnv controlIdx fpT obj dw
         retrieveSql = fmap reconstructRetrieveSql (dwTable dw >>= dtRetrieve)
         rtbls = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) ->
@@ -481,6 +487,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
       , cdDwJoins          = jrows
       , cdDwRetrieveWhere  = wrows
       , cdCallSites        = css
+      , cdVarRefs          = vrs
       , cdSourceContent    = Just (SourceFileRow fpT contents)
       }
 
@@ -639,6 +646,7 @@ appendToDb pool (CFPs r) = do
   appendDeadVars   pool (cpsDeadVars r)
   appendTypeMismatches pool (cpsTypeMismatches r)
   appendCallSites  pool (cpsCallSites r)
+  appendVarRefs    pool (cpsVarRefs r)
   appendGlobalVars pool (cpsGlobalVars r)
   appendProcDefs   pool (cpsProcFlows r)
   appendProcUses   pool (cpsProcFlows r)
@@ -660,6 +668,7 @@ appendToDb pool (CFDw r) = do
   appendDwJoins          pool (cdDwJoins r)
   appendDwRetrieveWhere  pool (cdDwRetrieveWhere r)
   appendCallSites        pool (cdCallSites r)
+  appendVarRefs          pool (cdVarRefs r)
   appendSourceFiles      pool (catMaybes [cdSourceContent r])
 appendToDb pool (CFError fp err) =
   appendParseErrors pool [(fp, err)]
@@ -818,7 +827,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- and DDL loading. The pool's scope closes (flushing all appenders)
     -- before runPhaseB starts — this ordering is correctness-critical.
     let phaseATables =
-          [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
+          [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
           , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
           , "taint_intra_edges", "taint_return_rows"

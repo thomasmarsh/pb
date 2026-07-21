@@ -14,6 +14,7 @@ import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
 import PB.Lexing.Token      (Token (..), TokenKind (..), SourceSpan (..))
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import Control.Exception     (evaluate)
 import System.CPUTime        (getCPUTime)
 import Test.Tasty            (TestTree, testGroup)
@@ -35,7 +36,7 @@ strTok :: Text -> Token
 strTok t = Token TkStringDouble t (SourceSpan 1 1 1)
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty "" Map.empty
 
 blockCount :: SsaProc -> Int
 blockCount = Map.size . spBlocks
@@ -446,7 +447,7 @@ tests = testGroup "SSA"
         classifyExpr
           ScopedTypeEnv { steGlobal = Map.singleton "dw_foo" (PtPrimitive "datawindow")
                         , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty
-                        , steObject = "", steControlIndex = Map.empty }
+                        , steObject = "", steControlIndex = Map.empty, steParams = Set.empty }
           (ExCall { callee = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing], callArgs = [] })
           @?= SuspendCall
 
@@ -454,7 +455,7 @@ tests = testGroup "SSA"
         classifyExpr
           ScopedTypeEnv { steGlobal = Map.singleton "sqlca" (PtPrimitive "transaction")
                         , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty
-                        , steObject = "", steControlIndex = Map.empty }
+                        , steObject = "", steControlIndex = Map.empty, steParams = Set.empty }
           (ExCall { callee = Lvalue [LvSegment "sqlca" Nothing, LvSegment "commit" Nothing], callArgs = [] })
           @?= SuspendCall
 
