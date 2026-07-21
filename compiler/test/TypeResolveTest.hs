@@ -15,7 +15,11 @@ import PB.AST.Ident        (mkIdent, identMapEmpty, identMapFromList, identMapLo
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
+import PB.Grammar.Body     (parseBodyStmts)
 import PB.Grammar.DataWindow (parseDataWindow)
+import PB.Lexing.Splitter  (Statement (..))
+import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
+import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Analysis.TypeResolve
 
 -- ---------------------------------------------------------------------------
@@ -213,6 +217,24 @@ tests = testGroup "TypeResolve"
             [a, b] -> do
               lvIsParam a @?= True
               lvIsParam b @?= False
+            other -> assertFailure ("expected 2 vars, got " ++ show (length other))
+
+      , testCase "comma-separated declaration (long ll_rows, i) expands into separate vars" $ do
+          -- Confirms Body.classifyBodyStmt's comma-split fix (Plan 193 Phase 1)
+          -- cascades for free: walkStmtLocalVars/extractLocalVars need no
+          -- change since they already concatMap over [Located BodyStmt].
+          let mkTok k t = Token k t (SourceSpan 30 30 30)
+              stmt = Statement
+                { stmtTokens     = [ mkTok TkDatatype "long", mkTok TkIdent "ll_rows"
+                                   , mkTok TkComma ",", mkTok TkIdent "i" ]
+                , stmtSource     = LogicalLine "" 30 30
+                , stmtTerminated = False
+                }
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" (parseBodyStmts [stmt]) ] }
+          case extractLocalVars "test.srw" "w_test" sf of
+            [a, b] -> do
+              lvVarName a @?= "ll_rows"
+              lvVarName b @?= "i"
             other -> assertFailure ("expected 2 vars, got " ++ show (length other))
       ]
 

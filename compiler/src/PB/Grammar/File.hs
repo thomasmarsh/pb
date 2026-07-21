@@ -277,7 +277,7 @@ anyStmt = satisfyStmt (const True)
 
 pBodyUntil :: Text -> FileParser ([Located BodyStmt], Int)
 pBodyUntil kw = do
-  body <- manyTill pBodyStmt (lookAhead (pEndKw kw))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (pEndKw kw))
   end  <- currentLine
   _    <- pEndKw kw
   return (body, end)

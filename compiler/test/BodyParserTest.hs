@@ -64,7 +64,7 @@ loc1 = Located 1
 
 runBodyStmts :: [Statement] -> Either String [Located BodyStmt]
 runBodyStmts stmts = case parse (many pBodyStmt <* eof) "" (StmtStream stmts) of
-  Right bs -> Right bs
+  Right bs -> Right (concat bs)
   Left err -> Left (errorBundlePretty err)
 
 -- ---------------------------------------------------------------------------
@@ -477,7 +477,7 @@ tests = testGroup "Grammar.Body.Parser"
   , testGroup "line anchors"
     [ testCase "locLine of leaf stmt matches stmtSource llStartLine" $ do
         let s = mkStmtAt 42 [(TkIdent,"x"),(TkAssignOp,"="),(TkIntLiteral,"1")]
-        case parse (many pBodyStmt <* eof) "" (StmtStream [s]) of
+        case runBodyStmts [s] of
           Right [ls] -> locLine ls @?= 42
           other      -> assertFailure ("unexpected result: " <> show other)
 
@@ -485,7 +485,7 @@ tests = testGroup "Grammar.Body.Parser"
         let forS  = mkStmtAt 10 [(TkControlKw,"for"),(TkIdent,"i"),(TkAssignOp,"="),(TkIntLiteral,"1"),(TkControlKw,"to"),(TkIntLiteral,"3")]
             bodyS = mkStmtAt 11 [(TkIdent,"y"),(TkAssignOp,"="),(TkIntLiteral,"1")]
             nextS = mkStmtAt 12 [(TkControlKw,"next")]
-        case parse (many pBodyStmt <* eof) "" (StmtStream [forS, bodyS, nextS]) of
+        case runBodyStmts [forS, bodyS, nextS] of
           Right [ls] -> do
             locLine ls @?= 10
             case locNode ls of

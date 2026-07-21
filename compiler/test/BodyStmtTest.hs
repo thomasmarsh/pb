@@ -59,44 +59,81 @@ tests = testGroup "Body"
   [ testGroup "classifyBodyStmt"
     [ testCase "local var: builtin type + name" $
         classifyBodyStmt (mkStmt [(TkDatatype, "long"), (TkIdent, "ll_row")])
-          @?= BsLocalVar [] (PtPrimitive "long") "ll_row" Nothing
+          @?= [BsLocalVar [] (PtPrimitive "long") "ll_row" Nothing]
 
     , testCase "local var: user-defined type + name (both TkIdent)" $
         classifyBodyStmt (mkStmt [(TkIdent, "cb_delete"), (TkIdent, "cb_delete")])
-          @?= BsLocalVar [] (PtUserDefined "cb_delete") "cb_delete" Nothing
+          @?= [BsLocalVar [] (PtUserDefined "cb_delete") "cb_delete" Nothing]
 
     , testCase "local var: storage modifier + type + name" $
         classifyBodyStmt
           (mkStmt [(TkStorageModifier, "constant"), (TkDatatype, "long"), (TkIdent, "max_val")])
-          @?= BsLocalVar ["constant"] (PtPrimitive "long") "max_val" Nothing
+          @?= [BsLocalVar ["constant"] (PtPrimitive "long") "max_val" Nothing]
 
     , testCase "local var: type + name + initializer (all tokens kept)" $
         classifyBodyStmt
           (mkStmt [(TkDatatype, "long"), (TkIdent, "ll_row"), (TkAssignOp, "="), (TkIntLiteral, "0")])
-          @?= BsLocalVar [] (PtPrimitive "long") "ll_row" (Just (ExInt "0"))
+          @?= [BsLocalVar [] (PtPrimitive "long") "ll_row" (Just (ExInt "0"))]
 
     , testCase "local var: dec{0} precision specifier → BsLocalVar" $
         classifyBodyStmt
           (mkStmt [(TkDatatype,"dec"),(TkLBrace,"{"),(TkIntLiteral,"0"),(TkRBrace,"}"),(TkIdent,"lc_0")])
-          @?= BsLocalVar [] (PtDecimalPrec 0) "lc_0" Nothing
+          @?= [BsLocalVar [] (PtDecimalPrec 0) "lc_0" Nothing]
 
     , testCase "local var: dec{10} two-digit precision → BsLocalVar" $
         classifyBodyStmt
           (mkStmt [(TkDatatype,"dec"),(TkLBrace,"{"),(TkIntLiteral,"10"),(TkRBrace,"}"),(TkIdent,"lc_10")])
-          @?= BsLocalVar [] (PtDecimalPrec 10) "lc_10" Nothing
+          @?= [BsLocalVar [] (PtDecimalPrec 10) "lc_10" Nothing]
+
+    , testCase "local var: two comma-separated names, neither initialized" $
+        classifyBodyStmt
+          (mkStmt [ (TkDatatype, "long"), (TkIdent, "ll_rows")
+                  , (TkComma, ","), (TkIdent, "i") ])
+          @?= [ BsLocalVar [] (PtPrimitive "long") "ll_rows" Nothing
+              , BsLocalVar [] (PtPrimitive "long") "i" Nothing
+              ]
+
+    , testCase "local var: three comma-separated names, none initialized" $
+        classifyBodyStmt
+          (mkStmt [ (TkDatatype, "long"), (TkIdent, "ll_rows")
+                  , (TkComma, ","), (TkIdent, "i")
+                  , (TkComma, ","), (TkIdent, "n") ])
+          @?= [ BsLocalVar [] (PtPrimitive "long") "ll_rows" Nothing
+              , BsLocalVar [] (PtPrimitive "long") "i" Nothing
+              , BsLocalVar [] (PtPrimitive "long") "n" Nothing
+              ]
+
+    , testCase "local var: comma-separated, initializer on first name only" $
+        classifyBodyStmt
+          (mkStmt [ (TkDatatype, "integer"), (TkIdent, "li_a")
+                  , (TkAssignOp, "="), (TkIntLiteral, "5")
+                  , (TkComma, ","), (TkIdent, "li_b") ])
+          @?= [ BsLocalVar [] (PtPrimitive "integer") "li_a" (Just (ExInt "5"))
+              , BsLocalVar [] (PtPrimitive "integer") "li_b" Nothing
+              ]
+
+    , testCase "local var: comma-separated, initializer on every name" $
+        classifyBodyStmt
+          (mkStmt [ (TkDatatype, "integer"), (TkIdent, "li_a")
+                  , (TkAssignOp, "="), (TkIntLiteral, "5")
+                  , (TkComma, ","), (TkIdent, "li_b")
+                  , (TkAssignOp, "="), (TkIntLiteral, "6") ])
+          @?= [ BsLocalVar [] (PtPrimitive "integer") "li_a" (Just (ExInt "5"))
+              , BsLocalVar [] (PtPrimitive "integer") "li_b" (Just (ExInt "6"))
+              ]
 
     , testCase "assign: simple ident = int literal" $
         classifyBodyStmt (mkStmt [(TkIdent, "ll_row"), (TkAssignOp, "="), (TkIntLiteral, "0")])
-          @?= BsAssign (Lvalue [LvSegment "ll_row" Nothing]) (ExInt "0")
+          @?= [BsAssign (Lvalue [LvSegment "ll_row" Nothing]) (ExInt "0")]
 
     , testCase "assign: property set (obj.field = val)" $
         classifyBodyStmt
           (mkStmt [ (TkIdent, "idw_main"), (TkDot, "."), (TkIdent, "enabled")
                   , (TkAssignOp, "="), (TkBoolFalse, "false")
                   ])
-          @?= BsAssign
+          @?= [BsAssign
                 (Lvalue [LvSegment "idw_main" Nothing, LvSegment "enabled" Nothing])
-                (ExBool False)
+                (ExBool False)]
 
     , testCase "assign: rhs is a method call" $
         classifyBodyStmt
@@ -104,9 +141,9 @@ tests = testGroup "Body"
                   , (TkIdent, "dw_main"), (TkDot, "."), (TkIdent, "getrow")
                   , (TkLParen, "("), (TkRParen, ")")
                   ])
-          @?= BsAssign
+          @?= [BsAssign
                 (Lvalue [LvSegment "ll_row" Nothing])
-                (ExCall (Lvalue [LvSegment "dw_main" Nothing, LvSegment "getrow" Nothing]) [])
+                (ExCall (Lvalue [LvSegment "dw_main" Nothing, LvSegment "getrow" Nothing]) [])]
 
     , testCase "assign: chained-call LHS → BsAssignExpr" $
         -- obj.cells(1).value = 42 — lvaluePrefix stops at cells; falls back to expr-based assign
@@ -115,39 +152,39 @@ tests = testGroup "Body"
                   , (TkLParen, "("), (TkIntLiteral, "1"), (TkRParen, ")")
                   , (TkDot, "."), (TkIdent, "value")
                   , (TkAssignOp, "="), (TkIntLiteral, "42") ])
-          @?= BsAssignExpr
+          @?= [BsAssignExpr
                 (ExMethodCall
                   (ExCall (Lvalue [LvSegment "obj" Nothing, LvSegment "cells" Nothing]) [[tok "1"]])
                   "value" [])
-                (ExInt "42")
+                (ExInt "42")]
 
     , testCase "aug_assign: +=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "+="), (TkIntLiteral, "1")])
-          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugAdd [tok "1"]
+          @?= [BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugAdd [tok "1"]]
 
     , testCase "aug_assign: -=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "-="), (TkIntLiteral, "1")])
-          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugSub [tok "1"]
+          @?= [BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugSub [tok "1"]]
 
     , testCase "aug_assign: *=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "*="), (TkIntLiteral, "2")])
-          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugMul [tok "2"]
+          @?= [BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugMul [tok "2"]]
 
     , testCase "aug_assign: /=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "/="), (TkIntLiteral, "2")])
-          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugDiv [tok "2"]
+          @?= [BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugDiv [tok "2"]]
 
     , testCase "inc: ++" $
         classifyBodyStmt (mkStmt [(TkIdent, "n"), (TkAugmentOp, "++")])
-          @?= BsInc (Lvalue [LvSegment "n" Nothing])
+          @?= [BsInc (Lvalue [LvSegment "n" Nothing])]
 
     , testCase "dec: --" $
         classifyBodyStmt (mkStmt [(TkIdent, "n"), (TkAugmentOp, "--")])
-          @?= BsDec (Lvalue [LvSegment "n" Nothing])
+          @?= [BsDec (Lvalue [LvSegment "n" Nothing])]
 
     , testCase "BsLocalVar varName is case-insensitive" $
         BsLocalVar [] (PtPrimitive "integer") "Li_Count" Nothing
@@ -161,105 +198,105 @@ tests = testGroup "Body"
         classifyBodyStmt
           (mkStmt [ (TkIdent, "this"), (TkDot, "."), (TkIdent, "count")
                   , (TkAugmentOp, "+="), (TkIntLiteral, "1") ])
-          @?= BsAugAssign
+          @?= [BsAugAssign
                 (Lvalue [LvSegment "this" Nothing, LvSegment "count" Nothing])
-                AugAdd [tok "1"]
+                AugAdd [tok "1"]]
 
     , testCase "inc: subscripted LHS parses to a subscripted Lvalue" $
         classifyBodyStmt
           (mkStmt [ (TkIdent, "arr"), (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
                   , (TkAugmentOp, "++") ])
-          @?= BsInc (Lvalue [LvSegment "arr" (Just ["i"])])
+          @?= [BsInc (Lvalue [LvSegment "arr" (Just ["i"])])]
 
     , testCase "aug_assign: chained-call LHS (not a valid lvalue) falls back to BsRaw" $
         case classifyBodyStmt
                (mkStmt [ (TkIdent, "obj"), (TkDot, "."), (TkIdent, "cells")
                        , (TkLParen, "("), (TkIntLiteral, "1"), (TkRParen, ")")
                        , (TkAugmentOp, "+="), (TkIntLiteral, "1") ]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testCase "call: method call (obj.method())" $
         classifyBodyStmt
           (mkStmt [ (TkIdent, "dw_main"), (TkDot, "."), (TkIdent, "accepttext")
                   , (TkLParen, "("), (TkRParen, ")")
                   ])
-          @?= BsCall
-                (ExCall (Lvalue [LvSegment "dw_main" Nothing, LvSegment "accepttext" Nothing]) [])
+          @?= [BsCall
+                (ExCall (Lvalue [LvSegment "dw_main" Nothing, LvSegment "accepttext" Nothing]) [])]
 
     , testCase "call: free function (f(arg))" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "messagebox"), (TkLParen, "("), (TkIdent, "msg"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "messagebox" Nothing]) [[tok "msg"]])
+          @?= [BsCall (ExCall (Lvalue [LvSegment "messagebox" Nothing]) [[tok "msg"]])]
 
     , testCase "return: with value" $
         classifyBodyStmt (mkStmt [(TkControlKw, "return"), (TkBoolTrue, "true")])
-          @?= BsReturn (Just (ExBool True))
+          @?= [BsReturn (Just (ExBool True))]
 
     , testCase "return: bare (no expression)" $
         classifyBodyStmt (mkStmt [(TkControlKw, "return")])
-          @?= BsReturn Nothing
+          @?= [BsReturn Nothing]
 
     , testCase "raw: if statement" $
         case classifyBodyStmt
                (mkStmt [(TkControlKw, "if"), (TkIdent, "x"), (TkAssignOp, "="), (TkIntLiteral, "0"), (TkControlKw, "then")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testCase "raw: end if" $
         case classifyBodyStmt (mkStmt [(TkControlKw, "end if")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testCase "raw: sql commit" $
         case classifyBodyStmt
                (mkStmt [(TkSqlKw, "commit"), (TkOtherKw, "using"), (TkOtherKw, "sqlca")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testCase "raw: empty statement" $
         case classifyBodyStmt (mkStmt []) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testCase "call: close(parent) — sql-kw callee no space" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "close"), (TkLParen, "("), (TkOtherKw, "parent"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "close" Nothing]) [[tok "parent"]])
+          @?= [BsCall (ExCall (Lvalue [LvSegment "close" Nothing]) [[tok "parent"]])]
 
     , testCase "call: Close (lw_sheet) — sql-kw callee with space before paren" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "Close"), (TkLParen, "("), (TkIdent, "lw_sheet"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "Close" Nothing]) [[tok "lw_sheet"]])
+          @?= [BsCall (ExCall (Lvalue [LvSegment "Close" Nothing]) [[tok "lw_sheet"]])]
 
     , testCase "call: open(w_main) — single-arg open" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "open"), (TkLParen, "("), (TkIdent, "w_main"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"]])
+          @?= [BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"]])]
 
     , testCase "call: open(w_main, this) — two-arg open" $
         classifyBodyStmt
           (mkStmt [ (TkSqlKw, "open"), (TkLParen, "(")
                   , (TkIdent, "w_main"), (TkComma, ","), (TkOtherKw, "this")
                   , (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"], [tok "this"]])
+          @?= [BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"], [tok "this"]])]
 
     , testCase "raw: OPEN DYNAMIC — sql cursor op stays BsRaw" $
         case classifyBodyStmt
                (mkStmt [(TkSqlKw, "OPEN"), (TkOtherKw, "DYNAMIC"), (TkIdent, "lc_dept")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testCase "raw: CLOSE cur — sql cursor close stays BsRaw" $
         case classifyBodyStmt
                (mkStmt [(TkSqlKw, "CLOSE"), (TkIdent, "cur")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testCase "raw: TkLabel access-modifier header → BsRaw" $
         case classifyBodyStmt (mkStmt [(TkLabel, "public:")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
     , testProperty "total: classifyBodyStmt never raises for any token list"
         propClassifyTotal
@@ -270,67 +307,67 @@ tests = testGroup "Body"
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "call"), (TkOtherKw, "super")
                   , (TkDoubleColon, "::"), (TkIdent, "open") ])
-          @?= BsPbCall (PbCall "super" "open")
+          @?= [BsPbCall (PbCall "super" "open")]
 
     , testCase "call named ancestor :: event" $
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "call"), (TkIdent, "w_ancestor")
                   , (TkDoubleColon, "::"), (TkIdent, "clicked") ])
-          @?= BsPbCall (PbCall "w_ancestor" "clicked")
+          @?= [BsPbCall (PbCall "w_ancestor" "clicked")]
 
     , testCase "call ancestor with backtick control :: event (single ident token)" $
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "call"), (TkIdent, "w_emp`cb_close")
                   , (TkDoubleColon, "::"), (TkIdent, "clicked") ])
-          @?= BsPbCall (PbCall "w_emp`cb_close" "clicked")
+          @?= [BsPbCall (PbCall "w_emp`cb_close" "clicked")]
 
     , testCase "call where event name is a keyword token (e.g. create)" $
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "call"), (TkOtherKw, "super")
                   , (TkDoubleColon, "::"), (TkOtherKw, "create") ])
-          @?= BsPbCall (PbCall "super" "create")
+          @?= [BsPbCall (PbCall "super" "create")]
 
     , testCase "call super::open where 'open' is TkSqlKw → BsPbCall (not BsRaw)" $
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "call"), (TkOtherKw, "super")
                   , (TkDoubleColon, "::"), (TkSqlKw, "open") ])
-          @?= BsPbCall (PbCall "super" "open")
+          @?= [BsPbCall (PbCall "super" "open")]
 
     , testCase "call missing :: falls to BsRaw" $
         case classifyBodyStmt
                (mkStmt [(TkOtherKw, "call"), (TkOtherKw, "super"), (TkIdent, "open")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+          [BsRaw _] -> return ()
+          other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
     ]
 
   , testGroup "Destroy"
     [ testCase "destroy simple variable" $
         classifyBodyStmt
           (mkStmt [(TkOtherKw, "destroy"), (TkIdent, "obj")])
-          @?= BsDestroy (Lvalue [LvSegment "obj" Nothing])
+          @?= [BsDestroy (Lvalue [LvSegment "obj" Nothing])]
 
     , testCase "destroy dotted lvalue" $
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "destroy"), (TkIdent, "Category")
                   , (TkDot, "."), (TkIdent, "DispAttr") ])
-          @?= BsDestroy (Lvalue [LvSegment "Category" Nothing, LvSegment "DispAttr" Nothing])
+          @?= [BsDestroy (Lvalue [LvSegment "Category" Nothing, LvSegment "DispAttr" Nothing])]
 
     , testCase "destroy subscripted lvalue" $
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "destroy"), (TkIdent, "ids_Data")
                   , (TkLBracket, "["), (TkIdent, "li_Cnt"), (TkRBracket, "]") ])
-          @?= BsDestroy (Lvalue [LvSegment "ids_Data" (Just ["li_Cnt"])])
+          @?= [BsDestroy (Lvalue [LvSegment "ids_Data" (Just ["li_Cnt"])])]
 
     , testCase "destroy with no argument emits BsCall" $
         classifyBodyStmt (mkStmt [(TkOtherKw, "destroy")])
-          @?= BsCall (ExLvalue (Lvalue [LvSegment "destroy" Nothing]))
+          @?= [BsCall (ExLvalue (Lvalue [LvSegment "destroy" Nothing]))]
 
     , testCase "destroy function-call form emits BsCall" $
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "destroy"), (TkLParen, "(")
                   , (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "m_foo")
                   , (TkRParen, ")") ])
-          @?= BsCall (ExCall (Lvalue [LvSegment "destroy" Nothing]) [[tok "this", tok ".", tok "m_foo"]])
+          @?= [BsCall (ExCall (Lvalue [LvSegment "destroy" Nothing]) [[tok "this", tok ".", tok "m_foo"]])]
     ]
 
   , testGroup "parseBodyStmts"
@@ -349,6 +386,14 @@ tests = testGroup "Body"
               ]
             tags = map (tag . locNode) (parseBodyStmts stmts)
         in tags @?= ["var", "assign", "return"]
+
+    , testCase "comma-separated var decl expands to multiple BsLocalVar, in order" $
+        let stmts =
+              [ mkStmt [ (TkDatatype, "long"), (TkIdent, "ll_rows")
+                       , (TkComma, ","), (TkIdent, "i")
+                       , (TkComma, ","), (TkIdent, "n") ] ]
+            names = [ varName v | Located _ v@BsLocalVar{} <- parseBodyStmts stmts ]
+        in names @?= ["ll_rows", "i", "n"]
     ]
 
   , testGroup "Lvalue"
@@ -429,30 +474,30 @@ tests = testGroup "Body"
       [ testCase "simple assign produces structured lhs" $
           classifyBodyStmt
             (mkStmt [(TkIdent, "foo"), (TkAssignOp, "="), (TkIntLiteral, "1")])
-            @?= BsAssign (Lvalue [LvSegment "foo" Nothing]) (ExInt "1")
+            @?= [BsAssign (Lvalue [LvSegment "foo" Nothing]) (ExInt "1")]
 
       , testCase "member chain assign" $
           classifyBodyStmt
             (mkStmt [ (TkIdent, "cb_ok"), (TkDot, "."), (TkIdent, "enabled")
                     , (TkAssignOp, "="), (TkBoolFalse, "false") ])
-            @?= BsAssign
+            @?= [BsAssign
                   (Lvalue [LvSegment "cb_ok" Nothing, LvSegment "enabled" Nothing])
-                  (ExBool False)
+                  (ExBool False)]
 
       , testCase "array subscript assign" $
           classifyBodyStmt
             (mkStmt [ (TkIdent, "arr"), (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
                     , (TkAssignOp, "="), (TkIntLiteral, "0") ])
-            @?= BsAssign
+            @?= [BsAssign
                   (Lvalue [LvSegment "arr" (Just ["i"])])
-                  (ExInt "0")
+                  (ExInt "0")]
 
       , testCase "unparseable lhs falls back to BsRaw" $
           case classifyBodyStmt
                  (mkStmt [ (TkAssignOp, "="), (TkIdent, "foo")
                          , (TkAssignOp, "="), (TkIntLiteral, "1") ]) of
-            BsRaw _ -> return ()
-            other   -> assertFailure ("expected BsRaw, got: " <> show other)
+            [BsRaw _] -> return ()
+            other     -> assertFailure ("expected [BsRaw _], got: " <> show other)
 
       , testCase "assign: sql-kw segment in dotted lhs (adw.object.open[i] = 0)" $
           classifyBodyStmt
@@ -460,11 +505,11 @@ tests = testGroup "Body"
                     , (TkSqlKw, "open")
                     , (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
                     , (TkAssignOp, "="), (TkIntLiteral, "0") ])
-            @?= BsAssign
+            @?= [BsAssign
                   (Lvalue [ LvSegment "adw"    Nothing
                            , LvSegment "object" Nothing
                            , LvSegment "open"   (Just ["i"]) ])
-                  (ExInt "0")
+                  (ExInt "0")]
 
       , testCase "array literal rhs: this.Item[]={this.m_file, this.m_edit}" $
           classifyBodyStmt
@@ -476,13 +521,13 @@ tests = testGroup "Body"
                     , (TkComma, ",")
                     , (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "m_edit")
                     , (TkRBrace, "}") ])
-            @?= BsAssign
+            @?= [BsAssign
                   (Lvalue [ LvSegment "this" Nothing
                            , LvSegment "Item" (Just []) ])
                   (ExArray [ ExLvalue (Lvalue [ LvSegment "this"   Nothing
                                               , LvSegment "m_file" Nothing ])
                            , ExLvalue (Lvalue [ LvSegment "this"   Nothing
-                                              , LvSegment "m_edit" Nothing ]) ])
+                                              , LvSegment "m_edit" Nothing ]) ])]
       ]
     ]
 
@@ -556,26 +601,29 @@ propClassifyTotal = property $ do
       ])
   let stmt   = mkStmt pairs
       result = classifyBodyStmt stmt
-  assert $ case result of
-    BsLocalVar  _ _ _ _ -> True
-    BsAssign    _ _   -> True
-    BsAugAssign _ _ _ -> True
-    BsInc       _     -> True
-    BsDec       _     -> True
-    BsCall      _     -> True
-    BsPbCall    _     -> True
-    BsReturn    _     -> True
-    BsIf        _     -> True
-    BsFor       _     -> True
-    BsDo        _     -> True
-    BsChoose    _     -> True
-    BsExit            -> True
-    BsContinue        -> True
-    BsDestroy    _    -> True
-    BsAssignExpr _ _  -> True
-    BsTry        _    -> True
-    BsThrow      _    -> True
-    BsRaw        _    -> True
+  assert $ not (null result) && all isValidBodyStmt result
+
+isValidBodyStmt :: BodyStmt -> Bool
+isValidBodyStmt stmt = case stmt of
+  BsLocalVar  _ _ _ _ -> True
+  BsAssign    _ _   -> True
+  BsAugAssign _ _ _ -> True
+  BsInc       _     -> True
+  BsDec       _     -> True
+  BsCall      _     -> True
+  BsPbCall    _     -> True
+  BsReturn    _     -> True
+  BsIf        _     -> True
+  BsFor       _     -> True
+  BsDo        _     -> True
+  BsChoose    _     -> True
+  BsExit            -> True
+  BsContinue        -> True
+  BsDestroy    _    -> True
+  BsAssignExpr _ _  -> True
+  BsTry        _    -> True
+  BsThrow      _    -> True
+  BsRaw        _    -> True
 
 -- ---------------------------------------------------------------------------
 -- Unparse round-trip generator (Plan 14 Phase B)
@@ -702,9 +750,10 @@ reparseControlFlowStmt text =
     Left err     -> Left err
     Right []     -> Left "no statement parsed"
     Right stmts0 -> case parse (many pBodyStmt <* eof) "" (StmtStream stmts0) of
-      Left err               -> Left (T.pack (errorBundlePretty err))
-      Right []               -> Left "no located BodyStmt produced"
-      Right (Located _ r:_)  -> Right r
+      Left err                      -> Left (T.pack (errorBundlePretty err))
+      Right result -> case concat result of
+        []               -> Left "no located BodyStmt produced"
+        (Located _ r:_)  -> Right r
 
 -- | Depth-bounded: at depth 0, only leaf statements are generated, so
 -- recursion into nested control-flow bodies always terminates.

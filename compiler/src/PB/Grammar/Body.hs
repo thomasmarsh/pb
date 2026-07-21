@@ -65,6 +65,17 @@ parseInit (t:rest)
 parseModifiers :: [Token] -> [Text]
 parseModifiers = map tkText . takeWhile isModifierToken
 
+-- | Split a comma-separated declarator list (name [= init], name2 [= init2], ...)
+-- sharing one type/mods into one BsLocalVar per name. PB's declaration grammar
+-- allows an independent initializer on every name, not only the first
+-- (doc/pb2025r2 xREF_71347_Declaring_variables.html's full syntax).
+mkLocalVarStmts :: [Text] -> PbType -> Token -> [Token] -> [BodyStmt]
+mkLocalVarStmts mods ty nameT rest' = mapMaybe declStmt (splitArgs (nameT : rest'))
+  where
+    declStmt (n : initToks) | tkKind n == TkIdent =
+      Just (BsLocalVar mods ty (mkIdent (tkText n)) (parseInit initToks))
+    declStmt _ = Nothing
+
 -- ---------------------------------------------------------------------------
 -- Operator dispatch
 
@@ -376,27 +387,30 @@ parsePbCall _ = Nothing
 -- ---------------------------------------------------------------------------
 -- Statement classifier
 
-classifyBodyStmt :: Statement -> BodyStmt
+-- | Classify one source statement. Usually one 'BodyStmt', but a
+-- comma-separated local-variable declaration ('long ll_rows, i, n') expands
+-- into one 'BsLocalVar' per name — never empty.
+classifyBodyStmt :: Statement -> [BodyStmt]
 classifyBodyStmt s = case stmtTokens s of
-  [] -> BsRaw (llText (stmtSource s))
+  [] -> [BsRaw (llText (stmtSource s))]
   (t : _)
-    | tkKind t == TkLabel -> BsRaw (llText (stmtSource s))
+    | tkKind t == TkLabel -> [BsRaw (llText (stmtSource s))]
   (t : rest)
     | tkKind t == TkControlKw ->
-        case T.toLower (tkText t) of
+        pure $ case T.toLower (tkText t) of
           "return"   -> BsReturn (if null rest then Nothing else Just (parseExpr rest))
           "exit"     -> BsExit
           "continue" -> BsContinue
           "throw"    -> BsThrow (parseExpr rest)
           _          -> BsRaw (llText (stmtSource s))
     | tkKind t `elem` [TkSqlKw, TkDeclKw] ->
-        case rest of
+        pure $ case rest of
           (lp:_) | tkKind lp == TkLParen -> classifyByOp s (stmtTokens s)
           _                              -> BsRaw (llText (stmtSource s))
     | tkKind t == TkOtherKw ->
         case T.toLower (tkText t) of
-          "call"    -> maybe (BsRaw (llText (stmtSource s))) BsPbCall (parsePbCall (stmtTokens s))
-          "destroy" -> maybe (classifyByOp s (stmtTokens s)) BsDestroy (parseLvalue rest)
+          "call"    -> pure (maybe (BsRaw (llText (stmtSource s))) BsPbCall (parsePbCall (stmtTokens s)))
+          "destroy" -> pure (maybe (classifyByOp s (stmtTokens s)) BsDestroy (parseLvalue rest))
           _         ->
             let ts           = stmtTokens s
                 mods         = parseModifiers ts
@@ -404,11 +418,8 @@ classifyBodyStmt s = case stmtTokens s of
             in case skipped of
                  (typeT : nameT : rest')
                    | isTypeName typeT && tkKind nameT == TkIdent ->
-                       let ty    = parseTypeFromTokens typeT rest'
-                           name  = mkIdent (tkText nameT)
-                           initE = parseInit rest'
-                       in BsLocalVar mods ty name initE
-                 _ -> classifyByOp s ts
+                       mkLocalVarStmts mods (parseTypeFromTokens typeT rest') nameT rest'
+                 _ -> [classifyByOp s ts]
     | otherwise ->
         let ts           = stmtTokens s
             mods         = parseModifiers ts
@@ -416,23 +427,18 @@ classifyBodyStmt s = case stmtTokens s of
         in case skipped of
              (typeT : nameT : rest')
                | isTypeName typeT && tkKind nameT == TkIdent ->
-                   let ty    = parseTypeFromTokens typeT rest'
-                       name  = mkIdent (tkText nameT)
-                       initE = parseInit rest'
-                   in BsLocalVar mods ty name initE
+                   mkLocalVarStmts mods (parseTypeFromTokens typeT rest') nameT rest'
              (typeT : lb : prec : rb : nameT : rest')
                | isTypeName typeT
                , tkKind lb   == TkLBrace
                , tkKind rb   == TkRBrace
                , tkKind nameT == TkIdent ->
-                   let ty    = parseTypeWithPrecision typeT prec
-                       name  = mkIdent (tkText nameT)
-                       initE = parseInit rest'
-                   in BsLocalVar mods ty name initE
-             _ -> classifyByOp s ts
+                   mkLocalVarStmts mods (parseTypeWithPrecision typeT prec) nameT rest'
+             _ -> [classifyByOp s ts]
 
 parseBodyStmts :: [Statement] -> [Located BodyStmt]
-parseBodyStmts = map (\s -> Located (llStartLine (stmtSource s)) (classifyBodyStmt s))
+parseBodyStmts =
+  concatMap (\s -> map (Located (llStartLine (stmtSource s))) (classifyBodyStmt s))
 
 -- ---------------------------------------------------------------------------
 -- Control-flow predicates
@@ -496,19 +502,19 @@ pIfStmt = do
       let cond = parseExpr condToks
       in if null afterThen
          then do
-           thenBody <- manyTill pBodyStmt (lookAhead (satisfyStmt isElseOrEndIf))
+           thenBody <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isElseOrEndIf))
            elseIfs  <- many (try pElseIfClause)
            elseBody <- optional $ do
              _ <- satisfyStmt (leadingCtrl "else")
-             manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "end if")))
+             concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "end if")))
            _ <- satisfyStmt (leadingCtrl "end if")
            return (BsIf (IfStmt cond thenBody elseIfs elseBody))
          else do
            let (thenToks, elseM) = splitAtElse afterThen
                ln = llStartLine (stmtSource s)
-               mkSub toks = Located ln (classifyBodyStmt (Statement toks (stmtSource s) False))
-               thenBody = [mkSub thenToks]
-               elseBody = fmap (\eToks -> [mkSub eToks]) elseM
+               mkSub toks = map (Located ln) (classifyBodyStmt (Statement toks (stmtSource s) False))
+               thenBody = mkSub thenToks
+               elseBody = fmap mkSub elseM
            return (BsIf (IfStmt cond thenBody [] elseBody))
 
 splitAtElse :: [Token] -> ([Token], Maybe [Token])
@@ -524,7 +530,7 @@ pElseIfClause = do
   s <- satisfyStmt (leadingCtrl "elseif")
   let condToks = takeWhile (not . isCtrl "then") (drop 1 (stmtTokens s))
       cond     = parseExpr condToks
-  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isElseOrEndIf))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isElseOrEndIf))
   return (ElseIf cond body)
 
 pForStmt :: FileParser BodyStmt
@@ -533,7 +539,7 @@ pForStmt = do
   case splitForParts (stmtTokens s) of
     Nothing -> return (BsRaw (llText (stmtSource s)))
     Just (lv, from, to, step) -> do
-      body <- manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "next")))
+      body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "next")))
       _ <- satisfyStmt (leadingCtrl "next")
       return (BsFor (ForStmt lv from to step body))
 
@@ -541,7 +547,7 @@ pDoStmt :: FileParser BodyStmt
 pDoStmt = do
   s <- satisfyStmt (leadingCtrl "do")
   let cond = parseDoCondition (drop 1 (stmtTokens s))
-  body <- manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "loop")))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "loop")))
   loopS <- satisfyStmt (leadingCtrl "loop")
   let loopCond = parseDoCondition (drop 1 (stmtTokens loopS))
   return (BsDo (DoStmt cond body loopCond))
@@ -561,13 +567,13 @@ pCaseClause = do
       pat = case patToks of
         (t:_) | isCtrl "else" t -> Nothing
         _                       -> Just patToks
-  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCaseOrEndChoose))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isCaseOrEndChoose))
   return (CaseClause pat body)
 
 pTryStmt :: FileParser BodyStmt
 pTryStmt = do
   _ <- satisfyStmt (leadingCtrl "try")
-  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
   catches <- many (try pCatchClause)
   _ <- satisfyStmt (leadingCtrl "end try")
   return (BsTry (TryStmt body catches))
@@ -576,7 +582,7 @@ pCatchClause :: FileParser CatchClause
 pCatchClause = do
   s <- satisfyStmt (leadingCtrl "catch")
   let (exnType, exnVar) = parseCatchSig (stmtTokens s)
-  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
   return (CatchClause exnType exnVar body)
 
 -- | Parse the exception type and variable name from a catch statement's tokens.
@@ -641,14 +647,14 @@ isBlockTerminator s = case stmtTokens s of
         || (tkKind t == TkControlKw && T.toLower (tkText t) == "end try")
   _     -> False
 
-pBodyStmt :: FileParser (Located BodyStmt)
+pBodyStmt :: FileParser [Located BodyStmt]
 pBodyStmt = do
   ln <- currentLine
-  stmt <-   try pSqlBodyStmt
-        <|> try pIfStmt
-        <|> try pForStmt
-        <|> try pDoStmt
-        <|> try pChooseStmt
-        <|> try pTryStmt
-        <|> (classifyBodyStmt <$> satisfyStmt (not . isBlockTerminator))
-  pure (Located ln stmt)
+  let single stmt = [Located ln stmt]
+  try (single <$> pSqlBodyStmt)
+    <|> try (single <$> pIfStmt)
+    <|> try (single <$> pForStmt)
+    <|> try (single <$> pDoStmt)
+    <|> try (single <$> pChooseStmt)
+    <|> try (single <$> pTryStmt)
+    <|> (map (Located ln) . classifyBodyStmt <$> satisfyStmt (not . isBlockTerminator))
