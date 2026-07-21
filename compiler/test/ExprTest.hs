@@ -112,23 +112,37 @@ tests = testGroup "Expr"
                     , mkTok TkIdent "y", mkTok TkRParen ")" ]
             @?= ExCall (Lvalue [LvSegment "f" Nothing]) [[tok "x"], [tok "y"]]
 
-      , testCase "method call obj.method() → ExCall" $
+      , testCase "method call obj.method() → ExMethodCall" $
           parseExpr [ mkTok TkIdent "adw", mkTok TkDot "."
                     , mkTok TkIdent "setfocus", mkTok TkLParen "(", mkTok TkRParen ")" ]
-            @?= ExCall
-                  (Lvalue [LvSegment "adw" Nothing, LvSegment "setfocus" Nothing])
-                  []
+            @?= ExMethodCall
+                  (ExLvalue (Lvalue [LvSegment "adw" Nothing]))
+                  "setfocus" []
 
-      , testCase "three-level chain call → ExCall" $
+      , testCase "three-level chain call → ExMethodCall with multi-segment receiver" $
           parseExpr [ mkTok TkIdent "iw_filter", mkTok TkDot "."
                     , mkTok TkIdent "idw_filter", mkTok TkDot "."
                     , mkTok TkIdent "rowcount"
                     , mkTok TkLParen "(", mkTok TkRParen ")" ]
-            @?= ExCall
-                  (Lvalue [ LvSegment "iw_filter"  Nothing
-                           , LvSegment "idw_filter" Nothing
-                           , LvSegment "rowcount"   Nothing ])
-                  []
+            @?= ExMethodCall
+                  (ExLvalue (Lvalue [ LvSegment "iw_filter"  Nothing
+                                     , LvSegment "idw_filter" Nothing ]))
+                  "rowcount" []
+
+      , testCase "x.y() → ExMethodCall (single dotted hop)" $
+          parseExpr [ mkTok TkIdent "x", mkTok TkDot "."
+                    , mkTok TkIdent "y", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "x" Nothing])) "y" []
+
+      , testCase "this.y() → ExMethodCall (dispatch-adjacent keyword as receiver)" $
+          parseExpr [ mkTok TkOtherKw "this", mkTok TkDot "."
+                    , mkTok TkIdent "y", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "this" Nothing])) "y" []
+
+      , testCase "super.y() → ExMethodCall (dispatch-adjacent keyword as receiver)" $
+          parseExpr [ mkTok TkOtherKw "super", mkTok TkDot "."
+                    , mkTok TkIdent "y", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "super" Nothing])) "y" []
 
       , testCase "args containing operators stay as text in callArgs" $
           parseExpr [ mkTok TkIdent "foo", mkTok TkLParen "("
@@ -294,9 +308,9 @@ tests = testGroup "Expr"
                     , mkTok TkDot ".", mkTok TkIdent "TriggerEvent"
                     , mkTok TkLParen "(", mkTok TkStringDouble "\"graph_color\"", mkTok TkRParen ")" ]
             @?= ExMethodCall
-                  (ExCall
-                    (Lvalue [LvSegment "ParentWindow" Nothing, LvSegment "GetActiveSheet" Nothing])
-                    [])
+                  (ExMethodCall
+                    (ExLvalue (Lvalue [LvSegment "ParentWindow" Nothing]))
+                    "GetActiveSheet" [])
                   "TriggerEvent"
                   [[tok "\"graph_color\""]]
 
@@ -327,9 +341,9 @@ tests = testGroup "Expr"
                     , mkTok TkRParen ")"
                     , mkTok TkDot ".", mkTok TkIdent "value" ]
             @?= ExMethodCall
-                  (ExCall
-                    (Lvalue [LvSegment "obj" Nothing, LvSegment "cells" Nothing])
-                    [[tok "1"], [tok "1"]])
+                  (ExMethodCall
+                    (ExLvalue (Lvalue [LvSegment "obj" Nothing]))
+                    "cells" [[tok "1"], [tok "1"]])
                   "value" []
       ]
 
@@ -557,13 +571,13 @@ tests = testGroup "Expr"
                                 , LvSegment "m_openall" Nothing ]))
                   DmPost False True "ue_opensheet" [])
 
-      , testCase "regression: obj.post() with no name → falls through to ExCall" $
+      , testCase "regression: obj.post() with no name → falls through to ExMethodCall" $
           parseExpr [ mkTok TkIdent "obj", mkTok TkDot "."
                     , mkTok TkOtherKw "post"
                     , mkTok TkLParen "(", mkTok TkRParen ")" ]
-            @?= ExCall
-                  (Lvalue [LvSegment "obj" Nothing, LvSegment "post" Nothing])
-                  []
+            @?= ExMethodCall
+                  (ExLvalue (Lvalue [LvSegment "obj" Nothing]))
+                  "post" []
       ]
 
     , testGroup "precedence properties"
@@ -836,6 +850,14 @@ genLvSegment = LvSegment <$> (mkIdent <$> genIdentText) <*> genSubscript
 genLvalue :: Gen Lvalue
 genLvalue = Lvalue <$> Gen.list (Range.linear 1 3) genLvSegment
 
+-- | Single-segment-only lvalue, for 'ExCall's callee generator below --
+-- after Plan 195 Phase B, a 2+ segment dotted call parses as 'ExMethodCall',
+-- not 'ExCall', so a multi-segment 'ExCall' is not producible by real
+-- parsing (same reasoning as the four constructors excluded from 'genExpr'
+-- below).
+genBareLvalue :: Gen Lvalue
+genBareLvalue = Lvalue . (:[]) <$> genLvSegment
+
 -- One-token argument groups, from a small pool -- ExCall/ExMethodCall/
 -- ExDispatch args stay raw [Token] in the AST (never re-parsed into Expr),
 -- so the generator only needs valid token texts, not sub-expressions.
@@ -877,6 +899,11 @@ genLiteral = Gen.choice
 --   - ExDispatch: a degenerate value (mode=DmSync, dynamic=False,
 --     event=False) unparses to plain "name(args)", which reparses as
 --     ExCall, not ExDispatch -- same generator-domain mismatch.
+--   - ExCall's callee is restricted to a single-segment lvalue
+--     ('genBareLvalue', not 'genLvalue'): after Plan 195 Phase B, a 2+
+--     segment dotted call reparses as ExMethodCall, not ExCall -- the same
+--     generator-domain mismatch as the three above, just on the callee
+--     shape rather than the whole constructor.
 --   - ExHostVar: parseExpr (PB.Grammar.Body, line ~337) only recognises
 --     TkColon as a HostVar when it is the FIRST token of the WHOLE
 --     expression being parsed; parseAtom/climbPrec have no TkColon case at
@@ -891,7 +918,7 @@ genExpr = Gen.recursive Gen.choice
   , ExEnum <$> Gen.element ["Black", "Red", "White"]
   , ExLvalue <$> genLvalue
   ]
-  [ ExCall <$> genLvalue <*> Gen.list (Range.linear 0 2) genArgTokenGroup
+  [ ExCall <$> genBareLvalue <*> Gen.list (Range.linear 0 2) genArgTokenGroup
   , ExCreate . mkIdent <$> genIdentText
   , ExCreateUsing <$> genExpr
   , ExArray <$> Gen.list (Range.linear 0 2) genExpr

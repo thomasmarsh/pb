@@ -314,10 +314,22 @@ parseAtom (t:rest)
       case remaining of
         (lp:r) | tkKind lp == TkLParen -> do
           (inner, after) <- findMatchingClose r
-          let (e', r') = chainCalls ExCall
-                { callee   = Lvalue segs
-                , callArgs = splitArgs inner
-                } after
+          let callArgs' = splitArgs inner
+              -- A dotted callee (2+ segments) is a receiver-qualified method
+              -- call, not a bare function call -- the last segment is the
+              -- method, the rest form the receiver lvalue. A subscript on
+              -- the last segment (e.g. `arr[1]()`) has no home in
+              -- ExMethodCall's Ident-only `method` field, so that shape
+              -- falls back to the bare-call form to avoid dropping data.
+              e0 = case reverse segs of
+                (LvSegment methodName Nothing : revInit@(_:_))
+                  -> ExMethodCall
+                       { receiver   = ExLvalue (Lvalue (reverse revInit))
+                       , method     = methodName
+                       , methodArgs = callArgs'
+                       }
+                _ -> ExCall { callee = Lvalue segs, callArgs = callArgs' }
+              (e', r') = chainCalls e0 after
           pure (e', r')
         _ -> pure (ExLvalue (Lvalue segs), remaining)
 

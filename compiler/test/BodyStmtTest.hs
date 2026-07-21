@@ -154,7 +154,7 @@ tests = testGroup "Body"
                   ])
           @?= [BsAssign
                 (Lvalue [LvSegment "ll_row" Nothing])
-                (ExCall (Lvalue [LvSegment "dw_main" Nothing, LvSegment "getrow" Nothing]) [])]
+                (ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_main" Nothing])) "getrow" [])]
 
     , testCase "assign: chained-call LHS → BsAssignExpr" $
         -- obj.cells(1).value = 42 — lvaluePrefix stops at cells; falls back to expr-based assign
@@ -165,7 +165,7 @@ tests = testGroup "Body"
                   , (TkAssignOp, "="), (TkIntLiteral, "42") ])
           @?= [BsAssignExpr
                 (ExMethodCall
-                  (ExCall (Lvalue [LvSegment "obj" Nothing, LvSegment "cells" Nothing]) [[tok "1"]])
+                  (ExMethodCall (ExLvalue (Lvalue [LvSegment "obj" Nothing])) "cells" [[tok "1"]])
                   "value" [])
                 (ExInt "42")]
 
@@ -233,7 +233,7 @@ tests = testGroup "Body"
                   , (TkLParen, "("), (TkRParen, ")")
                   ])
           @?= [BsCall
-                (ExCall (Lvalue [LvSegment "dw_main" Nothing, LvSegment "accepttext" Nothing]) [])]
+                (ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_main" Nothing])) "accepttext" [])]
 
     , testCase "call: free function (f(arg))" $
         classifyBodyStmt
