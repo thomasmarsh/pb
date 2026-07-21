@@ -4,6 +4,7 @@ module PB.Grammar.Body
   , parseLvalue
   , parseExpr
   , pBodyStmt
+  , splitArgs
   ) where
 
 import PB.Prelude

@@ -16,7 +16,7 @@ module PB.Grammar.File
   ) where
 
 import PB.Prelude
-import PB.Grammar.Body    (pBodyStmt)
+import PB.Grammar.Body    (pBodyStmt, splitArgs)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken, currentLine)
 import PB.AST.BodyStmt    (BodyStmt)
 import PB.AST.Ident       (identOrig, mkIdent)
@@ -91,21 +91,30 @@ isVarDecl s =
     (t:_:_) -> tkKind t `elem` [TkDatatype, TkIdent]
     _       -> False
 
-buildVarDecl :: Statement -> VarDecl
-buildVarDecl s =
+-- | Split a comma-separated declarator list (name, name2, ...) sharing one
+-- type/mods into one VarDecl per name, reusing 'PB.Grammar.Body.splitArgs'
+-- so a subscript or paren-nested expression in a later name's segment
+-- doesn't misfire the split. VarDecl has no initializer field, so a
+-- trailing '= value' on any name is discarded.
+buildVarDecls :: Statement -> [VarDecl]
+buildVarDecls s =
   let (mods, rest) = span isModifierToken (stmtTokens s)
   in case rest of
-    (typeT:nameT:_) -> VarDecl
-      { vdModifiers = map tkText mods
-      , vdType      = tkText typeT
-      , vdName      = mkIdent (tkText nameT)
-      }
-    _ -> error "impossible: buildVarDecl called on non-VarDecl statement"
+    (typeT : nameT : rest') -> mapMaybe (declFor mods typeT) (splitArgs (nameT : rest'))
+    _ -> error "impossible: buildVarDecls called on non-VarDecl statement"
+  where
+    declFor mods typeT (n : _) | tkKind n == TkIdent =
+      Just VarDecl
+        { vdModifiers = map tkText mods
+        , vdType      = tkText typeT
+        , vdName      = mkIdent (tkText n)
+        }
+    declFor _ _ _ = Nothing
 
-pVarDecl :: FileParser VarDecl
+pVarDecl :: FileParser [VarDecl]
 pVarDecl = do
   s <- satisfyStmt isVarDecl
-  return (buildVarDecl s)
+  return (buildVarDecls s)
 
 isGlobalInstance :: Statement -> Bool
 isGlobalInstance s = case stmtTokens s of
@@ -129,7 +138,7 @@ pVariablesBlock = do
   opener <- satisfyStmt isVarsOpener
   let scope = scopeFromOpener opener
   body <- manyTill anyStmt (pEndKw "variables")
-  return (VariablesBlock scope [buildVarDecl s | s <- body, isVarDecl s])
+  return (VariablesBlock scope (concatMap buildVarDecls (filter isVarDecl body)))
 
 pFwdTypeEntry :: FileParser TypeDecl
 pFwdTypeEntry = tbDecl <$> pTypeBlock

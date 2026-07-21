@@ -191,7 +191,7 @@ tests = testGroup "Grammar.File"
   , testGroup "pVarDecl"
     [ testCase "simple: string s_name" $ do
         let stmt = mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
-        runSection pVarDecl [stmt] @?= Right (VarDecl [] "string" "s_name")
+        runSection pVarDecl [stmt] @?= Right [VarDecl [] "string" "s_name"]
 
     , testCase "with modifier: public integer i_count" $ do
         let stmt = mkStmt
@@ -199,7 +199,15 @@ tests = testGroup "Grammar.File"
               , (TkDatatype,       "integer")
               , (TkIdent,          "i_count")
               ]
-        runSection pVarDecl [stmt] @?= Right (VarDecl ["public"] "integer" "i_count")
+        runSection pVarDecl [stmt] @?= Right [VarDecl ["public"] "integer" "i_count"]
+
+    , testCase "comma-separated: string s_name, s_other expands to two VarDecls" $ do
+        let stmt = mkStmt
+              [ (TkDatatype, "string"), (TkIdent, "s_name")
+              , (TkComma, ","), (TkIdent, "s_other")
+              ]
+        runSection pVarDecl [stmt]
+          @?= Right [VarDecl [] "string" "s_name", VarDecl [] "string" "s_other"]
 
     , testCase "negative: keyword as type name is rejected" $ do
         let stmt = mkStmt [(TkDeclKw, "function"), (TkIdent, "i_count")]
@@ -211,8 +219,8 @@ tests = testGroup "Grammar.File"
         let stmt1 = mkStmt [(TkDatatype, "string"), (TkIdent, "S_Name")]
             stmt2 = mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
         case (runSection pVarDecl [stmt1], runSection pVarDecl [stmt2]) of
-          (Right vd1, Right vd2) -> vdName vd1 @?= vdName vd2
-          _                      -> assertFailure "expected both parses to succeed"
+          (Right [vd1], Right [vd2]) -> vdName vd1 @?= vdName vd2
+          _                          -> assertFailure "expected both parses to succeed"
     ]
 
   , testGroup "pGlobalInstance"
@@ -303,6 +311,21 @@ tests = testGroup "Grammar.File"
         runSection pVariablesBlock stmts @?=
           Right (VariablesBlock TypeVars [ VarDecl [] "string" "s_name"
                                          , VarDecl ["public"] "integer" "i_count"
+                                         ])
+
+    , testCase "positive: type variables, comma-separated decl expands in place" $ do
+        -- A single "string s_name, s_other" statement must expand into one
+        -- VarDecl per name -- buildVarDecls shares the comma-split with
+        -- local variable declarations, so a variables block gets it too.
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type variables")]
+              , mkStmt [ (TkDatatype, "string"), (TkIdent, "s_name")
+                       , (TkComma, ","), (TkIdent, "s_other") ]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+        runSection pVariablesBlock stmts @?=
+          Right (VariablesBlock TypeVars [ VarDecl [] "string" "s_name"
+                                         , VarDecl [] "string" "s_other"
                                          ])
 
     , testCase "positive: empty variables block" $ do
@@ -1111,8 +1134,8 @@ prop_varDecl_names_nonempty = property $ do
         , (TkIdent,    name)
         ]
   case runSection pVarDecl [stmt] of
-    Right vd -> assert (not (T.null (identOrig (vdName vd))))
-    Left _   -> pure ()
+    Right vds -> assert (all (not . T.null . identOrig . vdName) vds)
+    Left _    -> pure ()
 
 prop_typeDecl_names_nonempty :: Property
 prop_typeDecl_names_nonempty = property $ do
