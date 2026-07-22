@@ -4,6 +4,7 @@ module PB.Lexing.DataWindow
   , scanBlocks
   , scanBlockAttrs
   , extractParenBlock
+  , resolveDwPos
   ) where
 
 import PB.Prelude
@@ -19,10 +20,15 @@ import qualified Text.Megaparsec.Char.Lexer as L
 
 type DwParser = Parsec Void Text
 
--- | One keyword(content) block extracted from a .srd file.
+-- | One keyword(content) block extracted from a .srd file. 'dwbLine'\/'dwbCol'
+-- are the real position of 'dwbContent''s first character (right after the
+-- opening paren), the anchor 'resolveDwPos' composes with a position found
+-- by re-parsing 'dwbContent' (e.g. via 'scanBlockAttrs').
 data DwBlock = DwBlock
   { dwbKeyword :: Text
   , dwbContent :: Text
+  , dwbLine    :: Int
+  , dwbCol     :: Int
   } deriving (Show)
 
 -- ---------------------------------------------------------------------------
@@ -78,7 +84,8 @@ pDwBlock = do
     kw      <- pDwKeyword
     skipMany (satisfy (`elem` (" \t" :: String)))
     _       <- char '('
-    DwBlock kw <$> pBlockContent
+    pos     <- getSourcePos
+    DwBlock kw <$> pBlockContent <*> pure (unPos (sourceLine pos)) <*> pure (unPos (sourceColumn pos))
 
 -- Dotted identifiers with optional [N] suffix: keyword, export.pdf, header[1], etc.
 -- All lower-cased.
@@ -125,10 +132,14 @@ pNonCloseParen = T.singleton <$> satisfy (/= ')')
 -- ---------------------------------------------------------------------------
 -- DwAttr — structured attribute token for block content
 
--- | One key=value attribute parsed from a DwBlock's content string.
+-- | One key=value attribute parsed from a DwBlock's content string. The
+-- quoted variant's @(Int, Int)@ is the value's own @(line, col)@ relative to
+-- whatever text was passed to 'scanBlockAttrs' (1,1-based) -- combine with
+-- the source 'DwBlock''s 'dwbLine'\/'dwbCol' via 'resolveDwPos' to get a
+-- real position in the original .srd file.
 data DwAttr
   = DwAttrUnquoted Text Text  -- key, unquoted value (ends at whitespace)
-  | DwAttrQuoted   Text Text  -- key, quoted value (verbatim, tilde-escapes preserved)
+  | DwAttrQuoted   Text Text (Int, Int)  -- key, quoted value (verbatim, tilde-escapes preserved), value's relative position
   | DwAttrSubBlock Text Text  -- key, raw inner content of key=(...)
   deriving (Eq, Show)
 
@@ -168,9 +179,15 @@ pAttrKey = takeWhile1P (Just "attr key") (\c -> isAlphaNum c || c == '_' || c ==
 pAttrVal :: Text -> DwParser DwAttr
 pAttrVal key =
     (char '(' >> DwAttrSubBlock key <$> pBlockContent) <|>
-    (char '"' >> DwAttrQuoted   key <$> pQuotedContent) <|>
+    (char '"' >> pQuotedAttr key) <|>
     (DwAttrUnquoted key <$> pUnquotedVal) <|>
     pure (DwAttrUnquoted key "")
+
+pQuotedAttr :: Text -> DwParser DwAttr
+pQuotedAttr key = do
+    pos <- getSourcePos
+    val <- pQuotedContent
+    return (DwAttrQuoted key val (unPos (sourceLine pos), unPos (sourceColumn pos)))
 
 pQuotedContent :: DwParser Text
 pQuotedContent = do
@@ -183,6 +200,16 @@ pQuotedContent = do
 pUnquotedVal :: DwParser Text
 pUnquotedVal = takeWhile1P (Just "unquoted value")
     (\c -> c /= ' ' && c /= '\t' && c /= '\n' && c /= '\r')
+
+-- | Compose a 'DwBlock''s real anchor position with a relative position
+-- captured by re-parsing its content (e.g. a 'DwAttrQuoted' value's own
+-- position from 'scanBlockAttrs'). Content is always a verbatim slice of the
+-- .srd file, so its own line 1 is the block's real line, and only a
+-- relative line-1 position needs the column shifted by the anchor's column.
+resolveDwPos :: (Int, Int) -> (Int, Int) -> (Int, Int)
+resolveDwPos (baseLine, baseCol) (relLine, relCol)
+  | relLine == 1 = (baseLine, baseCol + relCol - 1)
+  | otherwise    = (baseLine + relLine - 1, relCol)
 
 -- ---------------------------------------------------------------------------
 -- extractParenBlock — exported for unit testing

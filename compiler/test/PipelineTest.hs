@@ -2,7 +2,8 @@ module PipelineTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Preprocess
-  (LogicalLine (..), SourceChunk (..), mkLogicalLine, resolveRawPos, normalizeText, stripHeaders)
+  (LogicalLine (..), SourceChunk (..), mkLogicalLine, mkLogicalLineAt, resolveRawPos,
+   advanceThroughText, normalizeText, stripHeaders)
 
 import Test.Tasty             (testGroup, TestTree)
 import Test.Tasty.HUnit       (assertFailure, testCase, (@?=))
@@ -130,6 +131,28 @@ tests = testGroup "Pipeline"
             prop_stripHeaders_countInvariant
         , testProperty "stripHeaders: all returned headers start with $" $
             prop_stripHeaders_allHeadersStartWithDollar
+        ]
+    , testGroup "advanceThroughText / mkLogicalLineAt"
+        [ testCase "advanceThroughText: no embedded newline advances the column only" $
+            advanceThroughText (3, 5) "abc" @?= (3, 8)
+
+        , testCase "advanceThroughText: one embedded newline advances the line, resets the column" $
+            advanceThroughText (3, 5) "ab\ncd" @?= (4, 3)
+
+        , testCase "mkLogicalLineAt: single physical line, one chunk anchored at the real position" $
+            mkLogicalLineAt 5 3 "hello" @?=
+                LogicalLine "hello" 5 5 (SourceChunk 5 3 0 5 :| [])
+
+        , testCase "mkLogicalLineAt: embedded newline splits into two real-anchored chunks" $
+            mkLogicalLineAt 5 3 "ab\ncde" @?=
+                LogicalLine "ab\ncde" 5 6
+                    (SourceChunk 5 3 0 2 :| [SourceChunk 6 1 3 3])
+
+        , testCase "mkLogicalLineAt: resolveRawPos recovers the true position across the embedded newline" $
+            let ll = mkLogicalLineAt 5 3 "ab\ncde"
+            in do
+                resolveRawPos ll 0 @?= (5, 3)  -- 'a'
+                resolveRawPos ll 3 @?= (6, 1)  -- 'c', first char of the second physical line
         ]
     ]
 

@@ -5,7 +5,9 @@ module PB.Pipeline.Preprocess
   , LogicalLine(..)
   , SourceChunk(..)
   , mkLogicalLine
+  , mkLogicalLineAt
   , resolveRawPos
+  , advanceThroughText
   ) where
 
 import PB.Prelude
@@ -43,6 +45,36 @@ data LogicalLine = LogicalLine
 mkLogicalLine :: Text -> Int -> LogicalLine
 mkLogicalLine t lineNo =
   LogicalLine t lineNo lineNo (SourceChunk lineNo 1 0 (T.length t) :| [])
+
+-- | Build a 'LogicalLine' for text that is a verbatim slice of the real
+-- source starting at a known @(line, col)@ -- unlike 'mkLogicalLine', the
+-- text may itself contain real embedded newlines (e.g. a multi-line quoted
+-- value lifted out of a larger file), each starting its own 'SourceChunk'
+-- at column 1 so 'resolveRawPos' still maps every offset back to its true
+-- raw position.
+mkLogicalLineAt :: Int -> Int -> Text -> LogicalLine
+mkLogicalLineAt startLine startCol t =
+  LogicalLine t startLine endLine (buildChunks startLine startCol 0 (T.split (== '\n') t))
+  where
+    (endLine, _) = advanceThroughText (startLine, startCol) t
+
+buildChunks :: Int -> Int -> Int -> [Text] -> NonEmpty SourceChunk
+buildChunks ln col joinedStart [] = SourceChunk ln col joinedStart 0 :| []
+buildChunks ln col joinedStart (p : ps)
+  | null ps   = SourceChunk ln col joinedStart (T.length p) :| []
+  | otherwise = SourceChunk ln col joinedStart (T.length p)
+                  <| buildChunks (ln + 1) 1 (joinedStart + T.length p + 1) ps
+
+-- | Advance a @(line, col)@ position past a run of text, counting any real
+-- embedded newlines in that text. Used to compose a base position (e.g. a
+-- 'DwBlock'\/attribute anchor) with a further offset inside the text found
+-- there, without re-deriving newline-counting logic at each call site.
+advanceThroughText :: (Int, Int) -> Text -> (Int, Int)
+advanceThroughText (line, col) t =
+  case T.breakOnEnd "\n" t of
+    (before, after)
+      | T.null before -> (line, col + T.length after)
+      | otherwise     -> (line + T.count "\n" before, T.length after + 1)
 
 -- | Map a 0-based offset into 'llText' back to the true raw (line, col) it
 -- came from, via 'llChunks'. An offset that lands on a synthetic separator

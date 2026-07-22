@@ -15,11 +15,11 @@ import PB.Prelude
 import PB.AST.DataWindow
 import PB.AST.Expr           (Expr (ExRaw))
 import PB.Grammar.Body       (parseExpr)
-import PB.Lexing.DataWindow  (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAttrs, extractParenBlock)
+import PB.Lexing.DataWindow  (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAttrs, extractParenBlock, resolveDwPos)
 import PB.Lexing.Escape      (pbSelectTildeStr)
 import PB.Lexing.Lexer       (LexLine (..), tokenize)
 import qualified PB.Lexing.Token as Tok
-import PB.Pipeline.Preprocess (mkLogicalLine)
+import PB.Pipeline.Preprocess (mkLogicalLineAt, advanceThroughText)
 
 import Data.List     (nubBy)
 import Text.Read     (readMaybe)
@@ -55,7 +55,7 @@ emptyDwFile n = DataWindowFile
 -- Block classifier
 
 classifyBlock :: DataWindowFile -> DwBlock -> DataWindowFile
-classifyBlock dw (DwBlock kw content) = case kw of
+classifyBlock dw blk@DwBlock { dwbKeyword = kw, dwbContent = content } = case kw of
     "datawindow" ->
         dw { dwObject = parseDwObjectAttrs content }
     "table" ->
@@ -71,7 +71,7 @@ classifyBlock dw (DwBlock kw content) = case kw of
             let innerAttrs = collectResidualAttrs [] (scanBlockAttrs content)
             in dw { dwUnknowns = dwUnknowns dw ++ [DwUnknownBlock kw innerAttrs] }
       | otherwise ->
-            dw { dwControls = dwControls dw ++ [parseDwControl kw content] }
+            dw { dwControls = dwControls dw ++ [parseDwControl blk] }
 
 -- Non-control block keywords known to appear in .srd files.
 -- Anything NOT in this list falls through to dwControls, so unknown
@@ -141,7 +141,14 @@ lookupUnquoted key attrs =
 
 lookupQuoted :: Text -> [DwAttr] -> Maybe Text
 lookupQuoted key attrs =
-    listToMaybe [v | DwAttrQuoted k v <- attrs, T.toLower k == T.toLower key]
+    listToMaybe [v | DwAttrQuoted k v _ <- attrs, T.toLower k == T.toLower key]
+
+-- | Like 'lookupQuoted' but returns the value's own relative @(line, col)@
+-- (see 'DwAttrQuoted') instead of its text -- used to recover a real source
+-- position for a quoted attribute that gets re-tokenized into an 'Expr'.
+lookupQuotedPos :: Text -> [DwAttr] -> Maybe (Int, Int)
+lookupQuotedPos key attrs =
+    listToMaybe [p | DwAttrQuoted k _ p <- attrs, T.toLower k == T.toLower key]
 
 subBlockContents :: Text -> [DwAttr] -> [Text]
 subBlockContents key attrs =
@@ -149,7 +156,7 @@ subBlockContents key attrs =
 
 attrKV :: DwAttr -> (Text, Text)
 attrKV (DwAttrUnquoted k v) = (k, v)
-attrKV (DwAttrQuoted   k v) = (k, v)
+attrKV (DwAttrQuoted   k v _) = (k, v)
 attrKV (DwAttrSubBlock k _) = (k, "")
 
 parseBool :: Maybe Text -> Bool -> Bool
@@ -268,22 +275,33 @@ dedupeArgs = nubBy (\a b -> T.toLower (daName a) == T.toLower (daName b)
 -- ---------------------------------------------------------------------------
 -- Control block parser
 
--- | Extract the PB expression from a format string.
+-- | Extract the PB expression from a format string, alongside the prefix
+-- text consumed to reach it (including the "~t" marker itself) so a caller
+-- can 'advanceThroughText' the format value's own anchor position forward
+-- to the expression's true start.
 -- DW format strings use "~t" as a tab separator: everything after the first
 -- "~t" is a PB expression (e.g. "[GENERAL]~tfn_param_maskposo()").
 -- Returns Nothing when no "~t" separator is present.
-extractFormatExpr :: Text -> Maybe Text
+extractFormatExpr :: Text -> Maybe (Text, Text)
 extractFormatExpr fmt =
     case T.breakOn "~t" fmt of
         (_, rest) | T.null rest -> Nothing
-        (_, rest)               -> Just (T.drop 2 rest)
+        (before, rest)          -> Just (before <> T.take 2 rest, T.drop 2 rest)
 
-parseDwControl :: Text -> Text -> DwControl
-parseDwControl kw content =
-    let attrs     = scanBlockAttrs content
-        knownKeys = ["name","band","id","x","y","width","height",
-                     "visible","expression","format","tabsequence"]
-        rawFmt    = lookupQuoted "format" attrs
+parseDwControl :: DwBlock -> DwControl
+parseDwControl DwBlock { dwbKeyword = kw, dwbContent = content, dwbLine = blkLine, dwbCol = blkCol } =
+    let attrs      = scanBlockAttrs content
+        knownKeys  = ["name","band","id","x","y","width","height",
+                      "visible","expression","format","tabsequence"]
+        rawFmt     = lookupQuoted "format" attrs
+        anchor     = resolveDwPos (blkLine, blkCol)
+        exprPos    = anchor <$> lookupQuotedPos "expression" attrs
+        fmtPos     = anchor <$> lookupQuotedPos "format" attrs
+        fmtExprPos = do
+            (line, col) <- fmtPos
+            raw         <- rawFmt
+            (prefix, _) <- extractFormatExpr raw
+            pure (advanceThroughText (line, col) prefix)
     in DwControl
         { dwcType             = kw
         , dwcName             = lookupUnquoted "name" attrs
@@ -295,16 +313,16 @@ parseDwControl kw content =
         , dwcHeight           = parseIntAttr  "height"      attrs
         , dwcVisible          = parseBoolAttr "visible"     attrs
         , dwcExpression       = lookupQuoted  "expression"  attrs
-        , dwcParsedExpression = fmap (parseExpr . tokenizeExpr) (lookupQuoted "expression" attrs)
+        , dwcParsedExpression = parseExpr <$> (tokenizeExprAt <$> exprPos <*> lookupQuoted "expression" attrs)
         , dwcFormat           = rawFmt
-        , dwcParsedFormat     = fmap (parseExpr . tokenizeExpr) (rawFmt >>= extractFormatExpr)
+        , dwcParsedFormat     = parseExpr <$> (tokenizeExprAt <$> fmtExprPos <*> (snd <$> (rawFmt >>= extractFormatExpr)))
         , dwcTabSeq           = parseIntAttr  "tabsequence" attrs
         , dwcAttrs            = collectResidualAttrs knownKeys attrs
         }
 
-tokenizeExpr :: Text -> [Tok.Token]
-tokenizeExpr txt =
-    case tokenize [mkLogicalLine txt 0] of
+tokenizeExprAt :: (Int, Int) -> Text -> [Tok.Token]
+tokenizeExprAt (line, col) txt =
+    case tokenize [mkLogicalLineAt line col txt] of
         [ll] -> case lexResult ll of { Left _ -> []; Right ts -> ts }
         _    -> []
 
@@ -447,14 +465,17 @@ pWhereBlock = pPbsBlock "WHERE" $ do
             (parseWhereOperand exp1) (parseWhereOperand exp2))
 
 -- | Parse a WHERE-clause operand (dwcExp1/dwcExp2) through the same
--- tokenizeExpr/parseExpr pipeline DwControl's expression/format fields use.
+-- tokenizeExprAt/parseExpr pipeline DwControl's expression/format fields use.
 -- Strips surplus grouping parens first (see 'stripSurplusParens' — this is
 -- the ".srd WHERE-clause paren leakage" fix, doc/spec.md 7.3). parseExpr is
 -- total (ExRaw fallback); a top-level ExRaw means nothing structured was
 -- recognized, so store Nothing rather than a useless raw-token wrapper.
+-- No real anchor position is threaded through the PBSELECT/WHERE
+-- sub-grammar yet (tracked separately in BACKLOG.md) -- (0, 1) preserves
+-- this call site's prior behavior unchanged rather than regressing it.
 parseWhereOperand :: Text -> Maybe Expr
 parseWhereOperand raw =
-    case parseExpr (tokenizeExpr (stripSurplusParens raw)) of
+    case parseExpr (tokenizeExprAt (0, 1) (stripSurplusParens raw)) of
         ExRaw _ -> Nothing
         expr    -> Just expr
 

@@ -3,7 +3,9 @@ module DataWindowTest (tests) where
 import PB.Prelude
 import PB.AST.DataWindow
 import PB.AST.Expr           (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Ident          (identSpan, provenanceSpan)
 import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
+import PB.Lexing.Token       (SourceSpan (..))
 import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parsePbSelect,
                                parseColumn, parseDwBand, parseDwGroup, parseGroupBy,
                                parseDwObjectAttrs)
@@ -187,6 +189,42 @@ tests = testGroup "DataWindow"
             (isLeft (parseDataWindow src))
       ]
 
+  , testGroup "DataWindow expression identifiers carry real source spans"
+      [ testCase "compute control expression Ident has real line/col matching source" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "compute(band=detail expression=\"ii_amount\" )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case dwControls dw of
+              [c] -> case dwcParsedExpression c of
+                Just (ExLvalue (Lvalue [LvSegment ident Nothing])) ->
+                  provenanceSpan (identSpan ident) @?= Just (SourceSpan 5 33 5 42)
+                other -> assertFailure ("expected simple lvalue expression, got " <> show other)
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "format expression Ident position accounts for ~t prefix" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "compute(band=detail format=\"[GENERAL]~tii_amount\" )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case dwControls dw of
+              [c] -> case dwcParsedFormat c of
+                Just (ExLvalue (Lvalue [LvSegment ident Nothing])) ->
+                  provenanceSpan (identSpan ident) @?= Just (SourceSpan 5 40 5 49)
+                other -> assertFailure ("expected simple lvalue expression, got " <> show other)
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+      ]
+
   , testGroup "scanBlockAttrs"
       [ testCase "empty string → []" $
           scanBlockAttrs "" @?= []
@@ -200,7 +238,7 @@ tests = testGroup "DataWindow"
 
       , testCase "quoted attr value" $
           scanBlockAttrs "dbname=\"foo.bar\"" @?=
-            [DwAttrQuoted "dbname" "foo.bar"]
+            [DwAttrQuoted "dbname" "foo.bar" (1, 9)]
 
       , testCase "sub-block attr" $
           scanBlockAttrs "column=(type=long name=foo )" @?=
@@ -220,7 +258,7 @@ tests = testGroup "DataWindow"
 
       , testCase "tilde-escaped quote preserved verbatim in quoted value" $
           scanBlockAttrs "retrieve=\"a~\"b\"" @?=
-            [DwAttrQuoted "retrieve" "a~\"b"]
+            [DwAttrQuoted "retrieve" "a~\"b" (1, 11)]
 
       , testCase "multiline — newlines treated as whitespace between attrs" $
           scanBlockAttrs "type=long\nname=x" @?=
@@ -245,6 +283,18 @@ tests = testGroup "DataWindow"
             , DwAttrUnquoted "print.orientation" "0"
             , DwAttrUnquoted "color" "1"
             ]
+      ]
+
+  , testGroup "scanBlockAttrs position tracking"
+      [ testCase "quoted value position, single line" $
+          case scanBlockAttrs "expression=\"foo\"" of
+            [DwAttrQuoted _ _ pos] -> pos @?= (1, 13)
+            as -> assertFailure ("expected one quoted attr, got " <> show as)
+
+      , testCase "quoted value position after an embedded newline" $
+          case scanBlockAttrs "a=\"x\"\nexpression=\"foo\"" of
+            [_, DwAttrQuoted _ _ pos] -> pos @?= (2, 13)
+            as -> assertFailure ("expected two attrs, got " <> show as)
       ]
 
   , testGroup "parseColumn"
@@ -291,7 +341,7 @@ tests = testGroup "DataWindow"
       , testCase "dbname extracted from quoted attr" $
           parseColumn [ DwAttrUnquoted "type" "long"
                       , DwAttrUnquoted "name" "aa"
-                      , DwAttrQuoted   "dbname" "tbl.aa"
+                      , DwAttrQuoted   "dbname" "tbl.aa" (1, 1)
                       ] @?=
             Just DwColumn
               { dcName        = "aa"
