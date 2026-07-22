@@ -23,7 +23,7 @@ import PB.AST.Located     (Located (..))
 import PB.AST.Type         (PbType (..))
 import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken, currentLine)
 import PB.Lexing.Splitter (Statement (..))
-import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
+import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText, tkSpan)
 import PB.Pipeline.Preprocess (LogicalLine (..), llText, llStartLine)
 
 import Text.Megaparsec (lookAhead, many, manyTill, optional, try)
@@ -46,7 +46,7 @@ parseTypeFromTokens :: Token -> [Token] -> PbType
 parseTypeFromTokens t _
   | tkKind t == TkDatatype, T.toLower (tkText t) == "any" = PtAny
   | tkKind t == TkDatatype = PtPrimitive (T.toLower (tkText t))
-  | otherwise = PtUserDefined (tkText t)
+  | otherwise = PtUserDefined (mkIdentAt (tkSpan t) (tkText t))
 
 -- | Parse a PbType with precision specification (e.g., decimal{10}).
 parseTypeWithPrecision :: Token -> Token -> PbType

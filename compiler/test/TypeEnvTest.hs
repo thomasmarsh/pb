@@ -3,11 +3,12 @@ module TypeEnvTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt       (BodyStmt (..))
 import PB.AST.Located        (Located (..))
-import PB.AST.Ident          (identOrig, identCanon, identSetMember, mkIdent)
+import PB.AST.Ident          (IdentProvenance (..), identCanon, identOrig, identSetMember, identSpan, mkIdent, mkIdentAt)
+import PB.Lexing.Token       (SourceSpan (..))
 import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..),
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
                               splitAncestorRef, mkTypeDecl)
-import PB.AST.Type           (PbType (..), parseTypeText)
+import PB.AST.Type           (PbType (..), parseTypeText, parseTypeTextAt)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
                               lookupBaseType, isDescendantOf,
                               ScopedTypeEnv (..), buildWorkspaceEnv,
@@ -17,8 +18,9 @@ import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+import Data.List.NonEmpty     (NonEmpty (..))
 import Test.Tasty            (TestTree, testGroup)
-import Test.Tasty.HUnit      (testCase, (@?=))
+import Test.Tasty.HUnit      (assertFailure, testCase, (@?=))
 
 emptyFile :: SrFile
 emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
@@ -120,6 +122,23 @@ tests = testGroup "TypeEnv"
 
     , testCase "case insensitive" $
         parseTypeText "INTEGER" @?= PtPrimitive "integer"
+
+    , testCase "user-defined type with no span available mints a Synthetic ident" $
+        case parseTypeText "w_main" of
+          PtUserDefined i -> case identSpan i of
+            Synthetic _  -> pure ()
+            FromSource _ -> assertFailure "expected Synthetic provenance, got FromSource"
+          other -> assertFailure ("expected PtUserDefined, got " ++ show other)
+    ]
+
+  , testGroup "parseTypeTextAt"
+    [ testCase "user-defined type gets a real FromSource span from the given token" $
+        case parseTypeTextAt (SourceSpan 3 5 3 11) "w_main" of
+          PtUserDefined i -> identSpan i @?= FromSource (SourceSpan 3 5 3 11 :| [])
+          other -> assertFailure ("expected PtUserDefined, got " ++ show other)
+
+    , testCase "primitive type ignores the given span (not identifier-shaped)" $
+        parseTypeTextAt (SourceSpan 3 5 3 11) "integer" @?= PtPrimitive "integer"
     ]
 
   , testGroup "srPrimaryObject"
@@ -145,7 +164,7 @@ tests = testGroup "TypeEnv"
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
                       { fwdTypes = []
-                      , fwdInstances = [GlobalInstance "menu" "m_item"] }) }
+                      , fwdInstances = [GlobalInstance "menu" (SourceSpan 1 1 1 1) "m_item"] }) }
         in srPrimaryObject sf @?= ("", Nothing)
 
     , testCase "prefers type block matching forward's first entry over textually-first type block" $
@@ -232,7 +251,7 @@ tests = testGroup "TypeEnv"
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
                       { fwdTypes = []
-                      , fwdInstances = [GlobalInstance "integer" "m_main"] }) }
+                      , fwdInstances = [GlobalInstance "integer" (SourceSpan 1 1 1 1) "m_main"] }) }
             env = buildWorkspaceTypeEnv [sf]
         in lookupVarType "m_main" env @?= Just (PtPrimitive "integer")
     ]
@@ -394,6 +413,17 @@ tests = testGroup "TypeEnv"
         in do
           lookupScopedVarOrSelf "This"  env @?= Just (PtUserDefined "w_child")
           lookupScopedVarOrSelf "SUPER" env @?= Just (PtUserDefined "w_parent")
+
+    , testCase "'super' preserves the ancestor Ident's own real span, not a re-synthesized one" $
+        let ancestorIdent = mkIdentAt (SourceSpan 7 1 7 8) "w_parent"
+            env = ScopedTypeEnv
+              { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
+              , steHierarchy = Map.singleton (mkIdent "w_child") ancestorIdent
+              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
+              }
+        in case lookupScopedVarOrSelf "super" env of
+          Just (PtUserDefined i) -> identSpan i @?= FromSource (SourceSpan 7 1 7 8 :| [])
+          other -> assertFailure ("expected Just (PtUserDefined ...), got " ++ show other)
 
     , testCase "any other name falls back to ordinary lookupScopedVar" $
         let env = ScopedTypeEnv

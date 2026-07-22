@@ -13,6 +13,7 @@ import PB.AST.Ident        (mkIdent)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
+import PB.Lexing.Token     (SourceSpan (..))
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.TypeResolve (buildProcMap, buildInheritsMap)
 import PB.Analysis.TypeCheck (buildParamsMap)
@@ -48,8 +49,8 @@ dwControlTB nm within dwName = TypeBlock
 
 mkFn :: T.Text -> T.Text -> [Located BodyStmt] -> FunctionBlock
 mkFn nm params body = FunctionBlock
-  { fbSig = FnSig { fnsMods = [], fnsReturnType = "integer", fnsName = mkIdent nm
-                  , fnsParams = params, fnsThrows = Nothing }
+  { fbSig = FnSig { fnsMods = [], fnsReturnType = "integer", fnsReturnTypeSpan = SourceSpan 1 1 1 1
+                  , fnsName = mkIdent nm, fnsParams = params, fnsThrows = Nothing }
   , fbBody = body
   }
 

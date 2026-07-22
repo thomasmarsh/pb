@@ -45,7 +45,7 @@ import PB.AST.Expr
 import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identOrig, identSetFromList, identSetLookup, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
-import PB.AST.Type        (PbType (..), parseTypeText)
+import PB.AST.Type        (PbType (..), parseTypeTextAt)
 import PB.Analysis.ControlHierarchy (resolveMemberChainType)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
 import PB.Analysis.TypeFamily
@@ -126,7 +126,7 @@ buildParamsMap = foldl' addFile Map.empty
             [ ( (obj, identOrig (fnsName (fbSig fb)))
               , [ProcSignature
                   (parseParams (fnsParams (fbSig fb)))
-                  (Just (parseTypeText (fnsReturnType (fbSig fb))))]
+                  (Just (parseTypeTextAt (fnsReturnTypeSpan (fbSig fb)) (fnsReturnType (fbSig fb))))]
               )
             | fb <- srFunctions sf
             ]

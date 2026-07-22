@@ -130,9 +130,14 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \cfg_json TEXT, instr_graph_json TEXT, wiring_json TEXT, \
         \params TEXT, return_type TEXT, cyclomatic INTEGER, \
         \confidence TEXT NOT NULL DEFAULT 'confirmed')"
+      -- type_start_line/col, type_end_line/col carry the declared type
+      -- name's own token span (additive, nullable -- NULL for a primitive/
+      -- any/decimal type, which is a keyword, not an identifier reference).
       , "CREATE TABLE IF NOT EXISTS local_vars \
         \(file TEXT, object TEXT, proc_name TEXT, \
-        \var_name TEXT, raw_type TEXT, is_param BOOLEAN, scope_line INTEGER)"
+        \var_name TEXT, raw_type TEXT, is_param BOOLEAN, scope_line INTEGER, \
+        \type_start_line INTEGER, type_start_col INTEGER, \
+        \type_end_line INTEGER, type_end_col INTEGER)"
       -- Plan 195 Phase E.5b: to_name_start_line/col, to_name_end_line/col
       -- carry the callee identifier token's own span, additive alongside
       -- line (the enclosing statement's line, which
@@ -155,8 +160,12 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \name TEXT, access TEXT, target_object TEXT, kind TEXT, confidence TEXT, \
         \name_start_line INTEGER, name_start_col INTEGER, \
         \name_end_line INTEGER, name_end_col INTEGER, declared_type TEXT)"
+      -- type_start_line/col, type_end_line/col carry the declared type
+      -- name's own token span, same convention as local_vars above.
       , "CREATE TABLE IF NOT EXISTS global_vars \
-        \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)"
+        \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT, \
+        \type_start_line INTEGER, type_start_col INTEGER, \
+        \type_end_line INTEGER, type_end_col INTEGER)"
       -- var_start_line/col, var_end_line/col carry the def/use variable's
       -- own token span, additive alongside line (the statement's line,
       -- which buildInterprocEdges matches on -- see call_sites above).

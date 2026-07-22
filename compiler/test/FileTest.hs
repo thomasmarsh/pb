@@ -157,7 +157,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pForwardBlock stmts @?=
           Right (ForwardBlock [mkTypeDecl "app" "application" Nothing]
-                              [GlobalInstance "transaction" "sqlca"])
+                              [GlobalInstance "transaction" (SourceSpan 1 1 1 1) "sqlca"])
 
     , testCase "positive: type with body vars inside forward (w_misth_ypal_form pattern)" $ do
         let varStmt = mkStmt [(TkIdent, "uo_yvar"), (TkIdent, "uo_yvar")]
@@ -192,7 +192,7 @@ tests = testGroup "Grammar.File"
   , testGroup "pVarDecl"
     [ testCase "simple: string s_name" $ do
         let stmt = mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
-        runSection pVarDecl [stmt] @?= Right [VarDecl [] "string" "s_name"]
+        runSection pVarDecl [stmt] @?= Right [VarDecl [] "string" (SourceSpan 1 1 1 1) "s_name"]
 
     , testCase "with modifier: public integer i_count" $ do
         let stmt = mkStmt
@@ -200,7 +200,7 @@ tests = testGroup "Grammar.File"
               , (TkDatatype,       "integer")
               , (TkIdent,          "i_count")
               ]
-        runSection pVarDecl [stmt] @?= Right [VarDecl ["public"] "integer" "i_count"]
+        runSection pVarDecl [stmt] @?= Right [VarDecl ["public"] "integer" (SourceSpan 1 1 1 1) "i_count"]
 
     , testCase "comma-separated: string s_name, s_other expands to two VarDecls" $ do
         let stmt = mkStmt
@@ -208,7 +208,7 @@ tests = testGroup "Grammar.File"
               , (TkComma, ","), (TkIdent, "s_other")
               ]
         runSection pVarDecl [stmt]
-          @?= Right [VarDecl [] "string" "s_name", VarDecl [] "string" "s_other"]
+          @?= Right [VarDecl [] "string" (SourceSpan 1 1 1 1) "s_name", VarDecl [] "string" (SourceSpan 1 1 1 1) "s_other"]
 
     , testProperty "comma-separated: one VarDecl per name, order preserved"
         prop_varDecl_comma_names_preserved
@@ -238,7 +238,7 @@ tests = testGroup "Grammar.File"
               , (TkIdent,          "u_foo")
               ]
         runSection pGlobalInstance [stmt] @?=
-          Right (GlobalInstance "u_foo" "u_foo")
+          Right (GlobalInstance "u_foo" (SourceSpan 1 1 1 1) "u_foo")
 
     , testCase "positive: type name differs from instance name" $ do
         let stmt = mkStmt
@@ -247,7 +247,7 @@ tests = testGroup "Grammar.File"
               , (TkIdent,          "u_derived_inst")
               ]
         runSection pGlobalInstance [stmt] @?=
-          Right (GlobalInstance "u_base" "u_derived_inst")
+          Right (GlobalInstance "u_base" (SourceSpan 1 1 1 1) "u_derived_inst")
 
     , testCase "negative: global type X from Y is not a global instance" $ do
         let stmt = mkStmt
@@ -297,7 +297,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end variables")]
               ]
         runSection pVariablesBlock stmts @?=
-          Right (VariablesBlock GlobalVars [VarDecl [] "string" "s_name"])
+          Right (VariablesBlock GlobalVars [VarDecl [] "string" (SourceSpan 1 1 1 1) "s_name"])
 
     , testCase "positive: shared variables, scope is TypeVars" $ do
         let stmts =
@@ -306,7 +306,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end variables")]
               ]
         runSection pVariablesBlock stmts @?=
-          Right (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
+          Right (VariablesBlock TypeVars [VarDecl [] "integer" (SourceSpan 1 1 1 1) "i_count"])
 
     , testCase "positive: type variables, two VarDecls" $ do
         let stmts =
@@ -316,8 +316,8 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end variables")]
               ]
         runSection pVariablesBlock stmts @?=
-          Right (VariablesBlock TypeVars [ VarDecl [] "string" "s_name"
-                                         , VarDecl ["public"] "integer" "i_count"
+          Right (VariablesBlock TypeVars [ VarDecl [] "string" (SourceSpan 1 1 1 1) "s_name"
+                                         , VarDecl ["public"] "integer" (SourceSpan 1 1 1 1) "i_count"
                                          ])
 
     , testCase "positive: type variables, comma-separated decl expands in place" $ do
@@ -331,8 +331,8 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end variables")]
               ]
         runSection pVariablesBlock stmts @?=
-          Right (VariablesBlock TypeVars [ VarDecl [] "string" "s_name"
-                                         , VarDecl [] "string" "s_other"
+          Right (VariablesBlock TypeVars [ VarDecl [] "string" (SourceSpan 1 1 1 1) "s_name"
+                                         , VarDecl [] "string" (SourceSpan 1 1 1 1) "s_other"
                                          ])
 
     , testCase "positive: empty variables block" $ do
@@ -365,7 +365,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig [] "integer" "getCount" "" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "getCount" "" Nothing)])
 
     , testCase "positive: subroutine prototype" $ do
         let stmts =
@@ -406,7 +406,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig ["external"] "integer" "getCount" "" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig ["external"] "integer" (SourceSpan 1 1 1 1) "getCount" "" Nothing)])
 
     , testCase "positive: rpcfunc subroutine prototype" $ do
         let stmts =
@@ -430,7 +430,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig ["intrinsic"] "string" "getName" "" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig ["intrinsic"] "string" (SourceSpan 1 1 1 1) "getName" "" Nothing)])
 
     , testCase "positive: public: header before function is skipped (.srx pattern)" $ do
         let stmts =
@@ -442,7 +442,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig [] "long" "SetConnect" "connection theConn" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig [] "long" (SourceSpan 1 1 1 1) "SetConnect" "connection theConn" Nothing)])
 
     , testCase "positive: interleaved public: protected: headers all skipped" $ do
         let stmts =
@@ -459,8 +459,8 @@ tests = testGroup "Grammar.File"
               ]
         runSection pPrototypesBlock stmts @?=
           Right (PrototypesBlock
-            [ ProtoFn (FnSig [] "integer" "f1" "" Nothing)
-            , ProtoFn (FnSig [] "integer" "f2" "" Nothing)
+            [ ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "f1" "" Nothing)
+            , ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "f2" "" Nothing)
             ])
 
     , testCase "positive: only access-modifier headers yields empty decl list" $ do
@@ -766,7 +766,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end function")]
               ]
         runSection pFunctionBlock stmts @?=
-          Right (FunctionBlock (FnSig ["public"] "integer" "f_compute" "" Nothing) [])
+          Right (FunctionBlock (FnSig ["public"] "integer" (SourceSpan 1 1 1 1) "f_compute" "" Nothing) [])
 
     , testCase "positive: private function string f_name() throws SomeError" $ do
         let stmts =
@@ -778,7 +778,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end function")]
               ]
         runSection pFunctionBlock stmts @?=
-          Right (FunctionBlock (FnSig ["private"] "string" "f_name" "" (Just "SomeError")) [])
+          Right (FunctionBlock (FnSig ["private"] "string" (SourceSpan 1 1 1 1) "f_name" "" (Just "SomeError")) [])
 
     , testCase "positive: body with nested if statements" $ do
         let ifStmt    = mkStmt [(TkControlKw, "if")]
@@ -792,7 +792,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end function")]
               ]
         runSection pFunctionBlock stmts @?=
-          Right (FunctionBlock (FnSig [] "integer" "f_nested" "" Nothing)
+          Right (FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_nested" "" Nothing)
                    [loc1 (BsRaw ""), loc1 (BsRaw "")])
 
     , testCase "negative: missing end function" $ do
@@ -816,7 +816,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end function")]
               ]
         runSection pFunctionBlock stmts @?=
-          Right (FunctionBlock (FnSig ["public"] "boolean" "uf_zz_import_results"
+          Right (FunctionBlock (FnSig ["public"] "boolean" (SourceSpan 1 1 1 1) "uf_zz_import_results"
                                       "ref boolean results_imported" Nothing) [])
 
     , testCase "negative: external function not parsed as body block" $ do
@@ -905,7 +905,7 @@ tests = testGroup "Grammar.File"
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_foo" "nonvisualobject" Nothing) []]
             , srOnBlocks        = []
             , srEvents          = []
-            , srFunctions       = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
+            , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" "" Nothing) []]
             , srSubroutines     = []
             }
       -- Note: TypeBlock [] means empty body (no statements between header and end type)
@@ -929,7 +929,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Just (ForwardBlock [mkTypeDecl "n_base" "nonvisualobject" Nothing] [])
             , srPrototypes      = Just (PrototypesBlock [])
-            , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" "i_count"]]
+            , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" (SourceSpan 1 1 1 1) "i_count"]]
             , srGlobalInstances = []
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_base" "nonvisualobject" Nothing) []]
             , srOnBlocks        = []
@@ -1016,7 +1016,7 @@ tests = testGroup "Grammar.File"
             , srTypeBlocks      = []
             , srOnBlocks        = []
             , srEvents          = []
-            , srFunctions       = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
+            , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" "" Nothing) []]
             , srSubroutines     = []
             }
 
@@ -1042,8 +1042,8 @@ tests = testGroup "Grammar.File"
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       =
-                [ FunctionBlock (FnSig [] "integer" "f_one" "" Nothing) []
-                , FunctionBlock (FnSig [] "string"  "f_two" "" Nothing) []
+                [ FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_one" "" Nothing) []
+                , FunctionBlock (FnSig [] "string" (SourceSpan 1 1 1 1) "f_two" "" Nothing) []
                 ]
             , srSubroutines     = []
             }
@@ -1066,8 +1066,8 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Just (ForwardBlock [mkTypeDecl "u_svc" "nonvisualobject" Nothing] [])
             , srPrototypes      = Nothing
-            , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" "i_count"]]
-            , srGlobalInstances = [GlobalInstance "u_svc" "u_svc"]
+            , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" (SourceSpan 1 1 1 1) "i_count"]]
+            , srGlobalInstances = [GlobalInstance "u_svc" (SourceSpan 1 1 1 1) "u_svc"]
             , srTypeBlocks      = []
             , srOnBlocks        = []
             , srEvents          = []
@@ -1086,7 +1086,7 @@ tests = testGroup "Grammar.File"
             , srForward         = Nothing
             , srPrototypes      = Nothing
             , srVariables       = []
-            , srGlobalInstances = [GlobalInstance "u_foo" "u_foo", GlobalInstance "u_bar" "u_bar"]
+            , srGlobalInstances = [GlobalInstance "u_foo" (SourceSpan 1 1 1 1) "u_foo", GlobalInstance "u_bar" (SourceSpan 1 1 1 1) "u_bar"]
             , srTypeBlocks      = []
             , srOnBlocks        = []
             , srEvents          = []
@@ -1312,6 +1312,6 @@ unitTest_two_variables_blocks_both_survive = do
       length (srVariables sf) @?= 2
       map varScope (srVariables sf) @?= [GlobalVars, TypeVars]
       map varDecls (srVariables sf)
-        @?= [ [VarDecl [] "integer" "ig_count"]
-            , [VarDecl [] "string" "is_name"]
+        @?= [ [VarDecl [] "integer" (SourceSpan 1 1 1 1) "ig_count"]
+            , [VarDecl [] "string" (SourceSpan 1 1 1 1) "is_name"]
             ]

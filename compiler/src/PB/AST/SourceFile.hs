@@ -110,20 +110,23 @@ data TypeBlock = TypeBlock
 data VarDecl = VarDecl
   { vdModifiers :: [Text]
   , vdType      :: Text
+  , vdTypeSpan  :: SourceSpan  -- ^ real span of the 'vdType' token
   , vdName      :: Ident
   } deriving (Eq, Show, Generic)
 
 data GlobalInstance = GlobalInstance
-  { giType :: Text
-  , giName :: Ident
+  { giType     :: Text
+  , giTypeSpan :: SourceSpan  -- ^ real span of the 'giType' token
+  , giName     :: Ident
   } deriving (Eq, Show, Generic)
 
 data FnSig = FnSig
-  { fnsMods    :: [Text]
-  , fnsReturnType :: Text
-  , fnsName    :: Ident
-  , fnsParams  :: Text
-  , fnsThrows  :: Maybe Text
+  { fnsMods           :: [Text]
+  , fnsReturnType     :: Text
+  , fnsReturnTypeSpan :: SourceSpan  -- ^ real span of the 'fnsReturnType' token
+  , fnsName           :: Ident
+  , fnsParams         :: Text
+  , fnsThrows         :: Maybe Text
   } deriving (Eq, Show, Generic)
 
 data SubSig = SubSig

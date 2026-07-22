@@ -6,6 +6,7 @@ import PB.AST.Expr         (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.Ident        (mkIdent)
 import PB.AST.SourceFile
+import PB.Lexing.Token      (SourceSpan (..))
 import PB.Analysis.Taint
 
 import Data.Aeson           (eitherDecode)
@@ -30,7 +31,7 @@ mkSf fns subs evs obs = SrFile
 
 mkFn :: Text -> [Text] -> Text -> [Located BodyStmt] -> FunctionBlock
 mkFn name params ret body = FunctionBlock
-  { fbSig = FnSig [] ret (mkIdent name) (T.intercalate ", " params) Nothing
+  { fbSig = FnSig [] ret (SourceSpan 1 1 1 1) (mkIdent name) (T.intercalate ", " params) Nothing
   , fbBody = body
   }
 

@@ -74,7 +74,7 @@ import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapEmpty,
                            provenanceSpan)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
-import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
+import PB.AST.Type        (PbType (..), parseTypeText, parseTypeTextAt, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
 import PB.Analysis.CallClassify   (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
@@ -208,12 +208,15 @@ instance ToJSON CallSite where
     , "toNameSpan"     .= csToNameSpan     cs
     ]
 
+-- | gvPbType is an internal field used for classification; excluded from
+-- JSON -- mirrors 'LocalVar''s 'lvRawType'/'lvPbType' pair.
 data GlobalVar = GlobalVar
   { gvFile   :: Text
   , gvObject :: Text
   , gvName   :: Text
   , gvType   :: Text
   , gvMods   :: [Text]
+  , gvPbType :: PbType
   } deriving (Eq, Show)
 
 instance ToJSON GlobalVar where
@@ -370,11 +373,10 @@ classifyPbType (PtPrimitive t)   _    _
 classifyPbType (PtDecimalPrec _) _    _         = ("primitive", Nothing)
 classifyPbType PtAny             _    _         = ("any", Nothing)
 classifyPbType (PtUserDefined n) objs userTypes
-  | Just o <- identSetLookup nIdent objs           = ("object", Just (identOrig o))
-  | Just u <- identSetLookup nIdent userTypes      = ("user_type", Just (identOrig u))
-  | identCanon nIdent `Set.member` pbBuiltins       = ("primitive", Nothing)
-  | otherwise                                       = ("unresolved", Nothing)
-  where nIdent = mkIdent n
+  | Just o <- identSetLookup n objs           = ("object", Just (identOrig o))
+  | Just u <- identSetLookup n userTypes      = ("user_type", Just (identOrig u))
+  | identCanon n `Set.member` pbBuiltins       = ("primitive", Nothing)
+  | otherwise                                  = ("unresolved", Nothing)
 
 -- ---------------------------------------------------------------------------
 -- Parameter parsing
@@ -932,6 +934,7 @@ extractGlobalVars file obj sf =
           , gvName   = identOrig (vdName d)
           , gvType   = vdType d
           , gvMods   = vdModifiers d
+          , gvPbType = parseTypeTextAt (vdTypeSpan d) (vdType d)
           }
       | VariablesBlock { varDecls = ds } <- srVariables sf
       , d <- ds
@@ -943,6 +946,7 @@ extractGlobalVars file obj sf =
           , gvName   = identOrig (giName gi)
           , gvType   = giType gi
           , gvMods   = []
+          , gvPbType = parseTypeTextAt (giTypeSpan gi) (giType gi)
           }
       | gi <- srGlobalInstances sf
       ]
@@ -955,6 +959,7 @@ extractGlobalVars file obj sf =
             , gvName   = identOrig (giName gi)
             , gvType   = giType gi
             , gvMods   = []
+            , gvPbType = parseTypeTextAt (giTypeSpan gi) (giType gi)
             }
         | gi <- gis
         ]
@@ -1087,8 +1092,7 @@ resolveGlobalTypes :: [GlobalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 resolveGlobalTypes vars objs userTypes = map resolve vars
   where
     resolve gv =
-      let pbTy = parseTypeText (gvType gv)
-          (kind, target) = classifyPbType pbTy objs userTypes
+      let (kind, target) = classifyPbType (gvPbType gv) objs userTypes
           (kind', target') = case kind of
             "unresolved" -> case classifyControlType (gvName gv) of
               Just ctrlType -> ("primitive", Just ctrlType)

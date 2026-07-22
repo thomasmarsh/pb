@@ -108,6 +108,7 @@ buildVarDecls s =
       Just VarDecl
         { vdModifiers = map tkText mods
         , vdType      = tkText typeT
+        , vdTypeSpan  = tkSpan typeT
         , vdName      = mkIdentAt (tkSpan n) (tkText n)
         }
     declFor _ _ _ = Nothing
@@ -131,7 +132,7 @@ pGlobalInstance :: FileParser GlobalInstance
 pGlobalInstance = do
   s <- satisfyStmt isGlobalInstance
   case stmtTokens s of
-    [_, typT, nameT] -> return (GlobalInstance (tkText typT) (mkIdentAt (tkSpan nameT) (tkText nameT)))
+    [_, typT, nameT] -> return (GlobalInstance (tkText typT) (tkSpan typT) (mkIdentAt (tkSpan nameT) (tkText nameT)))
     _                -> fail "malformed global instance declaration"
 
 pVariablesBlock :: FileParser VariablesBlock
@@ -205,7 +206,7 @@ extractFnSig s =
       mods = map tkText modToks
       finish retTy name more =
         let (params, throws) = parseParamsAndThrows more
-        in Just (FnSig mods (tkText retTy) (mkIdentAt (tkSpan name) (tkText name)) params throws)
+        in Just (FnSig mods (tkText retTy) (tkSpan retTy) (mkIdentAt (tkSpan name) (tkText name)) params throws)
   in case rest of
     (_kw : retTy : name : lparen : more)
       | tkKind lparen == TkLParen -> finish retTy name more

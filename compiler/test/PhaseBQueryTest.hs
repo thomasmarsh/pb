@@ -5,13 +5,17 @@ import PB.Pipeline.DuckDb        (Handle, inMemory, withHandle, initSchema)
 import PB.Pipeline.DuckDb.Appender (AppenderPool, withAppenderPool)
 import PB.Pipeline.DuckDb.PhaseA
 import PB.Pipeline.DuckDb.PhaseB.Query
+import PB.AST.Ident              (mkIdentAt)
+import PB.AST.Type                (PbType (..), pbTypeSpan)
 import PB.Analysis.SchemaCategory
   ( StmtId (..)
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
   )
+import PB.Analysis.TypeResolve   (LocalVar (..), GlobalVar (..))
+import PB.Lexing.Token            (SourceSpan (..))
 import Test.Tasty             (TestTree, testGroup)
-import Test.Tasty.HUnit       (testCase, assertEqual)
+import Test.Tasty.HUnit       (assertFailure, testCase, assertEqual, (@?=))
 
 phaseATables :: [Text]
 phaseATables =
@@ -34,7 +38,59 @@ tests = testGroup "PhaseB.Query"
       testSchemaCategoryQueryRoundTrip
   , testCase "appendCatFootprintColumns/queryCatFootprintColumns round-trip"
       testCatFootprintColumnsRoundTrip
+  , testCase "appendLocalVars/queryLocalVars round-trips a user-defined type's own span"
+      testLocalVarTypeSpanRoundTrip
+  , testCase "appendGlobalVars/queryGlobalVars round-trips a user-defined type's own span"
+      testGlobalVarTypeSpanRoundTrip
   ]
+
+-- | Plan 196 Phase 2: a 'PtUserDefined' type's declared-type token span
+-- must survive the local_vars/global_vars DB round trip, not just the
+-- in-memory Phase A row -- confirms the additive type_start_line/col
+-- columns and the 'FromRow' reconstruction via 'parseTypeTextAt' actually
+-- wire together, not just that each half compiles in isolation.
+testLocalVarTypeSpanRoundTrip :: IO ()
+testLocalVarTypeSpanRoundTrip = withHandle inMemory $ \conn -> do
+  initSchema conn
+  withTestPool conn $ \pool ->
+    appendLocalVars pool
+      [ LocalVar
+          { lvFile = "t.srw", lvObject = "w_test", lvProcName = "of_run"
+          , lvVarName = "lw_child", lvRawType = "w_child", lvIsParam = False
+          , lvScopeLine = 3
+          , lvPbType = PtUserDefined (mkIdentAt (SourceSpan 3 10 3 17) "w_child")
+          }
+      , LocalVar
+          { lvFile = "t.srw", lvObject = "w_test", lvProcName = "of_run"
+          , lvVarName = "li_count", lvRawType = "integer", lvIsParam = False
+          , lvScopeLine = 4, lvPbType = PtPrimitive "integer"
+          }
+      ]
+
+  lvs <- queryLocalVars conn
+  case [lv | lv <- lvs, lvVarName lv == "lw_child"] of
+    [lv] -> pbTypeSpan (lvPbType lv) @?= Just (SourceSpan 3 10 3 17)
+    other -> assertFailure ("expected exactly 1 lw_child row, got " ++ show (length other))
+  case [lv | lv <- lvs, lvVarName lv == "li_count"] of
+    [lv] -> pbTypeSpan (lvPbType lv) @?= Nothing
+    other -> assertFailure ("expected exactly 1 li_count row, got " ++ show (length other))
+
+testGlobalVarTypeSpanRoundTrip :: IO ()
+testGlobalVarTypeSpanRoundTrip = withHandle inMemory $ \conn -> do
+  initSchema conn
+  withTestPool conn $ \pool ->
+    appendGlobalVars pool
+      [ GlobalVar
+          { gvFile = "t.srw", gvObject = "w_test", gvName = "iw_child"
+          , gvType = "w_child", gvMods = []
+          , gvPbType = PtUserDefined (mkIdentAt (SourceSpan 8 3 8 10) "w_child")
+          }
+      ]
+
+  gvs <- queryGlobalVars conn
+  case gvs of
+    [gv] -> pbTypeSpan (gvPbType gv) @?= Just (SourceSpan 8 3 8 10)
+    other -> assertFailure ("expected exactly 1 row, got " ++ show (length other))
 
 -- | Plan 148 Phase 1b: appends via the Phase A row types, queries back via
 -- the new SchemaCategory read-side query functions, and confirms the

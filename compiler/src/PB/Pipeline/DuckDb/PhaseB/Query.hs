@@ -32,7 +32,7 @@ module PB.Pipeline.DuckDb.PhaseB.Query
 
 import PB.Prelude
 import PB.AST.Ident             (Ident, IdentMap, IdentSet, identMapFromListWith, identSetSingleton, identSetUnion, mkIdent)
-import PB.AST.Type             (parseTypeText)
+import PB.AST.Type             (parseTypeText, parseTypeTextAt)
 import PB.Lexing.Token          (SourceSpan (..))
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite (..), GlobalVar (..)
@@ -65,6 +65,7 @@ instance FromRow LocalVar where
     rawType_   <- field
     isParam_   <- field
     scopeLine_ <- field
+    typeSp_    <- fieldSpan
     pure LocalVar
       { lvFile      = file_
       , lvObject    = obj_
@@ -73,7 +74,7 @@ instance FromRow LocalVar where
       , lvRawType   = rawType_
       , lvIsParam   = isParam_
       , lvScopeLine = scopeLine_
-      , lvPbType    = parseTypeText rawType_
+      , lvPbType    = maybe (parseTypeText rawType_) (`parseTypeTextAt` rawType_) typeSp_
       }
 
 -- | Read four nullable INTEGER span columns (in @start_line, start_col,
@@ -103,17 +104,19 @@ instance FromRow CallSite where
 
 instance FromRow GlobalVar where
   fromRow = do
-    f_  <- field
-    o_  <- field
-    n_  <- field
-    t_  <- field
-    ms_ <- field
+    f_     <- field
+    o_     <- field
+    n_     <- field
+    t_     <- field
+    ms_    <- field
+    typeSp_ <- fieldSpan
     pure GlobalVar
       { gvFile   = f_
       , gvObject = o_
       , gvName   = n_
       , gvType   = t_
       , gvMods   = if T.null ms_ then [] else T.splitOn "|" ms_
+      , gvPbType = maybe (parseTypeText t_) (`parseTypeTextAt` t_) typeSp_
       }
 
 instance FromRow Taint.DefRow where
@@ -210,7 +213,8 @@ instance FromRow TwoText where
 
 queryLocalVars :: Handle -> IO [LocalVar]
 queryLocalVars conn = queryHandle conn
-  "SELECT file, object, proc_name, var_name, raw_type, is_param, scope_line \
+  "SELECT file, object, proc_name, var_name, raw_type, is_param, scope_line, \
+  \type_start_line, type_start_col, type_end_line, type_end_col \
   \FROM local_vars"
 
 queryCallSites :: Handle -> IO [CallSite]
@@ -221,7 +225,9 @@ queryCallSites conn = queryHandle conn
 
 queryGlobalVars :: Handle -> IO [GlobalVar]
 queryGlobalVars conn = queryHandle conn
-  "SELECT file, object, var_name, var_type, mods FROM global_vars"
+  "SELECT file, object, var_name, var_type, mods, \
+  \type_start_line, type_start_col, type_end_line, type_end_col \
+  \FROM global_vars"
 
 -- | Build the four workspace-wide maps needed by Pass 5 from the DB. The
 -- inherits map is 'Ident'-keyed (Plan 179 Phase 5, mirroring

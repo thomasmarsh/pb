@@ -53,6 +53,7 @@ module PB.Pipeline.DuckDb.PhaseA
 
 import PB.Prelude
 import PB.AST.Ident             (identOrig, identSpan, provenanceSpan)
+import PB.AST.Type              (pbTypeSpan)
 import PB.Analysis.TypeResolve  (LocalVar (..), CallSite (..), GlobalVar (..), ResolvedVarRef (..))
 import PB.Analysis.Dataflow     qualified as Dataflow
 import PB.Analysis.TaintEdges   qualified as TaintEdges
@@ -373,6 +374,7 @@ appendLocalVars pool lvs = appendRow pool "local_vars" $ \app ->
     aText app (lvRawType lv)
     aBool app (lvIsParam lv)
     aInt  app (lvScopeLine lv)
+    aMaybeSpan app (pbTypeSpan (lvPbType lv))
 
 appendDeadVars :: AppenderPool -> [DeadVarFinding] -> IO ()
 appendDeadVars _    [] = pure ()
@@ -434,6 +436,7 @@ appendGlobalVars pool gvs = appendRow pool "global_vars" $ \app ->
     aText app (gvName gv)
     aText app (gvType gv)
     aText app (T.intercalate "|" (gvMods gv))
+    aMaybeSpan app (pbTypeSpan (gvPbType gv))
 
 appendProcDefs :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcDefs _    [] = pure ()

@@ -22,7 +22,7 @@ module PB.Analysis.TypeEnv
 import PB.Prelude
 import PB.AST.BodyStmt (BodyStmt (..))
 import PB.AST.DataWindow (DwTable)
-import PB.AST.Ident    (Ident, identCanon, identOrig, mkIdent)
+import PB.AST.Ident    (Ident, identCanon, mkIdent, mkIdentSynthetic)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
@@ -55,15 +55,15 @@ buildWorkspaceTypeEnv = foldl' mergeFile emptyTypeEnv
 -- nodes rather than GlobalInstance entries.
 extractGlobalVars :: SrFile -> Map.Map Ident PbType
 extractGlobalVars sf =
-  Map.fromList [ (giName gi, parseTypeText (giType gi))
+  Map.fromList [ (giName gi, parseTypeTextAt (giTypeSpan gi) (giType gi))
                | gi <- srGlobalInstances sf ]
   <> case srForward sf of
        Nothing -> Map.empty
        Just (ForwardBlock { fwdInstances = gis }) ->
-         Map.fromList [ (giName gi, parseTypeText (giType gi))
+         Map.fromList [ (giName gi, parseTypeTextAt (giTypeSpan gi) (giType gi))
                       | gi <- gis ]
   <> Map.fromList
-       [ (vdName d, parseTypeText (vdType d))
+       [ (vdName d, parseTypeTextAt (vdTypeSpan d) (vdType d))
        | VariablesBlock { varDecls = decls } <- srVariables sf
        , d <- decls
        ]
@@ -183,15 +183,15 @@ withDwTables tbls ws = ws { weDwTables = tbls }
 -- Globals: srGlobalInstances + forward instances + srVariables (NOT TypeBlock body vars).
 extractWsGlobals :: SrFile -> Map.Map Ident PbType
 extractWsGlobals sf =
-  Map.fromList [ (giName gi, parseTypeText (giType gi))
+  Map.fromList [ (giName gi, parseTypeTextAt (giTypeSpan gi) (giType gi))
                | gi <- srGlobalInstances sf ]
   <> case srForward sf of
        Nothing -> Map.empty
        Just (ForwardBlock { fwdInstances = gis }) ->
-         Map.fromList [ (giName gi, parseTypeText (giType gi))
+         Map.fromList [ (giName gi, parseTypeTextAt (giTypeSpan gi) (giType gi))
                       | gi <- gis ]
   <> Map.fromList
-       [ (vdName d, parseTypeText (vdType d))
+       [ (vdName d, parseTypeTextAt (vdTypeSpan d) (vdType d))
        | VariablesBlock { varDecls = decls } <- srVariables sf
        , d <- decls
        ]
@@ -249,9 +249,14 @@ lookupScopedVar name env =
 -- others.
 lookupScopedVarOrSelf :: Ident -> ScopedTypeEnv -> Maybe PbType
 lookupScopedVarOrSelf n env
-  | identCanon n == "this"  = Just (PtUserDefined (steObject env))
-  | identCanon n == "super" = PtUserDefined . identOrig <$> Map.lookup (mkIdent (steObject env)) (steHierarchy env)
+  | identCanon n == "this"  = Just (PtUserDefined thisIdent)
+  | identCanon n == "super" = PtUserDefined <$> Map.lookup (mkIdent (steObject env)) (steHierarchy env)
   | otherwise               = lookupScopedVar n env
+  where
+    -- 'this' has no type-name token of its own to point at -- 'steObject'
+    -- only carries the enclosing object's name as plain 'Text', not the
+    -- 'Ident' its own 'TypeDecl' declaration was minted with.
+    thisIdent = mkIdentSynthetic "'this' keyword has no direct type-name token" (steObject env)
 
 -- | Walk the inheritance chain from a starting object, including itself.
 -- Lives here (rather than in 'PB.Analysis.TypeResolve', which re-exports

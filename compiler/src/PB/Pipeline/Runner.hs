@@ -24,7 +24,7 @@ import PB.AST.DataWindow
 import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
-import PB.AST.Type           (parseTypeText)
+import PB.AST.Type           (parseTypeText, parseTypeTextAt)
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.Cfg    (buildCfg, cyclomaticComplexity)
 import PB.Compile.Flatten
@@ -258,15 +258,17 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
         -- Shared by both 'aliasBindings' and 'procs' below, so the
         -- (sLine, eLine)/(pName, pType, instrParams, taintParams, retType,
-        -- body) zip logic exists exactly once.
+        -- retTypeSpan, body) zip logic exists exactly once. retTypeSpan is
+        -- 'Nothing' for a subroutine/event/on-block (retType is "" there
+        -- too -- genuinely no return type, not an unresolved lookup).
         procSpecs =
-              zip (spFunctions   sp) [ (identOrig (fnsName (fbSig fb)), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+              zip (spFunctions   sp) [ (identOrig (fnsName (fbSig fb)), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), Just (fnsReturnTypeSpan (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
               <>
-              zip (spSubroutines sp) [ (identOrig (ssName  (sbSig sb)), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       sbBody sb) | sb <- srSubroutines sf ]
+              zip (spSubroutines sp) [ (identOrig (ssName  (sbSig sb)), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       Nothing,                              sbBody sb) | sb <- srSubroutines sf ]
               <>
-              zip (spEvents      sp) [ (identOrig (esName  (evSig ev)), "event",      "",                   esRawSig     (evSig ev), "",                       evBody ev) | ev <- srEvents      sf ]
+              zip (spEvents      sp) [ (identOrig (esName  (evSig ev)), "event",      "",                   esRawSig     (evSig ev), "",                       Nothing,                              evBody ev) | ev <- srEvents      sf ]
               <>
-              zip (spOnBlocks    sp) [ (identOrig (obEvent ob), "on",     "",                   "",                      "",                       obBody ob) | ob <- srOnBlocks    sf ]
+              zip (spOnBlocks    sp) [ (identOrig (obEvent ob), "on",     "",                   "",                      "",                       Nothing,                              obBody ob) | ob <- srOnBlocks    sf ]
         -- Plan 164 Phase C / D3: runtime DataWindow-alias assignments
         -- (e.g. idw_epidom = tab1.page1.uo_epidom.dw), scanned across every
         -- procedure body in this file and merged into the static bindings.
@@ -279,7 +281,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         -- alias var is assigned once (constructor/open event) in practice.
         aliasBindings = Map.unions
           [ runtimeDwAliasBindings controlIdx (weHierarchy wsEnv) obj procEnvWithLocals body
-          | (_, (_, _, instrParams, _, _, body)) <- procSpecs
+          | (_, (_, _, instrParams, _, _, _, body)) <- procSpecs
           , let baseEnv = mkProcEnv instrParams
                 procEnvWithLocals = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
           ]
@@ -362,7 +364,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- (empty for a subroutine/event/on-block), never from a
                 -- 'tcwParams' lookup that could resolve to a different
                 -- overload of the same name.
-                ownReturnType = if T.null retType then Nothing else Just (parseTypeText retType)
+                ownReturnType = if T.null retType then Nothing
+                  else Just (maybe (parseTypeText retType) (`parseTypeTextAt` retType) retTypeSpan)
                 typeCheckCtx = TypeCheckCtx
                   { tcEnv = typeCheckEnv
                   , tcProcMap = tcwProcMap tcw
@@ -384,7 +387,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                , typeMismatches
                , taintEdgeRows
                , taintReturnRows )
-          | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <- procSpecs
+          | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, retTypeSpan, body)) <- procSpecs
           ]
         procBodies =
              [ (identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]

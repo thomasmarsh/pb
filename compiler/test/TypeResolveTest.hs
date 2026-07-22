@@ -63,11 +63,12 @@ mkDwTable cols = DwTable
 mkFn :: T.Text -> T.Text -> [Located BodyStmt] -> FunctionBlock
 mkFn nm params body = FunctionBlock
   { fbSig = FnSig
-      { fnsMods       = []
-      , fnsReturnType = "integer"
-      , fnsName       = mkIdent nm
-      , fnsParams     = params
-      , fnsThrows     = Nothing
+      { fnsMods           = []
+      , fnsReturnType     = "integer"
+      , fnsReturnTypeSpan = SourceSpan 1 1 1 1
+      , fnsName           = mkIdent nm
+      , fnsParams         = params
+      , fnsThrows         = Nothing
       }
   , fbBody = body
   }
@@ -556,7 +557,7 @@ tests = testGroup "TypeResolve"
 
       , testCase "global var" $ do
           let sf = emptySrFile
-                { srVariables = [ VariablesBlock GlobalVars [ VarDecl [] "boolean" "ig_flag" ] ]
+                { srVariables = [ VariablesBlock GlobalVars [ VarDecl [] "boolean" (SourceSpan 1 1 1 1) "ig_flag" ] ]
                 , srFunctions = [ mkFn "f_go" ""
                     [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ig_flag" Nothing])))) ] ]
                 }
@@ -858,7 +859,7 @@ tests = testGroup "TypeResolve"
               sf = emptySrFile
                 { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
                     [ Located 1 (BsLocalVar [] (PtPrimitive "boolean") "ai_flag" Nothing) ] ]
-                , srVariables = [ VariablesBlock GlobalVars [ VarDecl [] "string" "ig_name" ] ]
+                , srVariables = [ VariablesBlock GlobalVars [ VarDecl [] "string" (SourceSpan 1 1 1 1) "ig_name" ] ]
                 , srFunctions = [ mkFn "f_go" "long al_row" body ]
                 }
               wsEnv = buildWorkspaceEnv [sf]
@@ -970,6 +971,7 @@ tests = testGroup "TypeResolve"
                 , gvName   = "ii_count"
                 , gvType   = "integer"
                 , gvMods   = []
+                , gvPbType = PtPrimitive "integer"
                 }
           case resolveGlobalTypes [gv] identSetEmpty identSetEmpty of
             [rt] -> do
@@ -986,6 +988,7 @@ tests = testGroup "TypeResolve"
                 , gvName   = "iw_child"
                 , gvType   = "w_main"
                 , gvMods   = []
+                , gvPbType = PtUserDefined "w_main"
                 }
           case resolveGlobalTypes [gv] (identSetSingleton (mkIdent "w_main")) identSetEmpty of
             [rt] -> do
@@ -1358,7 +1361,7 @@ tests = testGroup "TypeResolve"
         let sf = SrFile
               { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
               , srVariables = [VariablesBlock GlobalVars
-                  [VarDecl [] "long" "g_counter"]]
+                  [VarDecl [] "long" (SourceSpan 1 1 1 1) "g_counter"]]
               , srGlobalInstances = [], srTypeBlocks = []
               , srOnBlocks = [], srEvents = [], srFunctions = [], srSubroutines = []
               }
@@ -1382,7 +1385,7 @@ tests = testGroup "TypeResolve"
         let sf = emptySrFile
               { srForward = Just ForwardBlock
                   { fwdTypes = []
-                  , fwdInstances = [GlobalInstance "transaction" "sqlca"]
+                  , fwdInstances = [GlobalInstance "transaction" (SourceSpan 1 1 1 1) "sqlca"]
                   }
               }
             gvs = extractGlobalVars "app.sra" "app" sf

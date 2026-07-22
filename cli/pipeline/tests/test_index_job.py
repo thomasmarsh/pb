@@ -25,7 +25,8 @@ def _make_minimal_db(path: str) -> None:
         "call_type TEXT, line INT)"
     )
     conn.execute(
-        "CREATE TABLE global_vars (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)"
+        "CREATE TABLE global_vars (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT, "
+        "type_start_line INT, type_start_col INT, type_end_line INT, type_end_col INT)"
     )
     conn.execute(
         "CREATE TABLE dw_controls (file TEXT, object TEXT, band TEXT, control_type TEXT, "
