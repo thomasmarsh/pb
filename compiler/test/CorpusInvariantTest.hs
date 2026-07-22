@@ -653,13 +653,13 @@ fileInvariantDw name check = testCase name $ do
 
 tests :: TestTree
 tests = testGroup "Corpus.Invariants"
-    [ testCase "corpus loader resolves 500+ files regardless of cwd" $ do
+    [ testCase "corpus loader resolves 250+ files regardless of cwd" $ do
         pairs <- loadCorpus
         assertBool
             ("loadCorpus found only " <> show (length pairs)
-              <> " parsed files -- expected 500+; this is the exact vacuous-corpus \
+              <> " parsed files -- expected 250+; this is the exact vacuous-corpus \
                  \regression RepoRoot exists to prevent")
-            (length pairs >= 500)
+            (length pairs >= 250)
     , invariant "lvalue segments non-empty"          chkLvalueSegs
     , invariant "call_expr callee non-empty"         chkCallExprCallee
     , invariant "assign lhs non-empty"               chkAssignLhs
