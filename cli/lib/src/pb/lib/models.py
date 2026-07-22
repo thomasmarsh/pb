@@ -35,7 +35,7 @@ class ProcedureRow(NamedTuple):
 class CallRow(NamedTuple):
     file: str
     object: str
-    from_proc: str
+    proc_name: str
     to_name: str
     call_type: str
 
@@ -156,7 +156,7 @@ class ResolvedTypeRow(NamedTuple):
 class ResolvedCallRow(NamedTuple):
     file: str
     object: str
-    from_proc: str
+    proc_name: str
     to_name: str
     call_type: str
     call_line: int | None

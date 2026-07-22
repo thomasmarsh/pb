@@ -10,7 +10,7 @@ function makeProc(name: string, start = 1, end = 5): ProcedureInfo {
 
 function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
   return {
-    from_proc: "f_go", to_name: "f_validate", call_type: "ExCall", line: 10,
+    proc_name: "f_go", to_name: "f_validate", call_type: "ExCall", line: 10,
     target_object: "w_other", target_proc: "f_validate", kind: "virtual", confidence: "high",
     to_name_start_line: 10, to_name_start_col: 5, to_name_end_line: 10, to_name_end_col: 15,
     ...overrides,
@@ -19,7 +19,7 @@ function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
 
 function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRefInfo {
   return {
-    from_proc: "f_go", line: 10, name: "li_count", access: "read",
+    proc_name: "f_go", line: 10, name: "li_count", access: "read",
     target_object: null, kind: "local", confidence: "high",
     name_start_line: 10, name_start_col: 3, name_end_line: 10, name_end_col: 12,
     declared_type: null,
@@ -81,8 +81,8 @@ describe("buildVarRefSpanMap", () => {
   });
 
   it("two refs with the same name in different procedures resolve independently", () => {
-    const a = makeVarRef({ from_proc: "f_a", name_start_line: 10, name_start_col: 3, kind: "local" });
-    const b = makeVarRef({ from_proc: "f_b", name_start_line: 30, name_start_col: 3, kind: "param" });
+    const a = makeVarRef({ proc_name: "f_a", name_start_line: 10, name_start_col: 3, kind: "local" });
+    const b = makeVarRef({ proc_name: "f_b", name_start_line: 30, name_start_col: 3, kind: "param" });
     const map = buildVarRefSpanMap([a, b]);
     expect(map.get("10:3")?.kind).toBe("local");
     expect(map.get("30:3")?.kind).toBe("param");

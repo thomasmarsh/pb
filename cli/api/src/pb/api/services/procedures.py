@@ -51,10 +51,10 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     proc["source_original"] = source_original
 
     callers = rows(conn.execute(
-        "SELECT DISTINCT c.object AS caller_object, c.from_proc AS caller_proc "
+        "SELECT DISTINCT c.object AS caller_object, c.proc_name AS caller_proc "
         "FROM call_sites c "
         "WHERE c.to_name = ? "
-        "ORDER BY c.object, c.from_proc",
+        "ORDER BY c.object, c.proc_name",
         [proc_name],
     ))
     proc["callers"] = [{"object": c["caller_object"], "proc": c["caller_proc"]} for c in callers]
@@ -62,7 +62,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     callees = rows(conn.execute(
         "SELECT DISTINCT c.to_name AS callee "
         "FROM call_sites c "
-        "WHERE c.object = ? AND c.from_proc = ? "
+        "WHERE c.object = ? AND c.proc_name = ? "
         "ORDER BY c.to_name",
         [object_name, proc_name],
     ))
@@ -86,7 +86,7 @@ def list_procedures(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     result = rows(conn.execute(
         "SELECT p.object, p.proc_type, p.proc_name AS name, p.params, p.return_type, "
         "p.cyclomatic, "
-        "COUNT(DISTINCT c.object || '.' || c.from_proc) AS caller_count "
+        "COUNT(DISTINCT c.object || '.' || c.proc_name) AS caller_count "
         "FROM procedures p "
         "LEFT JOIN call_sites c ON c.to_name = p.proc_name "
         "GROUP BY p.object, p.proc_type, p.proc_name, p.params, p.return_type, p.cyclomatic "

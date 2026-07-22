@@ -159,7 +159,7 @@ const sourceDetail: ObjectSourceResponse = {
   procedures: [],
   knownObjects: [],
   resolvedCalls: [{
-    from_proc: "",
+    proc_name: "",
     to_name: "f_helper",
     call_type: "ExCall",
     line: 1,

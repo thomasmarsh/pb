@@ -20,7 +20,7 @@ def _setup_metrics_tables(conn) -> None:
     """Create the minimal native tables that metrics.py queries."""
     conn.execute(
         "CREATE TABLE IF NOT EXISTS call_sites "
-        "(file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT, line INT)"
+        "(file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT, line INT)"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS procedures "

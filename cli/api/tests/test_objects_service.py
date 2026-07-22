@@ -74,7 +74,7 @@ def test_get_object_source_var_refs_include_instance_vars(db_conn: duckdb.DuckDB
     assert result is not None
     instance_refs = [r for r in result["resolvedVarRefs"] if r["kind"] == "instance"]
     assert len(instance_refs) > 0
-    assert all(r["from_proc"] for r in instance_refs)
+    assert all(r["proc_name"] for r in instance_refs)
 
 
 def test_get_resolved_calls_returns_span_columns(db_conn: duckdb.DuckDBPyConnection):
@@ -86,7 +86,7 @@ def test_get_resolved_calls_returns_span_columns(db_conn: duckdb.DuckDBPyConnect
     assert len(result) > 0
     call = result[0]
     for key in (
-        "from_proc", "to_name", "call_type", "line", "target_object",
+        "proc_name", "to_name", "call_type", "line", "target_object",
         "target_proc", "kind", "confidence",
         "to_name_start_line", "to_name_start_col",
         "to_name_end_line", "to_name_end_col",
@@ -107,7 +107,7 @@ def test_get_resolved_var_refs_returns_span_columns(db_conn: duckdb.DuckDBPyConn
     assert len(result) > 0
     ref = result[0]
     for key in (
-        "from_proc", "line", "name", "access", "target_object", "kind", "confidence",
+        "proc_name", "line", "name", "access", "target_object", "kind", "confidence",
         "name_start_line", "name_start_col", "name_end_line", "name_end_col", "declared_type",
     ):
         assert key in ref
@@ -115,14 +115,14 @@ def test_get_resolved_var_refs_returns_span_columns(db_conn: duckdb.DuckDBPyConn
 
 def test_get_resolved_var_refs_scoped_to_proc(db_conn: duckdb.DuckDBPyConnection):
     row = db_conn.execute(
-        "SELECT object, from_proc FROM resolved_var_refs WHERE from_proc != '' "
-        "GROUP BY object, from_proc ORDER BY count(*) DESC LIMIT 1"
+        "SELECT object, proc_name FROM resolved_var_refs WHERE proc_name != '' "
+        "GROUP BY object, proc_name ORDER BY count(*) DESC LIMIT 1"
     ).fetchone()
     assert row is not None, "no proc-scoped resolved_var_refs rows in fixture corpus"
     object_name, proc_name = row
     scoped = get_resolved_var_refs(db_conn, object_name, proc_name)
     assert len(scoped) > 0
-    assert all(r["from_proc"] == proc_name for r in scoped)
+    assert all(r["proc_name"] == proc_name for r in scoped)
     unscoped = get_resolved_var_refs(db_conn, object_name)
     assert len(unscoped) >= len(scoped)
 

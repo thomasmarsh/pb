@@ -8,7 +8,7 @@ const COMMENT = "#6a9955";
 
 function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
   return {
-    from_proc: "f_go", to_name: "f_validate", call_type: "ExCall", line: 1,
+    proc_name: "f_go", to_name: "f_validate", call_type: "ExCall", line: 1,
     target_object: "w_other", target_proc: "f_validate", kind: "virtual", confidence: "high",
     to_name_start_line: 1, to_name_start_col: 1, to_name_end_line: 1, to_name_end_col: 11,
     ...overrides,
@@ -17,7 +17,7 @@ function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
 
 function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRefInfo {
   return {
-    from_proc: "f_go", line: 1, name: "li_count", access: "read",
+    proc_name: "f_go", line: 1, name: "li_count", access: "read",
     target_object: null, kind: "local", confidence: "high",
     name_start_line: 1, name_start_col: 1, name_end_line: 1, name_end_col: 9,
     declared_type: null,

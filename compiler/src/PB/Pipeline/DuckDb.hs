@@ -151,7 +151,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- PB.Analysis.Taint.buildInterprocEdges matches call sites against
       -- def/use sites by, and so must stay untouched).
       , "CREATE TABLE IF NOT EXISTS call_sites \
-        \(file TEXT, object TEXT, from_proc TEXT, \
+        \(file TEXT, object TEXT, proc_name TEXT, \
         \to_name TEXT, call_type TEXT, line INTEGER, receiver_object TEXT, \
         \to_name_start_line INTEGER, to_name_start_col INTEGER, \
         \to_name_end_line INTEGER, to_name_end_col INTEGER)"
@@ -163,7 +163,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- identifier's own span, additive alongside line (the statement's
       -- line).
       , "CREATE TABLE IF NOT EXISTS resolved_var_refs \
-        \(file TEXT, object TEXT, from_proc TEXT, line INTEGER, \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \name TEXT, access TEXT, target_object TEXT, kind TEXT, confidence TEXT, \
         \name_start_line INTEGER, name_start_col INTEGER, \
         \name_end_line INTEGER, name_end_col INTEGER, declared_type TEXT)"
@@ -268,7 +268,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- identifier token's own span, additive alongside line -- see
       -- call_sites above for why line itself must stay untouched.
       , "CREATE TABLE IF NOT EXISTS resolved_calls \
-        \(file TEXT, object TEXT, from_proc TEXT, to_name TEXT, \
+        \(file TEXT, object TEXT, proc_name TEXT, to_name TEXT, \
         \call_type TEXT, line INTEGER, \
         \target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT, \
         \to_name_start_line INTEGER, to_name_start_col INTEGER, \

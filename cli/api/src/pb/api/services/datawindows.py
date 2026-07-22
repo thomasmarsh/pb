@@ -55,9 +55,9 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
         [name],
     ))
     used_by_procs = rows(conn.execute(
-        "SELECT DISTINCT object, from_proc "
-        "FROM call_sites WHERE to_name = ? AND from_proc IS NOT NULL "
-        "ORDER BY object, from_proc",
+        "SELECT DISTINCT object, proc_name "
+        "FROM call_sites WHERE to_name = ? AND proc_name IS NOT NULL "
+        "ORDER BY object, proc_name",
         [name],
     ))
 
@@ -68,7 +68,7 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
         "retrieve_where": where,
         "arguments": arguments,
         "used_by_objects": [r["object"] for r in used_by_objects],
-        "used_by_procs": [{"object": r["object"], "proc": r["from_proc"]} for r in used_by_procs],
+        "used_by_procs": [{"object": r["object"], "proc": r["proc_name"]} for r in used_by_procs],
     }
 
 

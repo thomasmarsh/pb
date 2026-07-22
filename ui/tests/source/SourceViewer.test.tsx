@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 const resolvedCall: ResolvedCallInfo = {
-  from_proc: "f_current",
+  proc_name: "f_current",
   to_name: "f_helper",
   call_type: "ExCall",
   line: 1,

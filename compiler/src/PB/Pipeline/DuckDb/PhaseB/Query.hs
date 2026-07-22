@@ -219,7 +219,7 @@ queryLocalVars conn = queryHandle conn
 
 queryCallSites :: Handle -> IO [CallSite]
 queryCallSites conn = queryHandle conn
-  "SELECT file, object, from_proc, to_name, call_type, line, receiver_object, \
+  "SELECT file, object, proc_name, to_name, call_type, line, receiver_object, \
   \to_name_start_line, to_name_start_col, to_name_end_line, to_name_end_col \
   \FROM call_sites"
 
@@ -294,7 +294,7 @@ queryTaintReturnRows conn = queryHandle conn
 
 queryResolvedCalls :: Handle -> IO [Taint.ResolvedCallRow]
 queryResolvedCalls conn = queryHandle conn
-  "SELECT file, object, from_proc, to_name, call_type, line, \
+  "SELECT file, object, proc_name, to_name, call_type, line, \
   \target_object, target_proc, kind, confidence, \
   \to_name_start_line, to_name_start_col, to_name_end_line, to_name_end_col \
   \FROM resolved_calls"

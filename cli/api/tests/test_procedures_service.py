@@ -21,12 +21,12 @@ def test_get_procedure_detail_includes_linking_context(db_conn: duckdb.DuckDBPyC
 
 def test_get_procedure_detail_var_refs_scoped_to_proc(db_conn: duckdb.DuckDBPyConnection):
     """Every var ref belongs to fn_perm itself -- resolved_var_refs is
-    per-occurrence, so even instance-var reads carry their real from_proc,
+    per-occurrence, so even instance-var reads carry their real proc_name,
     unlike the old declaration-shaped resolved_types scoping."""
     result = get_procedure_detail(db_conn, "fn_perm", "fn_perm")
     assert result is not None
     assert len(result["resolvedVarRefs"]) > 0
-    assert all(r["from_proc"] == "fn_perm" for r in result["resolvedVarRefs"])
+    assert all(r["proc_name"] == "fn_perm" for r in result["resolvedVarRefs"])
 
 
 def test_get_procedure_detail_not_found(db_conn: duckdb.DuckDBPyConnection):

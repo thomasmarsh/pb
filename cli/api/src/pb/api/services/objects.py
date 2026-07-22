@@ -147,7 +147,7 @@ def get_resolved_calls(conn: duckdb.DuckDBPyConnection, object_name: str) -> lis
     """Resolved call sites within `object_name`'s source, span-keyed for identifier-linking."""
     return rows(
         conn.execute(
-            "SELECT from_proc, to_name, call_type, line, target_object, target_proc, kind, confidence, "
+            "SELECT proc_name, to_name, call_type, line, target_object, target_proc, kind, confidence, "
             "to_name_start_line, to_name_start_col, to_name_end_line, to_name_end_col "
             "FROM resolved_calls WHERE object = ? ORDER BY line, to_name_start_col",
             [object_name],
@@ -160,21 +160,22 @@ def get_resolved_var_refs(conn: duckdb.DuckDBPyConnection, object_name: str, pro
 
     Optionally scoped to one procedure. Unlike the old declaration-shaped
     `resolved_types` lookup, `resolved_var_refs` is per-occurrence -- an
-    instance var read from `proc_name` already carries `from_proc = proc_name`,
-    so plain equality scoping is correct with no separate instance-var carve-out.
+    instance var read from a given procedure already carries that
+    procedure's `proc_name`, so plain equality scoping is correct with no
+    separate instance-var carve-out.
     """
     if proc_name is not None:
         return rows(
             conn.execute(
-                "SELECT from_proc, line, name, access, target_object, kind, confidence, "
+                "SELECT proc_name, line, name, access, target_object, kind, confidence, "
                 "name_start_line, name_start_col, name_end_line, name_end_col, declared_type "
-                "FROM resolved_var_refs WHERE object = ? AND from_proc = ? ORDER BY line, name_start_col",
+                "FROM resolved_var_refs WHERE object = ? AND proc_name = ? ORDER BY line, name_start_col",
                 [object_name, proc_name],
             )
         )
     return rows(
         conn.execute(
-            "SELECT from_proc, line, name, access, target_object, kind, confidence, "
+            "SELECT proc_name, line, name, access, target_object, kind, confidence, "
             "name_start_line, name_start_col, name_end_line, name_end_col, declared_type "
             "FROM resolved_var_refs WHERE object = ? ORDER BY line, name_start_col",
             [object_name],
@@ -211,11 +212,11 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         conn.execute(
             "SELECT p.proc_name AS name, p.proc_type, p.params, p.return_type, "
             "p.start_line, p.end_line, p.cyclomatic, "
-            "COUNT(DISTINCT c_in.object || '.' || c_in.from_proc) AS caller_count, "
+            "COUNT(DISTINCT c_in.object || '.' || c_in.proc_name) AS caller_count, "
             "COUNT(DISTINCT c_out.to_name) AS callee_count "
             "FROM procedures p "
             "LEFT JOIN call_sites c_in ON c_in.to_name = p.proc_name "
-            "LEFT JOIN call_sites c_out ON c_out.object = p.object AND c_out.from_proc = p.proc_name "
+            "LEFT JOIN call_sites c_out ON c_out.object = p.object AND c_out.proc_name = p.proc_name "
             "WHERE p.object = ? "
             "AND p.start_line IS NOT NULL AND p.end_line IS NOT NULL "
             "GROUP BY p.proc_name, p.proc_type, p.params, p.return_type, "

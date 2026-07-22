@@ -51,7 +51,7 @@ describe("SourceView", () => {
         lines={["f_helper()"]}
         baseLine={1}
         resolvedCalls={[{
-          from_proc: "f_go", to_name: "f_helper", call_type: "ExCall", line: 1,
+          proc_name: "f_go", to_name: "f_helper", call_type: "ExCall", line: 1,
           target_object: "w_test", target_proc: "f_helper", kind: "virtual", confidence: "high",
           to_name_start_line: 1, to_name_start_col: 1, to_name_end_line: 1, to_name_end_col: 9,
         }]}

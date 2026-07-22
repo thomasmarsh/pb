@@ -21,7 +21,7 @@ def _make_minimal_db(path: str) -> None:
         "params TEXT, return_type TEXT, cyclomatic INT)"
     )
     conn.execute(
-        "CREATE TABLE call_sites (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, "
+        "CREATE TABLE call_sites (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, "
         "call_type TEXT, line INT)"
     )
     conn.execute(

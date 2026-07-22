@@ -86,7 +86,7 @@ export interface ProcedureInfo {
 // Canonical resolved call-site cross-reference (PB.Analysis.TypeResolve.ResolvedCall),
 // span-keyed on (to_name_start_line, to_name_start_col) for identifier-linking.
 export interface ResolvedCallInfo {
-  from_proc: string;
+  proc_name: string;
   to_name: string;
   call_type: string;
   line: number | null;
@@ -103,7 +103,7 @@ export interface ResolvedCallInfo {
 // Canonical resolved variable/property cross-reference (PB.Analysis.TypeResolve.ResolvedVarRef),
 // span-keyed on (name_start_line, name_start_col) for identifier-linking.
 export interface ResolvedVarRefInfo {
-  from_proc: string;
+  proc_name: string;
   line: number | null;
   name: string;
   access: "read" | "write";

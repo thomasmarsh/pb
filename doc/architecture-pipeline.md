@@ -375,7 +375,7 @@ catalog_checks  (constraint_name TEXT, namespace TEXT, table_name TEXT, predicat
 -- Intra-procedural def-use + cross-file type/call resolution
 local_vars      (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
                   is_param BOOLEAN, scope_line INT)
-call_sites      (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT, line INT)
+call_sites      (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT, line INT)
 global_vars     (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)
 proc_defs       (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
                   stmt_index INT, line INT, kind TEXT)
@@ -383,7 +383,7 @@ proc_uses       (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id
                   stmt_index INT, line INT, kind TEXT)
 resolved_types  (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
                   kind TEXT, target TEXT, is_param BOOLEAN, scope_line INT)
-resolved_calls  (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT, line INT,
+resolved_calls  (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT, line INT,
                   target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT)
 
 -- Inter-procedural taint analysis

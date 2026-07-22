@@ -7,7 +7,7 @@ import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/pl
 
 function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
   return {
-    from_proc: "f_caller", to_name: "f_go", call_type: "ExCall", line: 3,
+    proc_name: "f_caller", to_name: "f_go", call_type: "ExCall", line: 3,
     target_object: "w_test", target_proc: "f_go", kind: "virtual", confidence: "high",
     to_name_start_line: 3, to_name_start_col: 1, to_name_end_line: 3, to_name_end_col: 5,
     ...overrides,
@@ -16,7 +16,7 @@ function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
 
 function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRefInfo {
   return {
-    from_proc: "f_go", line: 1, name: "li_x", access: "read",
+    proc_name: "f_go", line: 1, name: "li_x", access: "read",
     target_object: null, kind: "local", confidence: "high",
     name_start_line: 1, name_start_col: 1, name_end_line: 1, name_end_col: 5,
     declared_type: null,
