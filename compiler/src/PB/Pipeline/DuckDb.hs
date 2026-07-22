@@ -154,7 +154,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \(file TEXT, object TEXT, from_proc TEXT, line INTEGER, \
         \name TEXT, access TEXT, target_object TEXT, kind TEXT, confidence TEXT, \
         \name_start_line INTEGER, name_start_col INTEGER, \
-        \name_end_line INTEGER, name_end_col INTEGER)"
+        \name_end_line INTEGER, name_end_col INTEGER, declared_type TEXT)"
       , "CREATE TABLE IF NOT EXISTS global_vars \
         \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)"
       -- var_start_line/col, var_end_line/col carry the def/use variable's

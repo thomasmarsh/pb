@@ -114,6 +114,7 @@ export interface ResolvedVarRefInfo {
   name_start_col: number | null;
   name_end_line: number | null;
   name_end_col: number | null;
+  declared_type: string | null;
 }
 
 export interface ObjectSourceResponse {

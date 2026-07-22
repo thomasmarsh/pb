@@ -423,6 +423,7 @@ appendVarRefs pool rvrs = appendRow pool "resolved_var_refs" $ \app ->
     aText      app (rvrKind         rvr)
     aText      app (rvrConfidence   rvr)
     aMaybeSpan app (rvrSpan         rvr)
+    aMaybeText app (rvrDeclaredType rvr)
 
 appendGlobalVars :: AppenderPool -> [GlobalVar] -> IO ()
 appendGlobalVars _    [] = pure ()

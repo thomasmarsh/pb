@@ -22,6 +22,7 @@ function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRef
     from_proc: "f_go", line: 10, name: "li_count", access: "read",
     target_object: null, kind: "local", confidence: "high",
     name_start_line: 10, name_start_col: 3, name_end_line: 10, name_end_col: 12,
+    declared_type: null,
     ...overrides,
   };
 }

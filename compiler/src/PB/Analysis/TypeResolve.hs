@@ -55,7 +55,7 @@ module PB.Analysis.TypeResolve
   , paramsToVars
   , callSitesExpr
   , walkBodyCallSites
-  , classifyLvalueRef
+  , classifyLvalueChain
   , varRefsExpr
   , walkBodyVarRefs
   , srFileObject
@@ -73,7 +73,7 @@ import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
-import PB.Analysis.CallClassify   (collectBodyLocals, resolveReceiverType, resolveLvalueType)
+import PB.Analysis.CallClassify   (collectBodyLocals, resolveReceiverType)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
                                     lookupInstanceVarOwner, procEnv)
@@ -292,9 +292,15 @@ data ResolvedVarRef = ResolvedVarRef
   , rvrKind         :: Text   -- "local" | "param" | "instance" | "global" | "control" | "class" | "builtin_property" | "unresolved"
   , rvrConfidence   :: Text   -- "high" | "unresolved"
   , rvrSpan         :: Maybe SourceSpan
-    -- ^ The real source span of the trailing identifier segment
+    -- ^ The real source span of this occurrence's own identifier segment
     -- ('rvrName') -- distinct from 'rvrLine' (the enclosing statement's
     -- line; kept as-is for parity with 'CallSite.csLine').
+  , rvrDeclaredType :: Maybe Text
+    -- ^ This segment's own resolved PowerScript type (lowercased, e.g.
+    -- \"long\", \"w_main\"), where the classification that produced
+    -- 'rvrKind' had one in hand -- 'Nothing' for a builtin property (no
+    -- type table exists for builtin class members) or an unresolved
+    -- segment.
   } deriving (Eq, Show)
 
 instance ToJSON ResolvedVarRef where
@@ -309,6 +315,7 @@ instance ToJSON ResolvedVarRef where
     , "kind"         .= rvrKind         rvr
     , "confidence"   .= rvrConfidence   rvr
     , "span"         .= rvrSpan         rvr
+    , "declaredType" .= rvrDeclaredType rvr
     ]
 
 -- ---------------------------------------------------------------------------
@@ -560,73 +567,94 @@ extractDwCallSites wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls
 -- ---------------------------------------------------------------------------
 -- Variable/property reference extraction
 
--- | Classify one lvalue occurrence (a read or a write) into a
--- 'ResolvedVarRef'. A single segment resolves against the procedure's own
--- scope (@this@\/@super@, param\/local, instance -- walking the object's
--- own ancestor chain via 'lookupInstanceVarOwner', global), falling back to
--- a 1-hop 'ControlIndex' lookup for a visual control (e.g. @dw_1@) -- the
--- same fallback order 'PB.Analysis.CallClassify.resolveLvalueType' already
--- uses for a call receiver. Two or more segments resolve every segment but
--- the last via 'resolveLvalueType' itself (not just the 'ControlIndex'
--- chain directly) -- a receiver is just as often a plain variable of a
--- structure\/object type (e.g. a global structure var's own
--- @gv.member@ access) as it is a nested visual control, and
--- 'resolveLvalueType''s own single-segment branch already tries the
--- variable lookup before falling back to 'ControlIndex'. The trailing
--- segment is then classified relative to that resolved receiver type: a
--- cross-object instance\/structure-member var if the receiver type
--- declares one, a @builtin_property@ if the receiver is merely a known
--- builtin class, else @unresolved@ -- no guessing past what the workspace
--- actually declares. Subscript-expression identifiers (e.g. the @i@ in
+-- | Classify every segment of one lvalue occurrence (a read or a write)
+-- into its own 'ResolvedVarRef' -- not just the trailing segment. The
+-- first segment resolves against the procedure's own scope (@this@\/
+-- @super@, param\/local, instance -- walking the object's own ancestor
+-- chain via 'lookupInstanceVarOwner', global), falling back to a 1-hop
+-- 'ControlIndex' lookup for a visual control (e.g. @dw_1@) -- the same
+-- fallback order 'PB.Analysis.CallClassify.resolveLvalueType' already uses
+-- for a call receiver. Every later segment is classified relative to the
+-- receiver type resolved from everything before it (via 'resolveLvalueType'
+-- on the growing prefix): a cross-object instance\/structure-member var if
+-- the receiver type declares one, a @builtin_property@ if the receiver is
+-- merely a known builtin class, else @unresolved@ -- no guessing past what
+-- the workspace actually declares. Only the final segment carries the
+-- caller's real read\/write intent (@access@); every segment before it is
+-- necessarily read to navigate to the next hop regardless of what happens
+-- to the final target (e.g. in @a.b.c = 5@, @a@ and @b@ are reads). Each
+-- segment also reports its own resolved declared type (where the
+-- classification that produced its 'rvrKind' had one in hand), read
+-- directly off whichever lookup found it (steLocal\/steInstance\/steGlobal's
+-- 'PbType', or 'lookupInstanceVarOwner''s). That resolved type is threaded
+-- forward as the *next* hop's own receiver type, rather than re-derived by
+-- calling 'resolveLvalueType' on the growing prefix from scratch -- that
+-- function's 2+-segment case only walks the 'ControlIndex' chain (nested
+-- visual controls), so it cannot see a receiver that is itself a plain
+-- instance variable of a structure\/object type (e.g. hop 2 of
+-- @uo_1.io_inner.ai_count@, where @io_inner@ is a declared instance var, not
+-- a nested control) -- threading the fold's own already-resolved type
+-- avoids re-deriving something the fold already knows, and is correct at
+-- any chain depth. Subscript-expression identifiers (e.g. the @i@ in
 -- @arr[i]@) are not covered here; see 'PB.Analysis.Dataflow.walkExprIdents'
 -- for that concern.
-classifyLvalueRef
-  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Text -> Lvalue -> ResolvedVarRef
-classifyLvalueRef wsEnv env file obj proc_ mLine access lv =
-  case reverse (segments lv) of
-    []                  -> ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved" Nothing
-    (finalSeg : restRev) ->
-      let nm = identOrig (segName finalSeg)
-          (kind, tgt, conf) = case reverse restRev of
-            []         -> classifyRoot (segName finalSeg)
-            prefixSegs -> classifyMember prefixSegs (segName finalSeg)
-      in ResolvedVarRef file obj proc_ mLine nm access tgt kind conf
-           (provenanceSpan (identSpan (segName finalSeg)))
+classifyLvalueChain
+  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Text -> Lvalue -> [ResolvedVarRef]
+classifyLvalueChain wsEnv env file obj proc_ mLine access lv =
+  case segments lv of
+    []           -> [ ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved" Nothing Nothing ]
+    (seg0 : rest) ->
+      let (kind0, tgt0, conf0, declTy0) = classifyRoot (segName seg0)
+          row0 = mkRow seg0 (hopAccess rest) tgt0 kind0 conf0 declTy0
+      in row0 : go declTy0 rest
   where
+    hopAccess rest = if null rest then access else "read"
+
+    mkRow seg acc tgt kind conf declTy =
+      ResolvedVarRef file obj proc_ mLine (identOrig (segName seg)) acc tgt kind conf
+        (provenanceSpan (identSpan (segName seg))) declTy
+
+    go _      []           = []
+    go recvTy (seg : rest) =
+      let (kind, tgt, conf, declTy) = classifyMemberOf recvTy (segName seg)
+          row = mkRow seg (hopAccess rest) tgt kind conf declTy
+      in row : go declTy rest
+
     classifyRoot n
-      | identCanon n == "this"  = ("class", Just obj, "high")
+      | identCanon n == "this"  = ("class", Just obj, "high", Just (T.toLower obj))
       | identCanon n == "super" =
           case Map.lookup (mkIdent obj) (steHierarchy env) of
-            Just anc -> ("class", Just (identOrig anc), "high")
-            Nothing  -> ("unresolved", Nothing, "unresolved")
-      | Map.member n (steLocal env) =
+            Just anc -> ("class", Just (identOrig anc), "high", Just (T.toLower (identOrig anc)))
+            Nothing  -> ("unresolved", Nothing, "unresolved", Nothing)
+      | Just ty <- Map.lookup n (steLocal env) =
           ( if n `Set.member` steParams env then "param" else "local"
-          , Nothing, "high" )
-      | Just (ancIdent, _) <- lookupInstanceVarOwner wsEnv (mkIdent obj) n =
-          ("instance", Just (identOrig ancIdent), "high")
-      | Map.member n (steGlobal env) = ("global", Nothing, "high")
+          , Nothing, "high", Just (T.toLower (renderPbType ty)) )
+      | Just (ancIdent, ty) <- lookupInstanceVarOwner wsEnv (mkIdent obj) n =
+          ("instance", Just (identOrig ancIdent), "high", Just (T.toLower (renderPbType ty)))
+      | Just ty <- Map.lookup n (steGlobal env) =
+          ("global", Nothing, "high", Just (T.toLower (renderPbType ty)))
       | Just ctrlTy <- resolveMemberChainType (steControlIndex env) (steHierarchy env) obj [identCanon n] =
-          ("control", Just ctrlTy, "high")
-      | otherwise = ("unresolved", Nothing, "unresolved")
+          ("control", Just ctrlTy, "high", Just ctrlTy)
+      | otherwise = ("unresolved", Nothing, "unresolved", Nothing)
 
-    classifyMember prefixSegs finalName =
-      case resolveLvalueType env (Lvalue prefixSegs) of
-        Nothing -> ("unresolved", Nothing, "unresolved")
-        Just recvTy
-          | Just (ancIdent, _) <- lookupInstanceVarOwner wsEnv (mkIdent recvTy) finalName ->
-              ("instance", Just (identOrig ancIdent), "high")
-          | identCanon (mkIdent recvTy) `Set.member` builtinClassNames
-            || identCanon (mkIdent recvTy) `Set.member` pbBuiltins ->
-              ("builtin_property", Nothing, "high")
-          | otherwise -> ("unresolved", Nothing, "unresolved")
+    -- | Classify one member hop given the receiver type already resolved by
+    -- the previous hop (this fold's own accumulator) -- not re-derived.
+    classifyMemberOf Nothing _ = ("unresolved", Nothing, "unresolved", Nothing)
+    classifyMemberOf (Just recvTy) finalName
+      | Just (ancIdent, ty) <- lookupInstanceVarOwner wsEnv (mkIdent recvTy) finalName =
+          ("instance", Just (identOrig ancIdent), "high", Just (T.toLower (renderPbType ty)))
+      | identCanon (mkIdent recvTy) `Set.member` builtinClassNames
+        || identCanon (mkIdent recvTy) `Set.member` pbBuiltins =
+          ("builtin_property", Nothing, "high", Nothing)
+      | otherwise = ("unresolved", Nothing, "unresolved", Nothing)
 
 -- | Read references to every named identifier appearing in an expression
 -- tree (RHS, conditions, call args, returns, ...) -- calls
--- 'classifyLvalueRef' on every 'ExLvalue' node 'foldExprs' reaches.
+-- 'classifyLvalueChain' on every 'ExLvalue' node 'foldExprs' reaches.
 varRefsExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Expr -> [ResolvedVarRef]
 varRefsExpr wsEnv env file obj proc_ mLine = foldExprs classify
   where
-    classify (ExLvalue lv) = [classifyLvalueRef wsEnv env file obj proc_ mLine "read" lv]
+    classify (ExLvalue lv) = classifyLvalueChain wsEnv env file obj proc_ mLine "read" lv
     classify _              = []
 
 -- | Walk one procedure body, emitting a 'ResolvedVarRef' for every named
@@ -657,8 +685,8 @@ walkBodyVarRefs wsEnv env file obj proc_ = foldStmts classify
 
     readsIn line = varRefsExpr wsEnv env file obj proc_ (Just line)
 
-    readRef  line lv = [classifyLvalueRef wsEnv env file obj proc_ (Just line) "read"  lv]
-    writeRef line lv = [classifyLvalueRef wsEnv env file obj proc_ (Just line) "write" lv]
+    readRef  line lv = classifyLvalueChain wsEnv env file obj proc_ (Just line) "read"  lv
+    writeRef line lv = classifyLvalueChain wsEnv env file obj proc_ (Just line) "write" lv
 
     condRefs _    Nothing            = []
     condRefs line (Just (DoWhile e)) = readsIn line e

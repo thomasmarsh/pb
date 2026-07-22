@@ -86,6 +86,9 @@ export function buildVarTooltip(
   const badge = VAR_KIND_BADGES[ref.kind];
   let html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
   html += `<div class="tt-cc">${badge}</div>`;
+  if (ref.declared_type) {
+    html += `<div class="tt-meta">${ref.declared_type}</div>`;
+  }
   if (ref.target_object) {
     html += `<div class="tt-meta" style="color:#5B8DD9">${ref.target_object}</div>`;
   }

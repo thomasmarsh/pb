@@ -19,6 +19,7 @@ function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRef
     from_proc: "f_go", line: 1, name: "li_x", access: "read",
     target_object: null, kind: "local", confidence: "high",
     name_start_line: 1, name_start_col: 1, name_end_line: 1, name_end_col: 5,
+    declared_type: null,
     ...overrides,
   };
 }
@@ -113,6 +114,16 @@ describe("buildVarTooltip", () => {
   it("includes target_object when present", () => {
     const t = buildVarTooltip("lo_obj", makeVarRef({ kind: "class", target_object: "w_child" }));
     expect(t?.html).toContain("w_child");
+  });
+
+  it("includes declared_type when present", () => {
+    const t = buildVarTooltip("li_x", makeVarRef({ kind: "local", declared_type: "long" }));
+    expect(t?.html).toContain("long");
+  });
+
+  it("omits a declared_type line when null", () => {
+    const t = buildVarTooltip("ii_count", makeVarRef({ kind: "builtin_property", declared_type: null }));
+    expect(t?.html).not.toContain("tt-meta\">null");
   });
 });
 

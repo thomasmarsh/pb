@@ -20,6 +20,7 @@ function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRef
     from_proc: "f_go", line: 1, name: "li_count", access: "read",
     target_object: null, kind: "local", confidence: "high",
     name_start_line: 1, name_start_col: 1, name_end_line: 1, name_end_col: 9,
+    declared_type: null,
     ...overrides,
   };
 }
@@ -88,6 +89,19 @@ describe("highlightPowerScript — identifier linking", () => {
     const ref = makeVarRef({ kind: "instance" });
     const link = linkCtx({ varSpans: new Map([["1:1", ref]]) });
     const html = highlightPowerScript("li_count", link);
+    expect(html).toContain("src-link-instance");
+  });
+
+  it("links every segment of a dotted chain independently, not just the tail (Plan 196)", () => {
+    // resolved_var_refs now carries one row per Lvalue segment (Plan 196), not just the
+    // trailing one -- the span-keyed maps and linkWord need no changes to pick up the
+    // extra rows, since each segment already has its own (line, col) key.
+    const receiver = makeVarRef({ kind: "control", name: "uo_1", name_start_col: 1 });
+    const tail = makeVarRef({ kind: "instance", name: "ai_count", name_start_col: 6 });
+    const link = linkCtx({ varSpans: new Map([["1:1", receiver], ["1:6", tail]]) });
+    const html = highlightPowerScript("uo_1.ai_count", link);
+    expect((html.match(/data-link-type="var"/g) ?? []).length).toBe(2);
+    expect(html).toContain("src-link-control");
     expect(html).toContain("src-link-instance");
   });
 

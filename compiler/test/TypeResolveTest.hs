@@ -517,7 +517,7 @@ tests = testGroup "TypeResolve"
               (rvrKind r3, rvrTargetObject r3) @?= ("control", Just "datawindow")
             other -> assertFailure ("expected 3 refs, got " ++ show (length other))
 
-      , testCase "dotted: cross-object instance var (uo_1.ai_count)" $ do
+      , testCase "dotted: every segment of uo_1.ai_count resolves independently, not just the tail" $ do
           let sf = emptySrFile
                 { srTypeBlocks =
                     [ mkTB "w_test" "window"
@@ -533,8 +533,12 @@ tests = testGroup "TypeResolve"
               wsEnv = buildWorkspaceEnv [sf, sfHelper]
               idx   = buildControlIndex [sf, sfHelper]
           case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
-            [r] -> (rvrName r, rvrKind r, rvrTargetObject r) @?= ("ai_count", "instance", Just "u_helper")
-            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+            [receiver, tail_] -> do
+              (rvrName receiver, rvrKind receiver, rvrTargetObject receiver, rvrAccess receiver, rvrDeclaredType receiver)
+                @?= ("uo_1", "control", Just "u_helper", "read", Just "u_helper")
+              (rvrName tail_, rvrKind tail_, rvrTargetObject tail_, rvrAccess tail_, rvrDeclaredType tail_)
+                @?= ("ai_count", "instance", Just "u_helper", "read", Just "long")
+            other -> assertFailure ("expected 2 refs (one per segment), got " ++ show (length other))
 
       , testCase "dotted: builtin property when the receiver resolves to a known builtin class" $ do
           let sf = emptySrFile
@@ -549,16 +553,112 @@ tests = testGroup "TypeResolve"
               wsEnv = buildWorkspaceEnv [sf]
               idx   = buildControlIndex [sf]
           case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
-            [r] -> rvrKind r @?= "builtin_property"
-            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+            [receiver, tail_] -> do
+              (rvrKind receiver, rvrDeclaredType receiver) @?= ("control", Just "datawindow")
+              (rvrKind tail_, rvrDeclaredType tail_) @?= ("builtin_property", Nothing)
+            other -> assertFailure ("expected 2 refs (one per segment), got " ++ show (length other))
 
-      , testCase "dotted: unresolvable receiver -> unresolved, no guessing" $ do
+      , testCase "dotted: unresolvable receiver -> every segment unresolved, no guessing" $ do
           let sf = emptySrFile { srFunctions = [ mkFn "f_go" ""
                     [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
                         [LvSegment "unknown_ctrl" Nothing, LvSegment "prop" Nothing])))) ] ] }
           case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
-            [r] -> (rvrKind r, rvrConfidence r, rvrTargetObject r) @?= ("unresolved", "unresolved", Nothing)
-            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+            [receiver, tail_] -> do
+              (rvrKind receiver, rvrConfidence receiver, rvrTargetObject receiver) @?= ("unresolved", "unresolved", Nothing)
+              (rvrKind tail_, rvrConfidence tail_, rvrTargetObject tail_) @?= ("unresolved", "unresolved", Nothing)
+            other -> assertFailure ("expected 2 refs (one per segment), got " ++ show (length other))
+
+      , testCase "three-hop chain resolves every segment, not just the tail" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "uo_1" "u_outer" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "uo_1" Nothing, LvSegment "io_inner" Nothing, LvSegment "ai_count" Nothing ])))) ] ]
+                }
+              sfOuter = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "u_outer" "userobject" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtUserDefined "u_inner") "io_inner" Nothing) ] ] }
+              sfInner = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "u_inner" "userobject" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ] }
+              wsEnv = buildWorkspaceEnv [sf, sfOuter, sfInner]
+              idx   = buildControlIndex [sf, sfOuter, sfInner]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [hop1, hop2, hop3] -> do
+              (rvrName hop1, rvrKind hop1, rvrDeclaredType hop1) @?= ("uo_1", "control", Just "u_outer")
+              (rvrName hop2, rvrKind hop2, rvrTargetObject hop2, rvrDeclaredType hop2)
+                @?= ("io_inner", "instance", Just "u_outer", Just "u_inner")
+              (rvrName hop3, rvrKind hop3, rvrTargetObject hop3, rvrDeclaredType hop3)
+                @?= ("ai_count", "instance", Just "u_inner", Just "long")
+            other -> assertFailure ("expected 3 refs (one per segment), got " ++ show (length other))
+
+      , testCase "write to a chain: trailing segment carries write access, receiver segments stay read" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "uo_1" "u_helper" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsAssign (Lvalue [LvSegment "uo_1" Nothing, LvSegment "ai_count" Nothing]) (ExInt "1")) ] ]
+                }
+              sfHelper = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "u_helper" "userobject" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ] }
+              wsEnv = buildWorkspaceEnv [sf, sfHelper]
+              idx   = buildControlIndex [sf, sfHelper]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [receiver, tail_] -> do
+              rvrAccess receiver @?= "read"
+              rvrAccess tail_    @?= "write"
+            other -> assertFailure ("expected 2 refs (one per segment), got " ++ show (length other))
+
+      , testCase "mid-chain hop's own instance var is shadowed by the nearer ancestor, not the base class (adversarial)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "uo_1" "u_mid" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "uo_1" Nothing, LvSegment "ai_count" Nothing ])))) ] ]
+                }
+              sfBase = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "u_base" "userobject" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "string") "ai_count" Nothing) ] ] }
+              sfMid = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "u_mid" "u_base" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "long") "ai_count" Nothing) ] ] }
+              wsEnv = buildWorkspaceEnv [sf, sfBase, sfMid]
+              idx   = buildControlIndex [sf, sfBase, sfMid]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_receiver, tail_] ->
+              (rvrTargetObject tail_, rvrDeclaredType tail_) @?= (Just "u_mid", Just "long")
+            other -> assertFailure ("expected 2 refs (one per segment), got " ++ show (length other))
+
+      , testCase "declared_type: local/param/instance/global single-segment reads all populate it" $ do
+          let body = [ localVarStmt "ll_x" (PtPrimitive "integer") 5
+                     , Located 6 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ll_x" Nothing]))))
+                     , Located 7 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "al_row" Nothing]))))
+                     , Located 8 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ai_flag" Nothing]))))
+                     , Located 9 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "ig_name" Nothing]))))
+                     ]
+              sf = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtPrimitive "boolean") "ai_flag" Nothing) ] ]
+                , srVariables = [ VariablesBlock GlobalVars [ VarDecl [] "string" "ig_name" ] ]
+                , srFunctions = [ mkFn "f_go" "long al_row" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [local_, param_, instance_, global_] -> do
+              rvrDeclaredType local_    @?= Just "integer"
+              rvrDeclaredType param_    @?= Just "long"
+              rvrDeclaredType instance_ @?= Just "boolean"
+              rvrDeclaredType global_   @?= Just "string"
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
 
       , testCase "single segment matching nothing in scope -> unresolved" $ do
           let sf = emptySrFile { srFunctions = [ mkFn "f_go" ""

@@ -188,7 +188,7 @@ def get_resolved_var_refs(conn: duckdb.DuckDBPyConnection, object_name: str, pro
         return rows(
             conn.execute(
                 "SELECT from_proc, line, name, access, target_object, kind, confidence, "
-                "name_start_line, name_start_col, name_end_line, name_end_col "
+                "name_start_line, name_start_col, name_end_line, name_end_col, declared_type "
                 "FROM resolved_var_refs WHERE object = ? AND from_proc = ? ORDER BY line, name_start_col",
                 [object_name, proc_name],
             )
@@ -196,7 +196,7 @@ def get_resolved_var_refs(conn: duckdb.DuckDBPyConnection, object_name: str, pro
     return rows(
         conn.execute(
             "SELECT from_proc, line, name, access, target_object, kind, confidence, "
-            "name_start_line, name_start_col, name_end_line, name_end_col "
+            "name_start_line, name_start_col, name_end_line, name_end_col, declared_type "
             "FROM resolved_var_refs WHERE object = ? ORDER BY line, name_start_col",
             [object_name],
         )

@@ -108,7 +108,7 @@ def test_get_resolved_var_refs_returns_span_columns(db_conn: duckdb.DuckDBPyConn
     ref = result[0]
     for key in (
         "from_proc", "line", "name", "access", "target_object", "kind", "confidence",
-        "name_start_line", "name_start_col", "name_end_line", "name_end_col",
+        "name_start_line", "name_start_col", "name_end_line", "name_end_col", "declared_type",
     ):
         assert key in ref
 
