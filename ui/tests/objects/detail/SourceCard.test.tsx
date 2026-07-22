@@ -12,7 +12,8 @@ const sourceDetail: ObjectSourceResponse = {
   lines: ["ls_x = 1", "ls_x = 2", "ls_x = 3"],
   procedures: [],
   knownObjects: [],
-  knownProcs: [],
+  resolvedCalls: [],
+  resolvedVarRefs: [],
 };
 
 describe("SourceCard slice highlight", () => {

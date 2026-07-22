@@ -4,7 +4,7 @@ import { Show } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../../state.js";
 import type { AppAction } from "../../../../actions.js";
-import type { ObjectSourceResponse, ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "@pb/platform";
+import type { ObjectSourceResponse, ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 import { SourceViewer } from "../../../components/source/index.js";
 import type { ContextActions } from "../../../components/source/index.js";
 
@@ -54,8 +54,8 @@ export function SourceCard(props: {
           lines={(props.sourceDetail as { lines: string[] }).lines}
           procedures={(props.sourceDetail as { procedures: ProcedureInfo[] }).procedures}
           knownObjects={(props.sourceDetail as { knownObjects: { name: string; kind: string }[] }).knownObjects}
-          knownProcs={(props.sourceDetail as { knownProcs: KnownProcInfo[] }).knownProcs}
-          localSymbols={(props.sourceDetail as { localSymbols?: LocalSymbolInfo[] }).localSymbols}
+          resolvedCalls={(props.sourceDetail as { resolvedCalls: ResolvedCallInfo[] }).resolvedCalls}
+          resolvedVarRefs={(props.sourceDetail as { resolvedVarRefs?: ResolvedVarRefInfo[] }).resolvedVarRefs}
           objectName={props.objectName}
           selectedProcName={props.selectedProcName}
           contextActions={props.contextActions}

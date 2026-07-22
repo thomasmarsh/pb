@@ -3,21 +3,22 @@ import {
   buildObjectTooltip, buildProcTooltip, buildVarTooltip, buildProcBarTooltip,
   PROC_COLORS, PROC_BADGE_COLORS,
 } from "@pb/platform";
-import type { KnownProcInfo, LocalSymbolInfo, ProcedureInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 
-function makeKnownProc(overrides: Partial<KnownProcInfo> = {}): KnownProcInfo {
+function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
   return {
-    name: "f_go", object: "w_test", proc_type: "function",
-    params: "as_name string", return_type: "integer",
-    modifiers: null, start_line: 1, end_line: 5, cyclomatic: 3,
+    from_proc: "f_caller", to_name: "f_go", call_type: "ExCall", line: 3,
+    target_object: "w_test", target_proc: "f_go", kind: "virtual", confidence: "high",
+    to_name_start_line: 3, to_name_start_col: 1, to_name_end_line: 3, to_name_end_col: 5,
     ...overrides,
   };
 }
 
-function makeVar(overrides: Partial<LocalSymbolInfo> = {}): LocalSymbolInfo {
+function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRefInfo {
   return {
-    proc_name: "f_go", var_name: "li_x", raw_type: "integer",
-    resolved_kind: "primitive", resolved_target: null, scope: "local",
+    from_proc: "f_go", line: 1, name: "li_x", access: "read",
+    target_object: null, kind: "local", confidence: "high",
+    name_start_line: 1, name_start_col: 1, name_end_line: 1, name_end_col: 5,
     ...overrides,
   };
 }
@@ -57,60 +58,60 @@ describe("buildObjectTooltip", () => {
 });
 
 describe("buildProcTooltip", () => {
-  it("uses fallback color when proc is undefined", () => {
+  it("uses fallback color when call is undefined", () => {
     const t = buildProcTooltip("f_missing", undefined, undefined);
     expect(t.color).toBe("#a78bfa");
   });
 
-  it("uses proc_type badge color when proc is known", () => {
-    const t = buildProcTooltip("f_go", makeKnownProc({ proc_type: "subroutine" }), undefined);
-    expect(t.color).toBe(PROC_BADGE_COLORS["subroutine"]);
+  it("colors by resolution kind when call is known", () => {
+    const t = buildProcTooltip("f_go", makeCall({ kind: "static" }), undefined);
+    expect(t.color).toBe("#4ec9b0");
   });
 
-  it("includes return type, params, and object in html", () => {
-    const t = buildProcTooltip("f_go", makeKnownProc(), undefined);
-    expect(t.html).toContain("integer");
-    expect(t.html).toContain("as_name string");
+  it("includes the resolved target object and proc in html", () => {
+    const t = buildProcTooltip("f_go", makeCall({ target_object: "w_test", target_proc: "f_go" }), undefined);
     expect(t.html).toContain("w_test");
+    expect(t.html).toContain("f_go");
   });
 
-  it("includes cyclomatic complexity badge", () => {
-    const t = buildProcTooltip("f_go", makeKnownProc({ cyclomatic: 5 }), undefined);
-    expect(t.html).toContain("CC: 5");
+  it("includes the confidence badge", () => {
+    const t = buildProcTooltip("f_go", makeCall({ confidence: "medium" }), undefined);
+    expect(t.html).toContain("medium");
   });
 
   it("includes caller/callee counts when provided", () => {
-    const t = buildProcTooltip("f_go", makeKnownProc(), { caller_count: 4, callee_count: 2 });
+    const t = buildProcTooltip("f_go", makeCall(), { caller_count: 4, callee_count: 2 });
     expect(t.html).toContain("Callers: 4");
     expect(t.html).toContain("Callees: 2");
   });
 });
 
 describe("buildVarTooltip", () => {
-  it("returns null when sym is undefined", () => {
+  it("returns null when ref is undefined", () => {
     expect(buildVarTooltip("li_x", undefined)).toBeNull();
   });
 
   it("uses parameter color for params", () => {
-    const t = buildVarTooltip("as_name", makeVar({ scope: "param" }));
+    const t = buildVarTooltip("as_name", makeVarRef({ kind: "param" }));
     expect(t?.color).toBe("#4fc1ff");
     expect(t?.html).toContain("badge-param");
   });
 
   it("uses local color for locals", () => {
-    const t = buildVarTooltip("li_x", makeVar({ scope: "local" }));
+    const t = buildVarTooltip("li_x", makeVarRef({ kind: "local" }));
     expect(t?.color).toBe("#9cdcfe");
     expect(t?.html).toContain("badge-var");
   });
 
-  it("uses instance color and badge for instance vars", () => {
-    const t = buildVarTooltip("ii_count", makeVar({ scope: "instance" }));
-    expect(t?.color).toBe("#c586c0");
+  it("uses a distinct instance color and badge (not the keyword purple)", () => {
+    const t = buildVarTooltip("ii_count", makeVarRef({ kind: "instance" }));
+    expect(t?.color).toBe("#98c379");
+    expect(t?.color).not.toBe("#c586c0");
     expect(t?.html).toContain("badge-instance");
   });
 
-  it("includes resolved_target when present", () => {
-    const t = buildVarTooltip("lo_obj", makeVar({ resolved_target: "w_child", resolved_kind: "object" }));
+  it("includes target_object when present", () => {
+    const t = buildVarTooltip("lo_obj", makeVarRef({ kind: "class", target_object: "w_child" }));
     expect(t?.html).toContain("w_child");
   });
 });

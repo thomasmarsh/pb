@@ -4,28 +4,31 @@ import { describe, it, expect, afterEach } from "vitest";
 import { fireEvent, render, cleanup } from "@solidjs/testing-library";
 import { SourceViewer } from "../../app/src/views/components/source/SourceViewer.js";
 import { createTestStore } from "../helpers.js";
-import type { KnownProcInfo, ProcedureInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo } from "@pb/platform";
 
 afterEach(() => {
   cleanup();
 });
 
-const knownProc: KnownProcInfo = {
-  name: "f_helper",
-  object: "w_test",
-  proc_type: "function",
-  params: null,
-  return_type: null,
-  modifiers: null,
-  start_line: 1,
-  end_line: 5,
-  cyclomatic: 2,
+const resolvedCall: ResolvedCallInfo = {
+  from_proc: "f_current",
+  to_name: "f_helper",
+  call_type: "ExCall",
+  line: 1,
+  target_object: "w_test",
+  target_proc: "f_helper",
+  kind: "virtual",
+  confidence: "high",
+  to_name_start_line: 1,
+  to_name_start_col: 1,
+  to_name_end_line: 1,
+  to_name_end_col: 9,
 };
 
 function renderViewer(opts: {
   lines?: string[];
   procedures?: ProcedureInfo[];
-  knownProcs?: KnownProcInfo[];
+  resolvedCalls?: ResolvedCallInfo[];
   knownObjects?: { name: string; kind: string }[];
   sliceHighlight?: { lines: Set<number>; label: string } | null;
   onClearSliceHighlight?: () => void;
@@ -37,7 +40,7 @@ function renderViewer(opts: {
       lines={opts.lines ?? ["f_helper()"]}
       procedures={opts.procedures ?? []}
       knownObjects={opts.knownObjects ?? []}
-      knownProcs={opts.knownProcs ?? [knownProc]}
+      resolvedCalls={opts.resolvedCalls ?? [resolvedCall]}
       objectName="w_host"
       sliceHighlight={opts.sliceHighlight}
       onClearSliceHighlight={opts.onClearSliceHighlight}
@@ -92,7 +95,7 @@ describe("SourceViewer", () => {
   it("renders a linkable object span for a known object", () => {
     renderViewer({
       lines: ["open(w_main)"],
-      knownProcs: [],
+      resolvedCalls: [],
       knownObjects: [{ name: "w_main", kind: "window" }],
     });
     const span = getObjSpan();
@@ -103,7 +106,7 @@ describe("SourceViewer", () => {
   it("clicking an object span dispatches select with the object name", () => {
     const { captured } = renderViewer({
       lines: ["open(w_main)"],
-      knownProcs: [],
+      resolvedCalls: [],
       knownObjects: [{ name: "w_main", kind: "window" }],
     });
     fireEvent.click(getObjSpan()!);

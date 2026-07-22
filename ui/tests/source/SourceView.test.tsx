@@ -45,17 +45,24 @@ describe("SourceView", () => {
     expect(line10.classList.contains("source-gutter-line--range")).toBe(true);
   });
 
-  it("links known procedures into clickable spans", () => {
+  it("links a resolved call into a clickable span, keyed by its own (line, col)", () => {
     const { container } = render(() => (
       <SourceView
         lines={["f_helper()"]}
-        knownProcs={[{ name: "f_helper", object: "w_test", proc_type: "function", modifiers: null, params: null, return_type: null, start_line: 1, end_line: 5, cyclomatic: 1 }]}
+        baseLine={1}
+        resolvedCalls={[{
+          from_proc: "f_go", to_name: "f_helper", call_type: "ExCall", line: 1,
+          target_object: "w_test", target_proc: "f_helper", kind: "virtual", confidence: "high",
+          to_name_start_line: 1, to_name_start_col: 1, to_name_end_line: 1, to_name_end_col: 9,
+        }]}
         objectName="w_host"
       />
     ));
     const span = container.querySelector('[data-link-type="procedure"]') as HTMLElement | null;
     expect(span).not.toBeNull();
     expect(span?.dataset.linkName).toBe("f_helper");
+    expect(span?.dataset.linkLine).toBe("1");
+    expect(span?.dataset.linkCol).toBe("1");
   });
 
   it("renders a proc bar on exactly the procedure's own lines, never beyond it", () => {

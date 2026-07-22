@@ -8,17 +8,17 @@ import type { ContextMenuTarget, ContextActions } from "./SourceContextMenu.js";
 import { SourceContextMenu } from "./SourceContextMenu.js";
 import {
   SourceView,
-  buildProcMap, buildProcCountMap, buildProcFirstLine,
+  buildProcCountMap, buildProcFirstLine,
   procSelectedRange, procedureAtLine,
-  type ProcedureInfo, type KnownProcInfo, type LocalSymbolInfo,
+  type ProcedureInfo, type ResolvedCallInfo, type ResolvedVarRefInfo, type SourceLinkTarget,
 } from "@pb/platform";
 
 interface SourceViewerProps {
   lines: string[];
   procedures: ProcedureInfo[];
   knownObjects: { name: string; kind: string }[];
-  knownProcs: KnownProcInfo[];
-  localSymbols?: LocalSymbolInfo[];
+  resolvedCalls: ResolvedCallInfo[];
+  resolvedVarRefs?: ResolvedVarRefInfo[];
   objectName: string;
   selectedProcName?: string;
   onProcBarClick?: (proc: ProcedureInfo) => void;
@@ -31,7 +31,6 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
   const store = props.store;
   const [menuTarget, setMenuTarget] = createSignal<ContextMenuTarget | null>(null);
 
-  const procMap = createMemo(() => buildProcMap(props.knownProcs, props.procedures, props.objectName));
   const procCountMap = createMemo(() => buildProcCountMap(props.procedures));
   const procFirstLine = createMemo(() => buildProcFirstLine(props.procedures));
   const selectedRange = createMemo(() => procSelectedRange(props.procedures, props.selectedProcName));
@@ -48,13 +47,13 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
 
   const dimLines = createMemo<Set<number> | null>(() => props.sliceHighlight?.lines ?? null);
 
-  function handleLinkClick(linkType: "object" | "procedure" | "var", linkName: string) {
+  function handleLinkClick(linkType: "object" | "procedure" | "var", linkName: string, target: SourceLinkTarget) {
     if (linkType === "object") {
       store.dispatch({ tag: "objects", action: { tag: "select", name: linkName } });
     } else if (linkType === "procedure") {
-      const proc = procMap().get(linkName.toLowerCase());
-      store.dispatch(proc
-        ? { tag: "objects", action: { tag: "proc-select", objectName: proc.object, procName: proc.name } }
+      const call = target as ResolvedCallInfo | undefined;
+      store.dispatch(call?.target_object && call?.target_proc
+        ? { tag: "objects", action: { tag: "proc-select", objectName: call.target_object, procName: call.target_proc } }
         : { tag: "objects", action: { tag: "select", name: linkName } }
       );
     }
@@ -65,16 +64,16 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     linkType: "object" | "procedure" | "var",
     linkName: string,
     sourceLine: number,
+    target: SourceLinkTarget,
   ) {
-    const lower = linkName.toLowerCase();
-    const proc = linkType === "procedure" ? procMap().get(lower) : undefined;
-    const counts = linkType === "procedure" ? procCountMap().get(lower) : undefined;
+    const call = linkType === "procedure" ? (target as ResolvedCallInfo | undefined) : undefined;
+    const counts = call ? procCountMap().get(call.to_name.toLowerCase()) : undefined;
     setMenuTarget({
       linkType, linkName, x: e.clientX, y: e.clientY,
       sourceLine,
       callerCount: counts?.caller_count,
       calleeCount: counts?.callee_count,
-      procObject: proc?.object,
+      procObject: call?.target_object ?? undefined,
       viewedProcName: procedureAtLine(props.procedures, sourceLine)?.name,
     });
   }
@@ -92,9 +91,9 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
       <SourceView
         lines={props.lines}
         knownObjects={props.knownObjects}
-        knownProcs={props.knownProcs}
+        resolvedCalls={props.resolvedCalls}
+        resolvedVarRefs={props.resolvedVarRefs}
         procedures={props.procedures}
-        localSymbols={props.localSymbols}
         objectName={props.objectName}
         rangeLines={rangeLines()}
         procFirstLine={procFirstLine()}

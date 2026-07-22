@@ -1,4 +1,4 @@
-import type { KnownProcInfo, LocalSymbolInfo, ProcedureInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 
 export function buildObjectMap(
   knownObjects: { name: string; kind: string }[],
@@ -8,36 +8,29 @@ export function buildObjectMap(
   return map;
 }
 
-export function buildProcMap(
-  knownProcs: KnownProcInfo[],
-  procedures: ProcedureInfo[],
-  objectName: string,
-): Map<string, KnownProcInfo> {
-  const map = new Map<string, KnownProcInfo>();
-  for (const p of knownProcs) map.set(p.name.toLowerCase(), p);
-  for (const p of procedures) {
-    map.set(p.name.toLowerCase(), {
-      name: p.name,
-      object: objectName,
-      proc_type: p.proc_type,
-      modifiers: p.modifiers,
-      params: p.params,
-      return_type: p.return_type,
-      start_line: p.start_line,
-      end_line: p.end_line,
-      cyclomatic: p.cyclomatic,
-    });
+// Keys by the call site's own (line, start_col) -- not the callee name -- so two
+// unrelated calls that happen to share a name (e.g. RowCount on two different
+// DataWindow descendants) resolve independently instead of one clobbering the
+// other in a last-write-wins name map (Plan 195 Phase F).
+export function buildCallSpanMap(
+  resolvedCalls: ResolvedCallInfo[],
+): Map<string, ResolvedCallInfo> {
+  const map = new Map<string, ResolvedCallInfo>();
+  for (const c of resolvedCalls) {
+    if (c.to_name_start_line == null || c.to_name_start_col == null) continue;
+    map.set(`${c.to_name_start_line}:${c.to_name_start_col}`, c);
   }
   return map;
 }
 
-export function buildVarMap(
-  localSymbols: LocalSymbolInfo[],
-): Map<string, LocalSymbolInfo> {
-  const map = new Map<string, LocalSymbolInfo>();
-  for (const s of localSymbols) {
-    const key = s.var_name.toLowerCase();
-    if (!map.has(key)) map.set(key, s);
+// Keys by the reference's own (line, start_col), same rationale as buildCallSpanMap.
+export function buildVarRefSpanMap(
+  resolvedVarRefs: ResolvedVarRefInfo[],
+): Map<string, ResolvedVarRefInfo> {
+  const map = new Map<string, ResolvedVarRefInfo>();
+  for (const r of resolvedVarRefs) {
+    if (r.name_start_line == null || r.name_start_col == null) continue;
+    map.set(`${r.name_start_line}:${r.name_start_col}`, r);
   }
   return map;
 }

@@ -1,4 +1,4 @@
-import type { KnownProcInfo, LocalSymbolInfo, ProcedureInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 
 export const PROC_COLORS: Record<string, string> = {
   function: "proc-function",
@@ -28,21 +28,26 @@ export function buildObjectTooltip(
   };
 }
 
+const CALL_KIND_COLORS: Record<ResolvedCallInfo["kind"], string> = {
+  virtual: "#a78bfa",
+  static: "#4ec9b0",
+  inherited: "#56b6c2",
+  unresolved: "#6b7280",
+};
+
 export function buildProcTooltip(
   linkName: string,
-  proc: KnownProcInfo | undefined,
+  call: ResolvedCallInfo | undefined,
   counts: { caller_count: number; callee_count: number } | undefined,
 ): TooltipContent {
-  const color = proc ? (PROC_BADGE_COLORS[proc.proc_type] ?? "#a78bfa") : "#a78bfa";
+  const color = call ? CALL_KIND_COLORS[call.kind] : "#a78bfa";
   let html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
-  if (proc) {
-    const ret = proc.return_type ? ` → ${proc.return_type}` : "";
-    html += `<div class="tt-meta">${proc.proc_type}${ret}</div>`;
-    if (proc.params) html += `<div class="tt-meta">(${proc.params})</div>`;
-    html += `<div class="tt-meta">${proc.object}</div>`;
-    if (proc.cyclomatic != null) {
-      html += `<div class="tt-cc"><span class="badge badge-cc">CC: ${proc.cyclomatic}</span></div>`;
-    }
+  if (call) {
+    const target = call.target_object
+      ? `${call.target_object}.${call.target_proc ?? call.to_name}`
+      : call.to_name;
+    html += `<div class="tt-meta">${call.kind} → ${target}</div>`;
+    html += `<div class="tt-cc"><span class="badge badge-cc">${call.confidence}</span></div>`;
     if (counts) {
       html += `<div class="tt-meta">Callers: ${counts.caller_count} · Callees: ${counts.callee_count}</div>`;
     }
@@ -50,34 +55,41 @@ export function buildProcTooltip(
   return { color, html };
 }
 
-const VAR_SCOPE_COLORS: Record<LocalSymbolInfo["scope"], string> = {
-  param: "#4fc1ff",
-  instance: "#c586c0",
+const VAR_KIND_COLORS: Record<ResolvedVarRefInfo["kind"], string> = {
   local: "#9cdcfe",
+  param: "#4fc1ff",
+  instance: "#98c379",
+  global: "#fb923c",
+  control: "#4ade80",
+  class: "#5B8DD9",
+  builtin_property: "#dcdcaa",
+  unresolved: "#6b7280",
 };
 
-const VAR_SCOPE_BADGES: Record<LocalSymbolInfo["scope"], string> = {
+const VAR_KIND_BADGES: Record<ResolvedVarRefInfo["kind"], string> = {
+  local: `<span class="badge badge-var">local</span>`,
   param: `<span class="badge badge-param">param</span>`,
   instance: `<span class="badge badge-instance">instance</span>`,
-  local: `<span class="badge badge-var">local</span>`,
+  global: `<span class="badge badge-global">global</span>`,
+  control: `<span class="badge badge-control">control</span>`,
+  class: `<span class="badge badge-class">class</span>`,
+  builtin_property: `<span class="badge badge-builtin">builtin</span>`,
+  unresolved: `<span class="badge">unresolved</span>`,
 };
 
 export function buildVarTooltip(
   linkName: string,
-  sym: LocalSymbolInfo | undefined,
+  ref: ResolvedVarRefInfo | undefined,
 ): TooltipContent | null {
-  if (!sym) return null;
-  const color = VAR_SCOPE_COLORS[sym.scope];
-  const badge = VAR_SCOPE_BADGES[sym.scope];
-  const kindColor = sym.resolved_kind === "object" ? "#5B8DD9"
-    : sym.resolved_kind === "primitive" ? "#4ec9b0"
-    : "#9cdcfe";
+  if (!ref) return null;
+  const color = VAR_KIND_COLORS[ref.kind];
+  const badge = VAR_KIND_BADGES[ref.kind];
   let html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
-  html += `<div class="tt-meta" style="color:${kindColor}">${sym.raw_type}</div>`;
   html += `<div class="tt-cc">${badge}</div>`;
-  if (sym.resolved_target) {
-    html += `<div class="tt-meta" style="color:#5B8DD9">${sym.resolved_target}</div>`;
+  if (ref.target_object) {
+    html += `<div class="tt-meta" style="color:#5B8DD9">${ref.target_object}</div>`;
   }
+  html += `<div class="tt-meta">${ref.access}${ref.confidence !== "high" ? ` · ${ref.confidence}` : ""}</div>`;
   return { color, html };
 }
 

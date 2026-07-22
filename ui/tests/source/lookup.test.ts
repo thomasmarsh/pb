@@ -1,19 +1,29 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine, buildProcRangeMap,
+  buildObjectMap, buildCallSpanMap, buildVarRefSpanMap, buildProcCountMap, buildProcFirstLine, buildProcRangeMap,
 } from "@pb/platform";
-import type { KnownProcInfo, ProcedureInfo, LocalSymbolInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 
 function makeProc(name: string, start = 1, end = 5): ProcedureInfo {
   return { name, proc_type: "function", modifiers: null, params: null, return_type: null, start_line: start, end_line: end, cyclomatic: null };
 }
 
-function makeKnownProc(name: string, object = "w_other"): KnownProcInfo {
-  return { name, object, proc_type: "function", params: null, return_type: null, modifiers: null, start_line: null, end_line: null, cyclomatic: null };
+function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
+  return {
+    from_proc: "f_go", to_name: "f_validate", call_type: "ExCall", line: 10,
+    target_object: "w_other", target_proc: "f_validate", kind: "virtual", confidence: "high",
+    to_name_start_line: 10, to_name_start_col: 5, to_name_end_line: 10, to_name_end_col: 15,
+    ...overrides,
+  };
 }
 
-function makeVar(name: string): LocalSymbolInfo {
-  return { proc_name: "f_go", var_name: name, raw_type: "integer", resolved_kind: "primitive", resolved_target: null, scope: "local" };
+function makeVarRef(overrides: Partial<ResolvedVarRefInfo> = {}): ResolvedVarRefInfo {
+  return {
+    from_proc: "f_go", line: 10, name: "li_count", access: "read",
+    target_object: null, kind: "local", confidence: "high",
+    name_start_line: 10, name_start_col: 3, name_end_line: 10, name_end_col: 12,
+    ...overrides,
+  };
 }
 
 describe("buildObjectMap", () => {
@@ -33,47 +43,53 @@ describe("buildObjectMap", () => {
   });
 });
 
-describe("buildProcMap", () => {
-  it("returns empty map for empty inputs", () => {
-    expect(buildProcMap([], [], "w_test")).toEqual(new Map());
+describe("buildCallSpanMap", () => {
+  it("returns empty map for empty input", () => {
+    expect(buildCallSpanMap([])).toEqual(new Map());
   });
 
-  it("includes known procs keyed by lowercase name", () => {
-    const map = buildProcMap([makeKnownProc("F_Validate")], [], "w_test");
-    expect(map.has("f_validate")).toBe(true);
-    expect(map.get("f_validate")?.object).toBe("w_other");
+  it("keys by line:start_col, not by name", () => {
+    const map = buildCallSpanMap([makeCall()]);
+    expect(map.has("10:5")).toBe(true);
+    expect(map.get("10:5")?.to_name).toBe("f_validate");
   });
 
-  it("local procedures override known procs and use objectName", () => {
-    const map = buildProcMap([makeKnownProc("f_go", "w_other")], [makeProc("f_go")], "w_local");
-    expect(map.get("f_go")?.object).toBe("w_local");
+  it("two calls with the same name on different lines resolve independently", () => {
+    const a = makeCall({ to_name_start_line: 10, to_name_start_col: 5, target_object: "w_a" });
+    const b = makeCall({ to_name_start_line: 20, to_name_start_col: 5, target_object: "w_b" });
+    const map = buildCallSpanMap([a, b]);
+    expect(map.get("10:5")?.target_object).toBe("w_a");
+    expect(map.get("20:5")?.target_object).toBe("w_b");
   });
 
-  it("converts ProcedureInfo fields to KnownProcInfo shape", () => {
-    const p = makeProc("f_run", 10, 20);
-    const map = buildProcMap([], [p], "w_obj");
-    const entry = map.get("f_run")!;
-    expect(entry.start_line).toBe(10);
-    expect(entry.end_line).toBe(20);
-    expect(entry.object).toBe("w_obj");
+  it("skips rows with no span", () => {
+    const map = buildCallSpanMap([makeCall({ to_name_start_line: null, to_name_start_col: null })]);
+    expect(map.size).toBe(0);
   });
 });
 
-describe("buildVarMap", () => {
+describe("buildVarRefSpanMap", () => {
   it("returns empty map for empty input", () => {
-    expect(buildVarMap([])).toEqual(new Map());
+    expect(buildVarRefSpanMap([])).toEqual(new Map());
   });
 
-  it("keys by lowercase var_name", () => {
-    const map = buildVarMap([makeVar("LI_Count")]);
-    expect(map.has("li_count")).toBe(true);
+  it("keys by line:start_col", () => {
+    const map = buildVarRefSpanMap([makeVarRef()]);
+    expect(map.has("10:3")).toBe(true);
+    expect(map.get("10:3")?.name).toBe("li_count");
   });
 
-  it("first occurrence wins on duplicate names", () => {
-    const v1 = { ...makeVar("li_x"), raw_type: "integer" };
-    const v2 = { ...makeVar("li_x"), raw_type: "string" };
-    const map = buildVarMap([v1, v2]);
-    expect(map.get("li_x")?.raw_type).toBe("integer");
+  it("two refs with the same name in different procedures resolve independently", () => {
+    const a = makeVarRef({ from_proc: "f_a", name_start_line: 10, name_start_col: 3, kind: "local" });
+    const b = makeVarRef({ from_proc: "f_b", name_start_line: 30, name_start_col: 3, kind: "param" });
+    const map = buildVarRefSpanMap([a, b]);
+    expect(map.get("10:3")?.kind).toBe("local");
+    expect(map.get("30:3")?.kind).toBe("param");
+  });
+
+  it("skips rows with no span", () => {
+    const map = buildVarRefSpanMap([makeVarRef({ name_start_line: null, name_start_col: null })]);
+    expect(map.size).toBe(0);
   });
 });
 

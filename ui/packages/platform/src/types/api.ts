@@ -83,25 +83,37 @@ export interface ProcedureInfo {
   callee_count?: number;
 }
 
-export interface KnownProcInfo {
-  name: string;
-  object: string;
-  proc_type: string;
-  params: string | null;
-  return_type: string | null;
-  modifiers: string | null;
-  start_line: number | null;
-  end_line: number | null;
-  cyclomatic: number | null;
+// Canonical resolved call-site cross-reference (PB.Analysis.TypeResolve.ResolvedCall),
+// span-keyed on (to_name_start_line, to_name_start_col) for identifier-linking.
+export interface ResolvedCallInfo {
+  from_proc: string;
+  to_name: string;
+  call_type: string;
+  line: number | null;
+  target_object: string | null;
+  target_proc: string | null;
+  kind: "virtual" | "static" | "inherited" | "unresolved";
+  confidence: "high" | "medium" | "low";
+  to_name_start_line: number | null;
+  to_name_start_col: number | null;
+  to_name_end_line: number | null;
+  to_name_end_col: number | null;
 }
 
-export interface LocalSymbolInfo {
-  proc_name: string;
-  var_name: string;
-  raw_type: string;
-  resolved_kind: string;
-  resolved_target: string | null;
-  scope: "local" | "param" | "instance";
+// Canonical resolved variable/property cross-reference (PB.Analysis.TypeResolve.ResolvedVarRef),
+// span-keyed on (name_start_line, name_start_col) for identifier-linking.
+export interface ResolvedVarRefInfo {
+  from_proc: string;
+  line: number | null;
+  name: string;
+  access: "read" | "write";
+  target_object: string | null;
+  kind: "local" | "param" | "instance" | "global" | "control" | "class" | "builtin_property" | "unresolved";
+  confidence: "high" | "unresolved";
+  name_start_line: number | null;
+  name_start_col: number | null;
+  name_end_line: number | null;
+  name_end_col: number | null;
 }
 
 export interface ObjectSourceResponse {
@@ -109,8 +121,8 @@ export interface ObjectSourceResponse {
   lines: string[];
   procedures: ProcedureInfo[];
   knownObjects: { name: string; kind: string }[];
-  knownProcs: KnownProcInfo[];
-  localSymbols?: LocalSymbolInfo[];
+  resolvedCalls: ResolvedCallInfo[];
+  resolvedVarRefs: ResolvedVarRefInfo[];
   loading?: boolean;
 }
 
@@ -126,8 +138,8 @@ export interface ProcedureDetailResponse extends ProcedureRow {
   callees?: string[];
   sql_statements?: SqlStatementRow[];
   knownObjects?: { name: string; kind: string }[];
-  knownProcs?: KnownProcInfo[];
-  localSymbols?: LocalSymbolInfo[];
+  resolvedCalls?: ResolvedCallInfo[];
+  resolvedVarRefs?: ResolvedVarRefInfo[];
   activeTab?: string;
   loading?: boolean;
 }

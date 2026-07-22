@@ -159,55 +159,48 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     return obj
 
 
-def get_linking_context(conn: duckdb.DuckDBPyConnection, object_name: str) -> dict[str, Any]:
-    """Known objects and procedures visible for identifier-linking within `object_name`'s source."""
-    known_objects = rows(conn.execute("SELECT object AS name, kind FROM objects WHERE object != ? ORDER BY object", [object_name]))
+def get_known_objects(conn: duckdb.DuckDBPyConnection, object_name: str) -> list[dict[str, Any]]:
+    """Every other object in the workspace, for the source viewer's name-based object-link fallback."""
+    return rows(conn.execute("SELECT object AS name, kind FROM objects WHERE object != ? ORDER BY object", [object_name]))
 
-    known_procs = rows(
+
+def get_resolved_calls(conn: duckdb.DuckDBPyConnection, object_name: str) -> list[dict[str, Any]]:
+    """Resolved call sites within `object_name`'s source, span-keyed for identifier-linking."""
+    return rows(
         conn.execute(
-            "SELECT DISTINCT p.proc_name AS name, p.object, p.proc_type, "
-            "p.params, p.return_type, p.start_line, p.end_line, p.cyclomatic "
-            "FROM procedures p "
-            "JOIN call_sites c ON c.to_name = p.proc_name "
-            "WHERE c.object = ? "
-            "UNION "
-            "SELECT DISTINCT p.proc_name AS name, p.object, p.proc_type, "
-            "p.params, p.return_type, p.start_line, p.end_line, p.cyclomatic "
-            "FROM procedures p "
-            "WHERE p.object = ? AND p.proc_type IN ('function', 'subroutine') "
-            "ORDER BY name",
-            [object_name, object_name],
+            "SELECT from_proc, to_name, call_type, line, target_object, target_proc, kind, confidence, "
+            "to_name_start_line, to_name_start_col, to_name_end_line, to_name_end_col "
+            "FROM resolved_calls WHERE object = ? ORDER BY line, to_name_start_col",
+            [object_name],
         )
     )
 
-    return {"knownObjects": known_objects, "knownProcs": known_procs}
 
+def get_resolved_var_refs(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str | None = None) -> list[dict[str, Any]]:
+    """Resolved variable/property references within `object_name`'s source, span-keyed for identifier-linking.
 
-def get_local_symbols(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str | None = None) -> list[dict[str, Any]]:
-    """Resolved local/param/instance variable types for identifier-linking, optionally scoped to one procedure.
-
-    Instance vars carry ``scope = 'instance'`` and an empty ``proc_name`` (they have
-    no owning procedure — visible from every procedure body in the object), so a
-    proc-scoped lookup must include them alongside that procedure's own locals/params.
+    Optionally scoped to one procedure. Unlike the old declaration-shaped
+    `resolved_types` lookup, `resolved_var_refs` is per-occurrence -- an
+    instance var read from `proc_name` already carries `from_proc = proc_name`,
+    so plain equality scoping is correct with no separate instance-var carve-out.
     """
-    try:
-        if proc_name is not None:
-            return rows(
-                conn.execute(
-                    "SELECT proc_name, var_name, raw_type, kind AS resolved_kind, target AS resolved_target, scope "
-                    "FROM resolved_types WHERE object = ? AND (proc_name = ? OR scope = 'instance') ORDER BY var_name",
-                    [object_name, proc_name],
-                )
-            )
+    if proc_name is not None:
         return rows(
             conn.execute(
-                "SELECT proc_name, var_name, raw_type, kind AS resolved_kind, target AS resolved_target, scope "
-                "FROM resolved_types WHERE object = ? ORDER BY proc_name, var_name",
-                [object_name],
+                "SELECT from_proc, line, name, access, target_object, kind, confidence, "
+                "name_start_line, name_start_col, name_end_line, name_end_col "
+                "FROM resolved_var_refs WHERE object = ? AND from_proc = ? ORDER BY line, name_start_col",
+                [object_name, proc_name],
             )
         )
-    except Exception:
-        return []
+    return rows(
+        conn.execute(
+            "SELECT from_proc, line, name, access, target_object, kind, confidence, "
+            "name_start_line, name_start_col, name_end_line, name_end_col "
+            "FROM resolved_var_refs WHERE object = ? ORDER BY line, name_start_col",
+            [object_name],
+        )
+    )
 
 
 def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
@@ -256,17 +249,14 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         )
     )
 
-    linking_context = get_linking_context(conn, name)
-    local_symbols = get_local_symbols(conn, name)
-
     return {
         "file": file_path,
         "lines": lines,
         "source_available": bool(lines),
         "procedures": procs,
-        "knownObjects": linking_context["knownObjects"],
-        "knownProcs": linking_context["knownProcs"],
-        "localSymbols": local_symbols,
+        "knownObjects": get_known_objects(conn, name),
+        "resolvedCalls": get_resolved_calls(conn, name),
+        "resolvedVarRefs": get_resolved_var_refs(conn, name),
     }
 
 

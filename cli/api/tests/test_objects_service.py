@@ -10,6 +10,8 @@ from pb.api.services.objects import (
     get_object_detail,
     get_object_layout,
     get_object_source,
+    get_resolved_calls,
+    get_resolved_var_refs,
     pbl_name,
 )
 
@@ -50,7 +52,8 @@ def test_get_object_source_returns_dict(db_conn: duckdb.DuckDBPyConnection):
     assert "lines" in result
     assert "procedures" in result
     assert "knownObjects" in result
-    assert "knownProcs" in result
+    assert "resolvedCalls" in result
+    assert "resolvedVarRefs" in result
     assert isinstance(result["lines"], list)
 
 
@@ -58,19 +61,70 @@ def test_get_object_source_not_found(db_conn: duckdb.DuckDBPyConnection):
     assert get_object_source(db_conn, "__nonexistent__") is None
 
 
-def test_get_object_source_local_symbols_include_instance_vars(db_conn: duckdb.DuckDBPyConnection):
-    """An object's instance (data member) variables must reach the source
-    viewer's localSymbols with scope == "instance", not just its procedure
-    locals/params — Plan 193 Phase 2."""
+def test_get_object_source_var_refs_include_instance_vars(db_conn: duckdb.DuckDBPyConnection):
+    """An object's instance (data member) variable reads must reach the source
+    viewer's resolvedVarRefs with kind == "instance", scoped by the actual
+    procedure the reference occurs in -- Plan 195 Phase F."""
     row = db_conn.execute(
-        "SELECT object FROM global_vars GROUP BY object ORDER BY count(*) DESC LIMIT 1"
+        "SELECT object FROM resolved_var_refs WHERE kind = 'instance' "
+        "GROUP BY object ORDER BY count(*) DESC LIMIT 1"
     ).fetchone()
-    assert row is not None, "no objects with instance vars in fixture corpus"
+    assert row is not None, "no objects with instance var refs in fixture corpus"
     result = get_object_source(db_conn, row[0])
     assert result is not None
-    instance_syms = [s for s in result["localSymbols"] if s["scope"] == "instance"]
-    assert len(instance_syms) > 0
-    assert all(s["proc_name"] == "" for s in instance_syms)
+    instance_refs = [r for r in result["resolvedVarRefs"] if r["kind"] == "instance"]
+    assert len(instance_refs) > 0
+    assert all(r["from_proc"] for r in instance_refs)
+
+
+def test_get_resolved_calls_returns_span_columns(db_conn: duckdb.DuckDBPyConnection):
+    row = db_conn.execute(
+        "SELECT object FROM resolved_calls GROUP BY object ORDER BY count(*) DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no resolved_calls rows in fixture corpus"
+    result = get_resolved_calls(db_conn, row[0])
+    assert len(result) > 0
+    call = result[0]
+    for key in (
+        "from_proc", "to_name", "call_type", "line", "target_object",
+        "target_proc", "kind", "confidence",
+        "to_name_start_line", "to_name_start_col",
+        "to_name_end_line", "to_name_end_col",
+    ):
+        assert key in call
+
+
+def test_get_resolved_calls_scoped_to_object(db_conn: duckdb.DuckDBPyConnection):
+    assert get_resolved_calls(db_conn, "__nonexistent__") == []
+
+
+def test_get_resolved_var_refs_returns_span_columns(db_conn: duckdb.DuckDBPyConnection):
+    row = db_conn.execute(
+        "SELECT object FROM resolved_var_refs GROUP BY object ORDER BY count(*) DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no resolved_var_refs rows in fixture corpus"
+    result = get_resolved_var_refs(db_conn, row[0])
+    assert len(result) > 0
+    ref = result[0]
+    for key in (
+        "from_proc", "line", "name", "access", "target_object", "kind", "confidence",
+        "name_start_line", "name_start_col", "name_end_line", "name_end_col",
+    ):
+        assert key in ref
+
+
+def test_get_resolved_var_refs_scoped_to_proc(db_conn: duckdb.DuckDBPyConnection):
+    row = db_conn.execute(
+        "SELECT object, from_proc FROM resolved_var_refs WHERE from_proc != '' "
+        "GROUP BY object, from_proc ORDER BY count(*) DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no proc-scoped resolved_var_refs rows in fixture corpus"
+    object_name, proc_name = row
+    scoped = get_resolved_var_refs(db_conn, object_name, proc_name)
+    assert len(scoped) > 0
+    assert all(r["from_proc"] == proc_name for r in scoped)
+    unscoped = get_resolved_var_refs(db_conn, object_name)
+    assert len(unscoped) >= len(scoped)
 
 
 def test_get_explore_tree(db_conn: duckdb.DuckDBPyConnection):

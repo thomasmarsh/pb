@@ -7,7 +7,7 @@ from typing import Any
 
 import duckdb
 from pb.api.routes.dependencies import rows
-from pb.api.services.objects import _get_root, get_linking_context, get_local_symbols
+from pb.api.services.objects import _get_root, get_known_objects, get_resolved_calls, get_resolved_var_refs
 
 
 def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str) -> dict[str, Any] | None:
@@ -75,10 +75,9 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     ))
     proc["sql_statements"] = sql_stmts
 
-    linking_context = get_linking_context(conn, object_name)
-    proc["knownObjects"] = linking_context["knownObjects"]
-    proc["knownProcs"] = linking_context["knownProcs"]
-    proc["localSymbols"] = get_local_symbols(conn, object_name, proc_name)
+    proc["knownObjects"] = get_known_objects(conn, object_name)
+    proc["resolvedCalls"] = get_resolved_calls(conn, object_name)
+    proc["resolvedVarRefs"] = get_resolved_var_refs(conn, object_name, proc_name)
 
     return proc
 

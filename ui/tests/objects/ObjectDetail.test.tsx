@@ -158,17 +158,21 @@ const sourceDetail: ObjectSourceResponse = {
   lines: ["f_helper()"],
   procedures: [],
   knownObjects: [],
-  knownProcs: [{
-    name: "f_helper",
-    object: "w_test",
-    proc_type: "function",
-    params: null,
-    return_type: null,
-    modifiers: null,
-    start_line: 1,
-    end_line: 5,
-    cyclomatic: 2,
+  resolvedCalls: [{
+    from_proc: "",
+    to_name: "f_helper",
+    call_type: "ExCall",
+    line: 1,
+    target_object: "w_test",
+    target_proc: "f_helper",
+    kind: "virtual",
+    confidence: "high",
+    to_name_start_line: 1,
+    to_name_start_col: 1,
+    to_name_end_line: 1,
+    to_name_end_col: 9,
   }],
+  resolvedVarRefs: [],
 };
 
 function renderWithSource(overrides: Partial<ObjectDetailResponse> = {}) {

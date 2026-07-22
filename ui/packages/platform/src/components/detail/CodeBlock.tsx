@@ -2,12 +2,12 @@
 //
 // Delegates to the shared SourceView so the narrowed view renders the exact
 // same cross-linked, tooltip-enabled code as the whole-file SourceViewer. Pass
-// linking context (objectName / knownObjects / knownProcs / ...) when available
-// so identifiers link and show tooltips, just like the whole-file view.
+// linking context (objectName / knownObjects / resolvedCalls / ...) when
+// available so identifiers link and show tooltips, just like the whole-file view.
 
 import type { JSX } from "solid-js";
 import { highlightSql } from "@pb/platform";
-import type { KnownProcInfo, ProcedureInfo, LocalSymbolInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 import { SourceView } from "../source/SourceView.js";
 
 export function SqlBlock(props: { code: string; style?: JSX.CSSProperties }) {
@@ -23,9 +23,9 @@ interface CodeBlockProps {
   // identifiers and tooltips as the whole-file view.
   objectName?: string;
   knownObjects?: { name: string; kind: string }[];
-  knownProcs?: KnownProcInfo[];
+  resolvedCalls?: ResolvedCallInfo[];
+  resolvedVarRefs?: ResolvedVarRefInfo[];
   procedures?: ProcedureInfo[];
-  localSymbols?: LocalSymbolInfo[];
 }
 
 export function CodeBlock(props: CodeBlockProps) {
@@ -41,9 +41,9 @@ export function CodeBlock(props: CodeBlockProps) {
       onLineClick={props.onLineClick}
       objectName={props.objectName}
       knownObjects={props.knownObjects}
-      knownProcs={props.knownProcs}
+      resolvedCalls={props.resolvedCalls}
+      resolvedVarRefs={props.resolvedVarRefs}
       procedures={props.procedures}
-      localSymbols={props.localSymbols}
     />
   );
 }

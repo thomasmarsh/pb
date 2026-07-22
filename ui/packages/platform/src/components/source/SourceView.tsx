@@ -16,20 +16,25 @@ import { Show, For, createSignal, createMemo, createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import {
   highlightPowerScript,
-  linkIdentifiers,
-  buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcRangeMap,
+  buildObjectMap, buildCallSpanMap, buildVarRefSpanMap, buildProcCountMap, buildProcRangeMap,
   buildObjectTooltip, buildProcTooltip, buildVarTooltip, buildProcBarTooltip,
   PROC_COLORS, PROC_BADGE_COLORS, SourceTooltip,
-  type ProcedureInfo, type KnownProcInfo, type LocalSymbolInfo,
+  type ProcedureInfo, type ResolvedCallInfo, type ResolvedVarRefInfo,
 } from "@pb/platform";
+
+// A resolved click/context-menu target -- the exact span-map hit SourceView
+// already looked up, handed to the caller so it never has to re-derive the
+// target from the link's bare name (the last-write-wins bug Plan 195 Phase F
+// removes: two identically-named calls/vars must not collide).
+export type SourceLinkTarget = ResolvedCallInfo | ResolvedVarRefInfo | undefined;
 
 export interface SourceViewProps {
   lines: string[];
   baseLine?: number;
   knownObjects?: { name: string; kind: string }[];
-  knownProcs?: KnownProcInfo[];
+  resolvedCalls?: ResolvedCallInfo[];
+  resolvedVarRefs?: ResolvedVarRefInfo[];
   procedures?: ProcedureInfo[];
-  localSymbols?: LocalSymbolInfo[];
   objectName?: string;
   link?: boolean;
   // Absolute (1-based) source line numbers to highlight.
@@ -41,12 +46,13 @@ export interface SourceViewProps {
   // null means slice-dim mode is inactive (nothing dims).
   dimLines?: Set<number> | null;
   onLineClick?: (line: number) => void;
-  onLinkClick?: (linkType: "object" | "procedure" | "var", linkName: string) => void;
+  onLinkClick?: (linkType: "object" | "procedure" | "var", linkName: string, target: SourceLinkTarget) => void;
   onLinkContextMenu?: (
     e: MouseEvent,
     linkType: "object" | "procedure" | "var",
     linkName: string,
     sourceLine: number,
+    target: SourceLinkTarget,
   ) => void;
   onProcBarClick?: (proc: ProcedureInfo) => void;
   selectedProcName?: string;
@@ -61,18 +67,19 @@ export function SourceView(props: SourceViewProps): JSX.Element {
   const doLink = () => props.link ?? true;
 
   const objectMap = createMemo(() => buildObjectMap(props.knownObjects ?? []));
-  const procMap = createMemo(() => buildProcMap(props.knownProcs ?? [], props.procedures ?? [], props.objectName ?? ""));
-  const varMap = createMemo(() => buildVarMap(props.localSymbols ?? []));
+  const callSpanMap = createMemo(() => buildCallSpanMap(props.resolvedCalls ?? []));
+  const varSpanMap = createMemo(() => buildVarRefSpanMap(props.resolvedVarRefs ?? []));
   const procCountMap = createMemo(() => buildProcCountMap(props.procedures ?? []));
   const procRangeMap = createMemo(() => buildProcRangeMap(props.procedures ?? []));
 
-  // Highlight + link each line. Line count is preserved by the highlighter, so
+  // Highlight + link in one pass. Line count is preserved by the highlighter, so
   // the gutter (which iterates props.lines) and the code stay 1:1.
   const rendered = createMemo(() => {
-    const raw = highlightPowerScript(props.lines.join("\n")).split("\n");
-    if (!doLink()) return raw;
     const self = props.objectName ?? "";
-    return raw.map((line) => linkIdentifiers(line, objectMap(), procMap(), varMap(), self));
+    const link = doLink()
+      ? { baseLine: base(), objectMap: objectMap(), callSpans: callSpanMap(), varSpans: varSpanMap(), selfName: self }
+      : undefined;
+    return highlightPowerScript(props.lines.join("\n"), link).split("\n");
   });
 
   const isError = (i: number) => props.highlightLines?.has(base() + i) ?? false;
@@ -81,6 +88,18 @@ export function SourceView(props: SourceViewProps): JSX.Element {
 
   function findLink(e: MouseEvent): HTMLElement | null {
     return (e.target as HTMLElement).closest("[data-link-type]") as HTMLElement | null;
+  }
+
+  // Resolves a link node back to the exact span-map hit that produced it --
+  // never a name-based re-lookup, so hover/click/context-menu all agree with
+  // what actually got linked.
+  function resolveTarget(link: HTMLElement, linkType: string): SourceLinkTarget {
+    const { linkLine, linkCol } = link.dataset;
+    if (linkLine == null || linkCol == null) return undefined;
+    const key = `${linkLine}:${linkCol}`;
+    if (linkType === "procedure") return callSpanMap().get(key);
+    if (linkType === "var") return varSpanMap().get(key);
+    return undefined;
   }
 
   function handleMouseOver(e: MouseEvent) {
@@ -94,16 +113,17 @@ export function SourceView(props: SourceViewProps): JSX.Element {
       link.style.color = t.color;
       setTooltip({ html: t.html, x: e.clientX + 12, y: e.clientY + 12 });
     } else if (linkType === "procedure") {
-      const t = buildProcTooltip(linkName, procMap().get(lower), procCountMap().get(lower));
+      const call = resolveTarget(link, linkType) as ResolvedCallInfo | undefined;
+      const t = buildProcTooltip(linkName, call, call ? procCountMap().get(call.to_name.toLowerCase()) : undefined);
       link.style.color = t.color;
       setTooltip({ html: t.html, x: e.clientX + 12, y: e.clientY + 12 });
     } else if (linkType === "var") {
-      const sym = varMap().get(lower);
-      link.style.color = sym?.scope === "param" ? "#4fc1ff"
-        : sym?.scope === "instance" ? "#c586c0"
-        : "#9cdcfe";
-      const t = buildVarTooltip(linkName, sym);
-      if (t) setTooltip({ html: t.html, x: e.clientX + 12, y: e.clientY + 12 });
+      const ref = resolveTarget(link, linkType) as ResolvedVarRefInfo | undefined;
+      const t = buildVarTooltip(linkName, ref);
+      if (t) {
+        link.style.color = t.color;
+        setTooltip({ html: t.html, x: e.clientX + 12, y: e.clientY + 12 });
+      }
     }
   }
 
@@ -117,7 +137,9 @@ export function SourceView(props: SourceViewProps): JSX.Element {
     const link = findLink(e);
     if (!link) return;
     const { linkType, linkName } = link.dataset;
-    if (linkType && linkName) props.onLinkClick?.(linkType as "object" | "procedure" | "var", linkName);
+    if (linkType && linkName) {
+      props.onLinkClick?.(linkType as "object" | "procedure" | "var", linkName, resolveTarget(link, linkType));
+    }
   }
 
   function handleContextMenu(e: MouseEvent) {
@@ -129,7 +151,7 @@ export function SourceView(props: SourceViewProps): JSX.Element {
     if (!linkName) return;
     const lineEl = (e.target as HTMLElement).closest("[data-line]") as HTMLElement | null;
     const sourceLine = lineEl ? Number(lineEl.dataset.line) : base();
-    props.onLinkContextMenu?.(e, linkType, linkName, sourceLine);
+    props.onLinkContextMenu?.(e, linkType, linkName, sourceLine, resolveTarget(link, linkType));
   }
 
   function handleProcBarEnter(e: MouseEvent, p: ProcedureInfo) {

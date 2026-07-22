@@ -1,4 +1,14 @@
 // highlight.ts — PowerScript syntax highlighter.
+//
+// Also owns identifier-linking (Plan 195 Phase F): the raw column offsets an
+// identifier link needs to key into the resolved_calls/resolved_var_refs span
+// maps only exist transiently during this scan, before HTML-escaping and
+// syntax-highlight <span> wrapping discard them -- so linking is folded into
+// the same pass rather than run as a second regex pass over already-escaped
+// HTML (the prior identifiers.ts design, which had no column information at
+// all and could only match by name).
+
+import type { ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 
 const PS_KEYWORDS = new Set([
   "and","or","not","xor","if","then","else","elseif","end","choose","case",
@@ -72,7 +82,9 @@ const COLORS = {
   comment: "#6a9955",
   number: "#b5cea8",
   pronoun: "#569cd6",
-  enum: "#4fc1ff",
+  // Distinct from src-link-param's #4fc1ff -- the two used to collide,
+  // making an enum literal and a linked parameter read as the same color.
+  enum: "#d19a66",
   operator: "#d4d4d4",
 };
 
@@ -80,9 +92,64 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// Per-occurrence cross-reference data (Plan 195 Phase F) an identifier scan can
+// link against, keyed by "${line}:${startCol}" (1-based col, matching the
+// DuckDB *_start_col columns) -- never by bare name, so two unrelated
+// identifiers sharing a name (a method on two different classes, a local var
+// in two different procedures) resolve independently instead of colliding in
+// a last-write-wins map.
+export interface IdentifierLinkContext {
+  baseLine: number;
+  objectMap: Map<string, { name: string; kind: string }>;
+  callSpans: Map<string, ResolvedCallInfo>;
+  varSpans: Map<string, ResolvedVarRefInfo>;
+  selfName: string;
+}
+
+const VAR_LINK_CLASS: Record<ResolvedVarRefInfo["kind"], string | null> = {
+  local: "src-link-var",
+  param: "src-link-param",
+  instance: "src-link-instance",
+  global: "src-link-global",
+  control: "src-link-control",
+  class: "src-link-obj",
+  builtin_property: "src-link-builtin",
+  unresolved: null,
+};
+
+function linkSpan(cls: string, linkType: string, name: string, line: number, col: number, inner: string): string {
+  return `<span class="src-link ${cls}" data-link-type="${linkType}" data-link-name="${name}" ` +
+    `data-link-line="${line}" data-link-col="${col}">${inner}</span>`;
+}
+
+// Resolves one identifier occurrence against the span maps first (exact call
+// site / variable reference, collision-free by construction), falling back to
+// a name-based object-link lookup for class/window/DataWindow names that
+// resolved_var_refs doesn't cover (any reference not shaped as this/super --
+// see PB.Analysis.TypeResolve.classifyLvalueRef's "class" kind).
+function linkWord(word: string, lower: string, col: number, lineNum: number, link: IdentifierLinkContext): string {
+  const escaped = escapeHtml(word);
+  const key = `${lineNum}:${col + 1}`;
+  const call = link.callSpans.get(key);
+  if (call && call.kind !== "unresolved") {
+    return linkSpan("src-link-proc", "procedure", word, lineNum, col + 1, escaped);
+  }
+  const ref = link.varSpans.get(key);
+  if (ref && ref.kind !== "unresolved") {
+    const cls = VAR_LINK_CLASS[ref.kind];
+    if (cls) return linkSpan(cls, "var", word, lineNum, col + 1, escaped);
+  }
+  if (lower !== link.selfName.toLowerCase() && link.objectMap.has(lower)) {
+    return linkSpan("src-link-obj", "object", word, lineNum, col + 1, escaped);
+  }
+  return escaped;
+}
+
 export function highlightLine(
   line: string,
   startInBlockComment: boolean = false,
+  lineNum?: number,
+  link?: IdentifierLinkContext,
 ): { html: string; inBlockComment: boolean } {
   let result = "";
   let i = 0;
@@ -184,6 +251,8 @@ export function highlightLine(
       else if (PS_PRONOUNS.has(lower)) color = COLORS.pronoun;
       if (color) {
         result += `<span style="color:${color}">${escapeHtml(word)}</span>`;
+      } else if (link && lineNum != null && !PB_KEYWORDS.has(lower)) {
+        result += linkWord(word, lower, i, lineNum, link);
       } else {
         result += escapeHtml(word);
       }
@@ -205,12 +274,13 @@ export function highlightLine(
   return { html: result, inBlockComment: false };
 }
 
-export function highlightPowerScript(code: string): string {
+export function highlightPowerScript(code: string, link?: IdentifierLinkContext): string {
   let inBlockComment = false;
   return code
     .split("\n")
-    .map(line => {
-      const { html, inBlockComment: next } = highlightLine(line, inBlockComment);
+    .map((line, i) => {
+      const lineNum = link ? link.baseLine + i : undefined;
+      const { html, inBlockComment: next } = highlightLine(line, inBlockComment, lineNum, link);
       inBlockComment = next;
       return html;
     })

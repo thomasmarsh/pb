@@ -709,6 +709,18 @@ body {
 .src-link-var:hover   { color: #c2e8ff; }
 .src-link-param { color: #4fc1ff; }
 .src-link-param:hover { color: #7dd3fc; }
+/* Was missing entirely -- instance-var links fell back to the default text
+   color at rest and only picked up a color (identical to the keyword purple
+   above) on hover, via SourceView's inline mouseover handler. Now a real,
+   distinct color at rest, matching the rest of the src-link-* family. */
+.src-link-instance { color: #98c379; }
+.src-link-instance:hover { color: #b8e6a8; }
+.src-link-global { color: #fb923c; }
+.src-link-global:hover { color: #fdba74; }
+.src-link-control { color: #4ade80; }
+.src-link-control:hover { color: #86efac; }
+.src-link-builtin { color: #dcdcaa; }
+.src-link-builtin:hover { color: #ececc0; }
 .source-file-header {
     display: flex;
     align-items: center;

@@ -118,6 +118,7 @@ export {
   highlightAsync,
   PB_KEYWORDS,
 } from "./utils/highlight.js";
+export type { IdentifierLinkContext } from "./utils/highlight.js";
 export { entityIcon } from "./utils/entities.js";
 export type { IconComp } from "./utils/icons.js";
 export {
@@ -224,16 +225,16 @@ export { MetricsGrid } from "./components/objects/MetricsGrid.js";
 
 // Source
 export { SourceView } from "./components/source/SourceView.js";
+export type { SourceViewProps, SourceLinkTarget } from "./components/source/SourceView.js";
 export { SourceTooltip } from "./components/source/SourceTooltip.js";
-export { linkIdentifiers } from "./components/source/pure/identifiers.js";
 export {
   procSelectedRange,
   procedureAtLine,
 } from "./components/source/pure/line.js";
 export {
   buildObjectMap,
-  buildProcMap,
-  buildVarMap,
+  buildCallSpanMap,
+  buildVarRefSpanMap,
   buildProcCountMap,
   buildProcFirstLine,
   buildProcRangeMap,
