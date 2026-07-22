@@ -47,7 +47,7 @@ withStdlibDb act = withHandle inMemory $ \conn -> do
   let wsEnv = buildWorkspaceEnv (map pfSrFile pfs)
   withAppenderPool conn phaseATables $ \pool -> do
     mapM_ (\pf -> do
-      cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty (buildTypeCheckWorkspace []) Map.empty Nothing "speculative" (PsParsed pf)
+      cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "speculative" (PsParsed pf)
       appendToDb pool cf) pfs
   act conn
   where
@@ -116,7 +116,7 @@ testUserConfirmed = withHandle inMemory $ \conn -> do
       let wsEnv = buildWorkspaceEnv [sf]
           pf    = ParsedFile "w_test.srw" sf sp src
       withAppenderPool conn phaseATables $ \pool -> do
-        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty (buildTypeCheckWorkspace []) Map.empty Nothing "confirmed" (PsParsed pf)
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsParsed pf)
         appendToDb pool cf
   confs <- queryOneTexts conn "SELECT confidence FROM objects"
   assertEqual "user object is confirmed" ["confirmed"] confs

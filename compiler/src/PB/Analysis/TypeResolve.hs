@@ -9,8 +9,6 @@
 --   resolveTypes      :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 --   resolveCalls      :: [CallSite] -> IdentMap IdentSet -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 --   resolveVirtual    :: Ident -> Text -> IdentMap IdentSet -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
---   buildInheritsMap  :: [SrFile] -> Map Text Text
---   buildProcMap      :: [SrFile] -> IdentMap IdentSet
 --   buildObjectSet    :: [SrFile] -> IdentSet
 --   buildUserTypeSet  :: [SrFile] -> IdentSet
 --
@@ -43,7 +41,6 @@ module PB.Analysis.TypeResolve
   , resolveCalls
   , resolveVirtual
   , ancestorChain
-  , buildInheritsMap
   , buildProcMap
   , buildObjectSet
   , buildUserTypeSet
@@ -67,9 +64,8 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..), DwTable (..), DwColumn (..))
 import PB.AST.Expr
-import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapEmpty,
-                           identMapInsertWith, identMapLookup, identMapToList, identOrig,
-                           identSetFromList, identSetLookup, identSetUnion, identSpan, mkIdent,
+import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapLookup, identMapToList,
+                           identOrig, identSetFromList, identSetLookup, identSpan, mkIdent,
                            provenanceSpan)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
@@ -79,7 +75,7 @@ import PB.Analysis.CallClassify   (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
                                       resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
-                                    isDescendantOf, lookupInstanceVarOwner, procEnv)
+                                    buildProcMap, isDescendantOf, lookupInstanceVarOwner, procEnv)
 
 import Data.Aeson         (ToJSON (..), (.=))
 import Data.Foldable      (find)
@@ -971,45 +967,6 @@ extractDwControlBindings file sf =
 
 -- ---------------------------------------------------------------------------
 -- Workspace-level graph builders
-
--- | Build an inheritance map (child → parent) from all srTypeBlocks.
--- A backtick-declared ancestor (e.g. @w_form_tab2`page1@ -- "extend
--- ancestor's own control of this same name") resolves to just the
--- ancestor class part, so the chain walk in 'ancestorChain'/'resolveVirtual'
--- can actually find that object rather than silently stopping at a node
--- no object is ever named ('splitAncestorRef'). 'Ident'-keyed (Plan 179
--- Phase 5) so a chain walk starting from a differently-cased query (e.g.
--- 'resolveVirtual''s caller-object argument) still matches this map's own
--- entries -- PB identifiers are case-insensitive, and every node in this
--- map is populated from the same 'Ident'-typed 'tdName'/'tdAncestorClass'
--- fields, so canonical-keyed lookup is always safe here.
-buildInheritsMap :: [SrFile] -> Map.Map Ident Ident
-buildInheritsMap = Map.fromList . concatMap fileInherits
-  where
-    fileInherits sf =
-      [ (tdName td, tdAncestorClass td) | td <- srAllTypeDecls sf ]
-
--- | Build a proc map (object → set of proc names) from all procedures. The
--- outer key is canonical-'Ident' ('IdentMap', Plan 179 procMap-outer-key
--- fix) recovering the object's own declared casing on lookup -- a chain
--- member reached via a differently-cased cross-file reference (another
--- file's own spelling of its ancestor) still finds this object's own entry.
--- 'resolveVirtual'/'resolveStaticCall' recover that declared casing from
--- the lookup result itself so the result round-trips through
--- 'PB.Analysis.TypeCheck.tcParams', which is keyed the same way. The inner
--- value is an 'IdentSet' so a call written with different casing than the
--- procedure's own declaration still resolves.
-buildProcMap :: [SrFile] -> IdentMap IdentSet
-buildProcMap = foldl' addFile identMapEmpty
-  where
-    addFile acc sf =
-      let objIdent = fst (srPrimaryObject sf)
-          names = identSetFromList $
-            map (fnsName . fbSig) (srFunctions sf)
-            <> map (ssName . sbSig) (srSubroutines sf)
-            <> map (esName . evSig) (srEvents sf)
-            <> map obEvent (srOnBlocks sf)
-      in identMapInsertWith identSetUnion objIdent names acc
 
 -- | All window/userobject-derived type names (not structures).
 buildObjectSet :: [SrFile] -> IdentSet

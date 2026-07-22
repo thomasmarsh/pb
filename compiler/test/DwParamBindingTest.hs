@@ -15,7 +15,8 @@ import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
 import PB.Lexing.Token     (SourceSpan (..))
 import PB.Analysis.ControlHierarchy (buildControlIndex)
-import PB.Analysis.TypeResolve (buildProcMap, buildInheritsMap)
+import PB.Analysis.TypeResolve (buildProcMap)
+import PB.Analysis.TypeEnv (buildWorkspaceEnv, weHierarchy)
 import PB.Analysis.TypeCheck (buildParamsMap)
 import PB.Analysis.DwParamBinding (buildDwParamBindings)
 
@@ -82,7 +83,7 @@ lvArg :: T.Text -> Expr
 lvArg n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
 
 runBuild :: [SrFile] -> Map.Map (T.Text, T.Text, Int) T.Text
-runBuild sfs = buildDwParamBindings (buildProcMap sfs) (buildInheritsMap sfs) (buildParamsMap sfs) (buildControlIndex sfs) sfs
+runBuild sfs = buildDwParamBindings (buildProcMap sfs) (weHierarchy (buildWorkspaceEnv sfs)) (buildParamsMap sfs) (buildControlIndex sfs) sfs
 
 -- ---------------------------------------------------------------------------
 

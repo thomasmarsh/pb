@@ -9,9 +9,8 @@ import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..),
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
                               splitAncestorRef, mkTypeDecl)
 import PB.AST.Type           (PbType (..), parseTypeText, parseTypeTextAt)
-import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
-                              lookupBaseType, isDescendantOf,
-                              ScopedTypeEnv (..), buildWorkspaceEnv,
+import PB.Analysis.TypeEnv   (isDescendantOf, ancestorChain,
+                              WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv,
                               procEnv, lookupScopedVar, lookupScopedVarOrSelf,
                               lookupInstanceVarOwner)
 import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
@@ -27,84 +26,43 @@ emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
 
 tests :: TestTree
 tests = testGroup "TypeEnv"
-  [ testGroup "buildWorkspaceTypeEnv"
-    [ testCase "empty file produces empty env" $
-        let env = buildWorkspaceTypeEnv [emptyFile]
-        in lookupVarType "x" env @?= Nothing
-
-    ]
-
-  , testGroup "lookupUserType"
+  [ testGroup "weHierarchy"
     [ testCase "type decl from forward block is found" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
                       { fwdTypes = [mkTypeDecl "w_foo" "window" Nothing]
                       , fwdInstances = []
                       })}
-            env = buildWorkspaceTypeEnv [sf]
-        in lookupUserType "w_foo" env @?= Just "window"
+            inh = weHierarchy (buildWorkspaceEnv [sf])
+        in Map.lookup "w_foo" inh @?= Just "window"
 
     , testCase "type decl from type block is found" $
         let tb = TypeBlock (mkTypeDecl "nvo_utils" "nonvisualobject" Nothing) []
             sf = emptyFile { srTypeBlocks = [tb] }
-            env = buildWorkspaceTypeEnv [sf]
-        in lookupUserType "nvo_utils" env @?= Just "nonvisualobject"
+            inh = weHierarchy (buildWorkspaceEnv [sf])
+        in Map.lookup "nvo_utils" inh @?= Just "nonvisualobject"
 
     , testCase "unknown type returns Nothing" $
-        let env = buildWorkspaceTypeEnv [emptyFile]
-        in lookupUserType "w_unknown" env @?= Nothing
-    ]
+        let inh = weHierarchy (buildWorkspaceEnv [emptyFile])
+        in Map.lookup "w_unknown" inh @?= Nothing
 
-  , testGroup "lookupBaseType"
-    [ testCase "primitive type returns lowercased name" $
-        let env = TypeEnv
-              { teVars      = Map.fromList [("x", PtPrimitive "Integer")]
-              , teUserTypes = Map.empty
-              }
-        in lookupBaseType "x" env @?= Just "integer"
+    , testCase "lookup is case-insensitive on type name" $
+        let tb  = TypeBlock (mkTypeDecl "dw_main" "datawindow" Nothing) []
+            sf  = emptyFile { srTypeBlocks = [tb] }
+            inh = weHierarchy (buildWorkspaceEnv [sf])
+        in Map.lookup "DW_Main" inh @?= Just "datawindow"
 
-    , testCase "user type walks single inheritance step" $
-        let env = TypeEnv
-              { teVars      = Map.fromList [("dw", PtUserDefined "datawindow")]
-              , teUserTypes = Map.fromList [("datawindow", "nonvisualobject")]
-              }
-        in lookupBaseType "dw" env @?= Just "nonvisualobject"
+    , testCase "backtick ancestor ref resolves to the class part, not the raw compound string (w_misth_fylo_form.srw's page1 shape)" $
+        let tb  = TypeBlock (mkTypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
+            sf  = emptyFile { srTypeBlocks = [tb] }
+            inh = weHierarchy (buildWorkspaceEnv [sf])
+        in Map.lookup "page1" inh @?= Just "w_form_tab2"
 
-    , testCase "user type walks multi-step chain" $
-        let env = TypeEnv
-              { teVars      = Map.fromList [("svc", PtUserDefined "n_cst_service")]
-              , teUserTypes = Map.fromList
-                  [ ("n_cst_service", "nonvisualobject")
-                  , ("nonvisualobject", "object")
-                  ]
-              }
-        in lookupBaseType "svc" env @?= Just "object"
-
-    , testCase "cycle guard terminates" $
-        -- a → b → a (cycle): walk returns when it revisits "a", so result is "a"
-        let env = TypeEnv
-              { teVars      = Map.fromList [("x", PtUserDefined "a")]
-              , teUserTypes = Map.fromList [("a", "b"), ("b", "a")]
-              }
-        in lookupBaseType "x" env @?= Just "a"
-
-    , testCase "unknown var returns Nothing" $
-        let env = TypeEnv { teVars = Map.empty, teUserTypes = Map.empty }
-        in lookupBaseType "x" env @?= Nothing
-
-    , testCase "lookup is case-insensitive on var name" $
-        let env = TypeEnv
-              { teVars      = Map.fromList [("dw_main", PtUserDefined "datawindow")]
-              , teUserTypes = Map.empty
-              }
-        in lookupBaseType "DW_Main" env @?= Just "datawindow"
-
-    , testCase "walk matches an ancestor-map entry keyed in a different case than the rendered var type, preserving the stored entry's own casing (Ident-keyed teUserTypes, Plan 179 Phase 1)" $
-        let env = TypeEnv
-              { teVars      = Map.fromList [(mkIdent "dw", PtUserDefined "DataWindow")]
-              , teUserTypes = Map.fromList [(mkIdent "DataWindow", mkIdent "NonVisualObject")]
-              }
-        in fmap identOrig (lookupBaseType (mkIdent "dw") env) @?= Just "NonVisualObject"
+    , testCase "multiple files merged" $
+        let sf1 = emptyFile { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_a" "w_b" Nothing) [] ] }
+            sf2 = emptyFile { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_c" "w_d" Nothing) [] ] }
+            inh = weHierarchy (buildWorkspaceEnv [sf1, sf2])
+        in (Map.lookup "w_a" inh, Map.lookup "w_c" inh) @?= (Just "w_b", Just "w_d")
     ]
 
   , testGroup "parseTypeText"
@@ -246,14 +204,14 @@ tests = testGroup "TypeEnv"
         in identSetMember "u_st" (buildUserTypeSet [sf]) @?= False
     ]
 
-  , testGroup "extractGlobalVars forward instances"
+  , testGroup "weGlobals forward instances"
     [ testCase "forward global instances are included" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
                       { fwdTypes = []
                       , fwdInstances = [GlobalInstance "integer" (SourceSpan 1 1 1 1) "m_main"] }) }
-            env = buildWorkspaceTypeEnv [sf]
-        in lookupVarType "m_main" env @?= Just (PtPrimitive "integer")
+            globals = weGlobals (buildWorkspaceEnv [sf])
+        in Map.lookup "m_main" globals @?= Just (PtPrimitive "integer")
     ]
 
   , testGroup "ScopedTypeEnv"
@@ -493,21 +451,12 @@ tests = testGroup "TypeEnv"
         in (identCanon anc, identCanon <$> ovr) @?= ("w_form_tab2", Just "page1")
     ]
 
-  , testGroup "extractTypeDecls backtick handling (via lookupUserType/lookupBaseType)"
-    [ testCase "backtick ancestor resolves to the class part, not the raw compound string" $
-        let tb  = TypeBlock (mkTypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
-            sf  = emptyFile { srTypeBlocks = [tb] }
-            env = buildWorkspaceTypeEnv [sf]
-        in lookupUserType "page1" env @?= Just "w_form_tab2"
-
-    , testCase "chain walk continues through a backtick-declared intermediate type" $
+  , testGroup "extractTypeDecls backtick handling (via ancestorChain)"
+    [ testCase "ancestorChain walk continues through a backtick-declared intermediate type" $
         let tbPage = TypeBlock (mkTypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
             tbBase = TypeBlock (mkTypeDecl "w_form_tab2" "window" Nothing) []
             sf  = emptyFile { srTypeBlocks = [tbPage, tbBase] }
-            env = TypeEnv
-              { teVars      = Map.fromList [("uo_x", PtUserDefined "page1")]
-              , teUserTypes = teUserTypes (buildWorkspaceTypeEnv [sf])
-              }
-        in lookupBaseType "uo_x" env @?= Just "window"
+            inh = weHierarchy (buildWorkspaceEnv [sf])
+        in ancestorChain "page1" inh @?= ["page1", "w_form_tab2", "window"]
     ]
   ]

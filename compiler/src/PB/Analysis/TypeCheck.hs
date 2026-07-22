@@ -19,8 +19,8 @@
 -- arguments wherever the call appears — not just at statement top level.
 --
 -- 'TypeCheckCtx' is built once per compile run from workspace-wide data
--- ('PB.Analysis.TypeResolve.buildProcMap'\/'buildInheritsMap'\/'buildParamsMap',
--- 'PB.Analysis.ControlHierarchy.buildControlIndex') — a call may target any
+-- ('PB.Analysis.TypeEnv.WorkspaceEnv''s 'weProcMap'\/'weHierarchy',
+-- 'buildParamsMap', 'PB.Analysis.ControlHierarchy.buildControlIndex') — a call may target any
 -- object in the workspace, so every one of those aggregates must already
 -- cover the whole workspace before 'checkBody' runs on any single file.
 -- Only 'tcScope' varies per procedure. Public API:
@@ -47,11 +47,10 @@ import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeTextAt)
 import PB.Analysis.ControlHierarchy (resolveMemberChainType)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), WorkspaceEnv (..), lookupScopedVarOrSelf)
 import PB.Analysis.TypeFamily
 import PB.Analysis.TypeResolve
   ( resolveVirtual, srFileObject
-  , buildProcMap, buildInheritsMap
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -99,10 +98,10 @@ data TypeCheckCtx = TypeCheckCtx
 
 -- | Build a @(object, procName) -> [ProcSignature]@ map from every function\/
 -- subroutine declaration across the whole workspace — mirrors
--- 'PB.Analysis.TypeResolve.buildProcMap''s per-file fold shape, one level
+-- 'PB.Analysis.TypeEnv.buildProcMap''s per-file fold shape, one level
 -- richer (keeps the parsed signature, not just the name). Workspace-wide
 -- because a call's target proc may live in any file, not just the caller's
--- own — the same reason 'buildProcMap'\/'buildInheritsMap' are already
+-- own — the same reason 'weProcMap'\/'weHierarchy' are already
 -- built once across every parsed file before any per-file resolution runs.
 --
 -- The value is a list, not a single 'ProcSignature': PowerBuilder allows
@@ -176,16 +175,19 @@ data TypeCheckWorkspace = TypeCheckWorkspace
   , tcwUserTypes :: IdentSet
   }
 
--- | Build once from every parsed file in the workspace. The object\/
--- user-type split mirrors 'PB.Pipeline.DuckDb.queryObjInfo''s SQL exactly
--- (an object whose declared ancestor is @structure@ is a user type;
+-- | Build once from the workspace's already-built 'WorkspaceEnv' (its
+-- 'weProcMap'\/'weHierarchy' -- no second file-list traversal to recompute
+-- either) plus every parsed 'SrFile' (still needed for 'tcwParams'\/
+-- 'tcwObjects'\/'tcwUserTypes', none of which 'WorkspaceEnv' carries). The
+-- object\/user-type split mirrors 'PB.Pipeline.DuckDb.queryObjInfo''s SQL
+-- exactly (an object whose declared ancestor is @structure@ is a user type;
 -- everything else, including no ancestor, is an object) -- kept in sync
 -- deliberately, since 'inferExpr'\/'checkBody' must classify the same
 -- object\/user_type universe 'resolveTypes'\/'resolveCalls' already do.
-buildTypeCheckWorkspace :: [SrFile] -> TypeCheckWorkspace
-buildTypeCheckWorkspace sfs = TypeCheckWorkspace
-  { tcwProcMap   = buildProcMap sfs
-  , tcwInherits  = buildInheritsMap sfs
+buildTypeCheckWorkspace :: WorkspaceEnv -> [SrFile] -> TypeCheckWorkspace
+buildTypeCheckWorkspace ws sfs = TypeCheckWorkspace
+  { tcwProcMap   = weProcMap ws
+  , tcwInherits  = weHierarchy ws
   , tcwParams    = buildParamsMap sfs
   , tcwObjects   = identSetFromList
       [ o | (o, anc) <- allObjs, maybe True ((/= "structure") . T.toLower) anc ]

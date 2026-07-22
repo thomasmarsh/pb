@@ -815,13 +815,13 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     _ <- evaluate (Map.size controlIdx')
     pure controlIdx'
 
-  -- Plan 177 Phase 4: workspace-wide type-check context, built once from
-  -- the same parsed-file set as wsEnv/controlIdx above -- every field is a
-  -- pure function of allParsedSrFiles (see TypeCheckWorkspace's own doc
-  -- comment), so no DuckDB round-trip is needed the way resolveTypes/
+  -- Workspace-wide type-check context, built once from wsEnv0 (reusing its
+  -- weProcMap/weHierarchy rather than recomputing them) and the same
+  -- parsed-file set as wsEnv/controlIdx above (see TypeCheckWorkspace's own
+  -- doc comment), so no DuckDB round-trip is needed the way resolveTypes/
   -- resolveCalls's Phase-B inputs require.
   tcw <- Progress.timedStep "Building type-check workspace" $ do
-    let tcw' = buildTypeCheckWorkspace allParsedSrFiles
+    let tcw' = buildTypeCheckWorkspace wsEnv0 allParsedSrFiles
     _ <- evaluate (identMapSize (tcwProcMap tcw') + Map.size (tcwParams tcw'))
     pure tcw'
 

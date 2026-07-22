@@ -8,7 +8,7 @@ import PB.AST.Expr               (Expr (..))
 import PB.AST.Located            (Located (..))
 import PB.AST.Type               (PbType (..))
 import PB.Analysis.ControlHierarchy
-import PB.Analysis.TypeResolve   (buildInheritsMap)
+import PB.Analysis.TypeEnv       (buildWorkspaceEnv, weHierarchy)
 import PB.Pipeline.Emit          (parsePowerScriptFile)
 
 import qualified Data.Map.Strict as Map
@@ -138,7 +138,7 @@ tests = testGroup "ControlHierarchy"
                   , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_child")) []
                   ] }
             idx = buildControlIndex [sfParent, sfChild]
-            inh = buildInheritsMap [sfParent, sfChild]
+            inh = weHierarchy (buildWorkspaceEnv [sfParent, sfChild])
         in resolveMemberChainType idx inh "w_child" ["this", "dw_1"] @?= Just "datawindow"
 
     , testCase "unknown starting object returns Nothing" $
@@ -342,5 +342,5 @@ withFyloFixture check = do
         Right pairs ->
           let sfs = map fst pairs
               idx = buildControlIndex sfs
-              inh = buildInheritsMap sfs
+              inh = weHierarchy (buildWorkspaceEnv sfs)
           in check idx inh

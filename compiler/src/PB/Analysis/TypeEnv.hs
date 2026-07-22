@@ -1,15 +1,11 @@
 {-# LANGUAGE StrictData #-}
 module PB.Analysis.TypeEnv
-  ( TypeEnv (..)
-  , buildWorkspaceTypeEnv
-  , lookupVarType
-  , lookupUserType
-  , lookupBaseType
-  , isDescendantOf
+  ( isDescendantOf
   -- Scoped env
   , WorkspaceEnv (..)
   , ScopedTypeEnv (..)
   , buildWorkspaceEnv
+  , buildProcMap
   , withDwTables
   , withDwParamBindings
   , procEnv
@@ -22,7 +18,8 @@ module PB.Analysis.TypeEnv
 import PB.Prelude
 import PB.AST.BodyStmt (BodyStmt (..))
 import PB.AST.DataWindow (DwTable)
-import PB.AST.Ident    (Ident, identCanon, mkIdent, mkIdentSynthetic)
+import PB.AST.Ident    (Ident, IdentMap, IdentSet, identCanon, identMapEmpty, identMapInsertWith,
+                         identSetFromList, identSetUnion, mkIdent, mkIdentSynthetic)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
@@ -30,84 +27,13 @@ import PB.Analysis.ControlHierarchy (ControlIndex)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 
--- | Cross-file type environment.
-data TypeEnv = TypeEnv
-  { teVars      :: Map.Map Ident PbType   -- variable name → type
-  , teUserTypes :: Map.Map Ident Ident    -- user type name → ancestor (for inheritance)
-  } deriving (Eq, Show)
-
-emptyTypeEnv :: TypeEnv
-emptyTypeEnv = TypeEnv Map.empty Map.empty
-
--- | Build a workspace-wide type environment from all source files.
--- Pass files in dependency order (forward declarations first).
-buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
-buildWorkspaceTypeEnv = foldl' mergeFile emptyTypeEnv
-  where
-    mergeFile env sf = env
-      { teVars = teVars env <> extractGlobalVars sf
-      , teUserTypes = teUserTypes env <> extractTypeDecls sf
-      }
-
--- | Extract global variable declarations (instance vars + variables block).
--- Also picks up instance variable declarations from the global type body
--- (the typeBlock where within == Nothing), which the parser emits as BsLocalVar
--- nodes rather than GlobalInstance entries.
-extractGlobalVars :: SrFile -> Map.Map Ident PbType
-extractGlobalVars sf =
-  Map.fromList [ (giName gi, parseTypeTextAt (giTypeSpan gi) (giType gi))
-               | gi <- srGlobalInstances sf ]
-  <> case srForward sf of
-       Nothing -> Map.empty
-       Just (ForwardBlock { fwdInstances = gis }) ->
-         Map.fromList [ (giName gi, parseTypeTextAt (giTypeSpan gi) (giType gi))
-                      | gi <- gis ]
-  <> Map.fromList
-       [ (vdName d, parseTypeTextAt (vdTypeSpan d) (vdType d))
-       | VariablesBlock { varDecls = decls } <- srVariables sf
-       , d <- decls
-       ]
-  <> mconcat
-       [ Map.fromList
-           [ (vn, vt)
-           | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
-           ]
-       | tb <- srTypeBlocks sf
-       , tdWithin (tbDecl tb) == Nothing
-       ]
-
 -- | Extract type declarations for inheritance resolution. A backtick-declared
 -- ancestor (e.g. @w_form_tab2`page1@) resolves to just the ancestor class
--- part -- see 'splitAncestorRef' and 'PB.Analysis.TypeResolve.buildInheritsMap'
--- (same fix, same reasoning, applied here for 'lookupBaseType'/'isDescendantOf').
+-- part -- see 'splitAncestorRef'.
 extractTypeDecls :: SrFile -> Map.Map Ident Ident
 extractTypeDecls sf =
   Map.fromList [ (tdName td, tdAncestorClass td)
                | td <- srAllTypeDecls sf ]
-
--- | Look up a variable's type (case-insensitive: 'Ident''s own 'Ord').
-lookupVarType :: Ident -> TypeEnv -> Maybe PbType
-lookupVarType name = Map.lookup name . teVars
-
--- | Look up a user-defined type's ancestor (case-insensitive).
-lookupUserType :: Ident -> TypeEnv -> Maybe Ident
-lookupUserType name = Map.lookup name . teUserTypes
-
--- | Resolve a variable name to its base type, walking the inheritance chain.
--- Returns the terminal ancestor 'Ident' (preserving whatever casing the
--- ancestor map stored it under), or Nothing if the variable is unknown.
-lookupBaseType :: Ident -> TypeEnv -> Maybe Ident
-lookupBaseType name env =
-  fmap (walkInheritChain (teUserTypes env) . mkIdent . renderPbType)
-       (Map.lookup name (teVars env))
-
-walkInheritChain :: Map.Map Ident Ident -> Ident -> Ident
-walkInheritChain inh = go Set.empty
-  where
-    go seen ty
-      | Set.member ty seen          = ty
-      | Just p <- Map.lookup ty inh = go (Set.insert ty seen) p
-      | otherwise                   = ty
 
 -- | True when @ty@ is in @targets@ or has an ancestor in @targets@, walking
 -- @inh@ (the workspace's Ident-keyed ancestor map). Cycle-safe via a visited
@@ -132,9 +58,10 @@ data WorkspaceEnv = WorkspaceEnv
   { weGlobals      :: Map.Map Ident PbType                       -- srVariables + forward instances
   , weInstanceVars :: Map.Map Ident (Map.Map Ident PbType)       -- object name → instance vars
   , weHierarchy    :: Map.Map Ident Ident                        -- full inheritance map
+  , weProcMap      :: IdentMap IdentSet                          -- object name → set of proc names (functions/subroutines/events/on-blocks)
   , weDwTables     :: Map.Map Text DwTable                       -- lowercased .srd base filename → parsed column schema (Plan 196 Phase 4 item 1)
   , weDwParamBindings :: Map.Map (Text, Text, Int) Text          -- (object, proc, param index) → inferred literal .srd binding (Plan 196 Phase 4 item 1)
-  } deriving (Eq, Show)
+  }
 
 -- | Procedure-scoped env built per (object, procedure) call site.
 -- Lookup order: steLocal > steInstance > steGlobal.
@@ -164,7 +91,30 @@ buildWorkspaceEnv sfs = WorkspaceEnv
   , weDwParamBindings = Map.empty
   , weInstanceVars = foldl' (\m sf -> Map.unionWith (<>) m (extractInstanceVars sf)) Map.empty sfs
   , weHierarchy    = foldl' (\m sf -> m <> extractTypeDecls sf)      Map.empty sfs
+  , weProcMap      = buildProcMap sfs
   }
+
+-- | Build a proc map (object → set of proc names) from all procedures. The
+-- outer key is canonical-'Ident' ('IdentMap', Plan 179 procMap-outer-key
+-- fix) recovering the object's own declared casing on lookup -- a chain
+-- member reached via a differently-cased cross-file reference (another
+-- file's own spelling of its ancestor) still finds this object's own entry.
+-- 'resolveVirtual'/'resolveStaticCall' recover that declared casing from
+-- the lookup result itself so the result round-trips through
+-- 'PB.Analysis.TypeCheck.tcParams', which is keyed the same way. The inner
+-- value is an 'IdentSet' so a call written with different casing than the
+-- procedure's own declaration still resolves.
+buildProcMap :: [SrFile] -> IdentMap IdentSet
+buildProcMap = foldl' addFile identMapEmpty
+  where
+    addFile acc sf =
+      let objIdent = fst (srPrimaryObject sf)
+          names = identSetFromList $
+            map (fnsName . fbSig) (srFunctions sf)
+            <> map (ssName . sbSig) (srSubroutines sf)
+            <> map (esName . evSig) (srEvents sf)
+            <> map obEvent (srOnBlocks sf)
+      in identMapInsertWith identSetUnion objIdent names acc
 
 -- | Attach the workspace's inferred @ref datawindow@ parameter bindings
 -- (Plan 196 Phase 4 item 1), mirroring 'withDwTables''s additive shape.

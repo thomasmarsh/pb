@@ -874,23 +874,6 @@ tests = testGroup "TypeResolve"
             other -> assertFailure ("expected 1 ref, got " ++ show (length other))
       ]
 
-  , testGroup "buildInheritsMap"
-      [ testCase "builds from srTypeBlocks" $ do
-          let sf = emptySrFile { srTypeBlocks = [ mkTB "w_child" "w_parent" ] }
-          Map.lookup "w_child" (buildInheritsMap [sf]) @?= Just "w_parent"
-
-      , testCase "multiple files merged" $ do
-          let sf1 = emptySrFile { srTypeBlocks = [ mkTB "w_a" "w_b" ] }
-              sf2 = emptySrFile { srTypeBlocks = [ mkTB "w_c" "w_d" ] }
-              m   = buildInheritsMap [sf1, sf2]
-          Map.lookup "w_a" m @?= Just "w_b"
-          Map.lookup "w_c" m @?= Just "w_d"
-
-      , testCase "backtick ancestor ref resolves to the class part, not the raw compound string (w_misth_fylo_form.srw's page1 shape)" $ do
-          let sf = emptySrFile { srTypeBlocks = [ mkTB "page1" "w_form_tab2`page1" ] }
-          Map.lookup "page1" (buildInheritsMap [sf]) @?= Just "w_form_tab2"
-      ]
-
   , testGroup "ancestorChain"
       [ testCase "walks a self-consistently-cased map even when the query key's own casing differs" $ do
           let inh = Map.fromList [("w_child", "w_base")]
