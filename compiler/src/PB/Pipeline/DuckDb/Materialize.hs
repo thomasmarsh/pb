@@ -8,8 +8,6 @@ module PB.Pipeline.DuckDb.Materialize
   , materializeImpliedFkPairs
   , materializeRiskCount
   , materializeLiveProc
-  , materializeCallerCounts
-  , materializeDeadCodeRows
   ) where
 
 import PB.Prelude
@@ -45,7 +43,7 @@ materializeImpliedFkPairs conn = do
 
 -- | Materialize @risk_count@ directly in DuckDB: each node's downstream
 -- footprint over the @reaches@ table — the same aggregate
--- 'materializeCallerCounts' uses for caller fan-in.
+-- 'materializeDeadCode' uses for caller fan-in.
 materializeRiskCount :: Handle -> IO ()
 materializeRiskCount conn = do
   recreateTextTable conn "risk_count" ["x", "n"]
@@ -69,73 +67,29 @@ materializeLiveProc conn = do
       <> "WHERE pd.object = s.object AND pd.proc = s.proc)"
     ]
 
--- | Materialize the caller-count and confidence relations directly in
--- DuckDB. Produces @has_naive_caller@, @has_scoped_caller@,
--- @caller_count_naive@, @caller_count_scoped@, and @confidence@ — the same
--- intermediate tables 'materializeDeadCodeRows' joins.
-materializeCallerCounts :: Handle -> IO ()
-materializeCallerCounts conn = do
-  recreateTextTable conn "has_naive_caller" ["callee_name"]
-  recreateTextTable conn "has_scoped_caller" ["callee_obj", "callee_proc"]
-  recreateTextTable conn "caller_count_naive" ["callee_name", "n"]
-  recreateTextTable conn "caller_count_scoped" ["callee_obj", "callee_proc", "n"]
-  recreateTextTable conn "confidence" ["object", "proc", "level"]
-  runStatements conn
-    [ "INSERT INTO has_naive_caller (callee_name) SELECT DISTINCT callee_name FROM call_ref"
-    , "INSERT INTO has_scoped_caller (callee_obj, callee_proc) "
-        <> "SELECT DISTINCT callee_obj, callee_proc FROM resolved_call_edge"
-    , "INSERT INTO caller_count_naive (callee_name, n) "
-        <> "SELECT callee_name, CAST(COUNT(*) AS VARCHAR) FROM call_ref GROUP BY callee_name"
-    , "INSERT INTO caller_count_scoped (callee_obj, callee_proc, n) "
-        <> "SELECT callee_obj, callee_proc, CAST(COUNT(*) AS VARCHAR) "
-        <> "FROM resolved_call_edge GROUP BY callee_obj, callee_proc"
-    , "INSERT INTO confidence (object, proc, level) "
-        <> "SELECT pm.object, pm.proc, 'high' FROM proc_meta pm "
-        <> "WHERE NOT EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower) "
-        <> "UNION ALL "
-        <> "SELECT pm.object, pm.proc, 'medium' FROM proc_meta pm "
-        <> "WHERE EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower) "
-        <> "AND NOT EXISTS (SELECT 1 FROM has_scoped_caller s WHERE s.callee_obj = pm.object AND s.callee_proc = pm.proc) "
-        <> "UNION ALL "
-        <> "SELECT pm.object, pm.proc, 'low' FROM proc_meta pm "
-        <> "WHERE EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower) "
-        <> "AND EXISTS (SELECT 1 FROM has_scoped_caller s WHERE s.callee_obj = pm.object AND s.callee_proc = pm.proc)"
-    ]
-
--- | Materialize @dead_code_rows@ (and its @caller_count_naive_final@ /
--- @caller_count_scoped_final@ intermediates) directly in DuckDB.
--- Must run AFTER 'materializeCallerCounts' (which produces @confidence@ and
--- the caller-count relations it joins).
-materializeDeadCodeRows :: Handle -> IO ()
-materializeDeadCodeRows conn = do
-  recreateTextTable conn "caller_count_naive_final" ["proc_lower", "n"]
-  recreateTextTable conn "caller_count_scoped_final" ["object", "proc", "n"]
-  recreateTextTable conn "dead_code_rows"
-    ["object", "proc", "proc_type", "cyclomatic", "level", "naive_n", "scoped_n"]
-  runStatements conn
-    [ "INSERT INTO caller_count_naive_final (proc_lower, n) "
-        <> "SELECT callee_name, n FROM caller_count_naive "
-        <> "UNION ALL "
-        <> "SELECT pm.proc_lower, '0' FROM proc_meta pm "
-        <> "WHERE NOT EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower)"
-    , "INSERT INTO caller_count_scoped_final (object, proc, n) "
-        <> "SELECT callee_obj, callee_proc, n FROM caller_count_scoped "
-        <> "UNION ALL "
-        <> "SELECT p.object, p.proc, '0' FROM proc p "
-        <> "WHERE NOT EXISTS (SELECT 1 FROM has_scoped_caller s WHERE s.callee_obj = p.object AND s.callee_proc = p.proc)"
-    , "INSERT INTO dead_code_rows (object, proc, proc_type, cyclomatic, level, naive_n, scoped_n) "
-        <> "SELECT pd.object, pd.proc, pm.proc_type, pm.cyclomatic, c.level, cnf.n, csf.n "
-        <> "FROM proc_dead pd "
-        <> "JOIN proc_meta pm ON pm.object = pd.object AND pm.proc = pd.proc "
-        <> "JOIN confidence c ON c.object = pd.object AND c.proc = pd.proc "
-        <> "JOIN caller_count_naive_final cnf ON cnf.proc_lower = pm.proc_lower "
-        <> "JOIN caller_count_scoped_final csf ON csf.object = pd.object AND csf.proc = pd.proc"
-    ]
-
--- | Plan 166 Stage 6: dead_code is now populated entirely from the
--- Soufflé-materialized dead_code_rows relation via a mechanical cast
--- (every Soufflé column is TEXT; this restores the typed schema
--- Python's get_dead_code reads) -- no Haskell classification left.
+-- | Materialize @dead_code@ directly from the four pre-existing input
+-- relations (@proc_dead@, @proc_meta@, @call_ref@, @resolved_call_edge@) in
+-- a single CTE chain -- no intermediate tables (Plan 198 Phase A collapsed
+-- the prior 8-table @has_naive_caller@\/@has_scoped_caller@\/
+-- @caller_count_naive@\/@caller_count_scoped@\/@confidence@\/
+-- @caller_count_naive_final@\/@caller_count_scoped_final@\/@dead_code_rows@
+-- chain into this one materializer). Counts are INTEGER throughout -- no
+-- CAST-to-VARCHAR-then-TRY_CAST-back round-trip.
+--
+-- The confidence classification (@high@\/@medium@\/@low@) and the caller
+-- counts are computed the same way the old chain did:
+--
+--   * Naive caller count: @COUNT@ over @call_ref@ grouped by
+--     @callee_name@, joined to @proc_meta@ by the lowercased @proc_lower@
+--     (PowerBuilder identifiers are case-insensitive; @call_ref@'s
+--     @callee_name@ is always lowercased already).
+--   * Scoped caller count: @COUNT@ over @resolved_call_edge@ grouped by
+--     @(callee_obj, callee_proc)@.
+--   * Zero-fill: a @LEFT JOIN@ + @COALESCE(.., 0)@ against @proc_meta@\/
+--     @proc@ gives every proc a count even with no callers, replacing the
+--     old chain's @UNION ALL@-with-@NOT EXISTS@ zero-fill rows.
+--   * Confidence: no naive caller -> @high@; a naive caller but no scoped
+--     (fully-resolved) caller -> @medium@; both -> @low@.
 --
 -- The ROW_NUMBER() dedup handles PowerBuilder function overloading: proc
 -- reachability is already computed at (object, proc_name) granularity --
@@ -154,26 +108,65 @@ materializeDeadCodeRows conn = do
 -- cyclomatic does NOT win the tie-break over a real value), but that
 -- default is an engine behavior, not a documented guarantee this module
 -- depends on elsewhere, so it's spelled out here rather than left implicit.
--- (Regression test: 'RulesTest.hs'\'s "overloaded procedure with
--- one unknown cyclomatic" case.) The pre-Stage-6 Haskell 'classifyDeadProcedures' used
--- 'Map.fromListWith (\a _b -> a)', which kept whichever row DuckDB's
--- unordered table scan happened to return first -- not a rule, an
--- accident with no rationale and no run-to-run reproducibility guarantee.
--- Confirmed via real corpus diff (2026-07-11): every one of the 7 rows
--- this changes vs. the old behavior differs ONLY in cyclomatic -- object,
--- proc, proc_type, confidence, and both caller counts are unchanged.
+-- (Regression test: 'RelationsTest.hs'\'s "overloaded procedure with
+-- one unknown cyclomatic" case.)
 materializeDeadCode :: Handle -> IO ()
 materializeDeadCode conn = do
+  -- Drop the 8 intermediate tables the pre-Plan-198 chain used to
+  -- materialize, in case this run is against a DB file written by an
+  -- older binary -- initSchema's CREATE TABLE IF NOT EXISTS means an
+  -- existing file's tables otherwise persist untouched across runs.
+  for_ deadTables $ \tbl ->
+    executeHandle conn (Query ("DROP TABLE IF EXISTS " <> tbl))
   _ <- executeHandle conn "DELETE FROM dead_code"
-  _ <- executeHandle conn
-    "INSERT INTO dead_code \
-    \SELECT object, proc, proc_type, TRY_CAST(cyclomatic AS INTEGER), \
-    \level, TRY_CAST(naive_n AS INTEGER), TRY_CAST(scoped_n AS INTEGER) \
-    \FROM ( \
-    \  SELECT *, ROW_NUMBER() OVER (PARTITION BY object, proc ORDER BY TRY_CAST(cyclomatic AS INTEGER) DESC NULLS LAST) AS rn \
-    \  FROM dead_code_rows \
-    \) WHERE rn = 1"
+  _ <- executeHandle conn (Query sql)
   pure ()
+  where
+    deadTables =
+      [ "has_naive_caller", "has_scoped_caller"
+      , "caller_count_naive", "caller_count_scoped"
+      , "confidence", "caller_count_naive_final", "caller_count_scoped_final"
+      , "dead_code_rows"
+      ]
+    sql = T.unlines
+      [ "INSERT INTO dead_code"
+      , "  (object, proc_name, proc_type, cyclomatic, confidence,"
+      , "   caller_count_naive, caller_count_scoped)"
+      , "WITH caller_count_naive AS ("
+      , "  SELECT callee_name, COUNT(*) AS n FROM call_ref GROUP BY callee_name"
+      , "),"
+      , "caller_count_scoped AS ("
+      , "  SELECT callee_obj, callee_proc, COUNT(*) AS n"
+      , "    FROM resolved_call_edge GROUP BY callee_obj, callee_proc"
+      , "),"
+      , "confidence AS ("
+      , "  SELECT pm.object, pm.proc,"
+      , "    CASE"
+      , "      WHEN cn.n IS NULL THEN 'high'"
+      , "      WHEN cs.n IS NULL THEN 'medium'"
+      , "      ELSE 'low'"
+      , "    END AS level,"
+      , "    COALESCE(cn.n, 0) AS naive_n, COALESCE(cs.n, 0) AS scoped_n"
+      , "  FROM proc_meta pm"
+      , "  LEFT JOIN caller_count_naive cn ON cn.callee_name = pm.proc_lower"
+      , "  LEFT JOIN caller_count_scoped cs"
+      , "    ON cs.callee_obj = pm.object AND cs.callee_proc = pm.proc"
+      , "),"
+      , "ranked AS ("
+      , "  SELECT pd.object, pd.proc, pm.proc_type,"
+      , "         TRY_CAST(pm.cyclomatic AS INTEGER) AS cyclomatic,"
+      , "         c.level, c.naive_n, c.scoped_n,"
+      , "         ROW_NUMBER() OVER ("
+      , "           PARTITION BY pd.object, pd.proc"
+      , "           ORDER BY TRY_CAST(pm.cyclomatic AS INTEGER) DESC NULLS LAST"
+      , "         ) AS rn"
+      , "  FROM proc_dead pd"
+      , "  JOIN proc_meta pm ON pm.object = pd.object AND pm.proc = pd.proc"
+      , "  JOIN confidence c ON c.object = pd.object AND c.proc = pd.proc"
+      , ")"
+      , "SELECT object, proc, proc_type, cyclomatic, level, naive_n, scoped_n"
+      , "  FROM ranked WHERE rn = 1"
+      ]
 
 -- | Materialize @decomposition_coslice@ from the @path_leg_fwd@\/@path_leg_back@
 -- tables (produced by 'PB.Analysis.SchemaClosure.cosliceClosure'). A pure SQL

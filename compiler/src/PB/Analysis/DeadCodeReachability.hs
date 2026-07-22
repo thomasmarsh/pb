@@ -10,7 +10,7 @@
 -- 'materializeDeadCodeClosure' is called from
 -- 'PB.Pipeline.Passes.materializeAllRelationsViews', writing @proc_dead@ as a real
 -- DuckDB table before the downstream materializers that consume it
--- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
+-- ('PB.Pipeline.DuckDb.Materialize.materializeDeadCode',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run — those read it as an ordinary
 -- input relation, the same mechanism
 -- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' uses for
@@ -132,7 +132,7 @@ deadReach procs calls inherits dwObjs =
 -- 'PB.Pipeline.Passes.materializeAllRelationsViews', immediately after
 -- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations', before the downstream
 -- materializers that read @proc_dead@ as an input relation
--- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
+-- ('PB.Pipeline.DuckDb.Materialize.materializeDeadCode',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run.
 materializeDeadCodeClosure :: DeadCodeInputRows -> Handle -> IO ()
 materializeDeadCodeClosure DeadCodeInputRows{dcrProcs, dcrCalls, dcrAncestors, dcrDwObjects} conn = do

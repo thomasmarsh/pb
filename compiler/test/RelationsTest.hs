@@ -1,7 +1,7 @@
--- | Regression suite for the five relation materializers that build their
+-- | Regression suite for the relation materializers that build their
 -- raw derived tables directly in DuckDB (see
 -- 'PB.Pipeline.DuckDb.materializeImpliedFkPairs', 'materializeRiskCount',
--- 'materializeLiveProc', 'materializeCallerCounts', 'materializeDeadCodeRows').
+-- 'materializeLiveProc', 'materializeDeadCode').
 -- The behavioral assertions below are the contract for those materializers;
 -- the raw derived tables the downstream consumers reshape are byte-for-byte the
 -- same as the hand-verified expected sets.
@@ -34,7 +34,7 @@ import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphi
 import PB.Pipeline.DuckDb.Materialize
   ( materializeDeadCode
   , materializeImpliedFkPairs, materializeRiskCount
-  , materializeLiveProc, materializeCallerCounts, materializeDeadCodeRows
+  , materializeLiveProc
   )
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
@@ -297,8 +297,13 @@ tests = testGroup "Relations"
     , testGroup "callerCounts / confidence"
       -- Previously-uncovered caller-count levels. Table-driven since all three
       -- share the same seed-fixture-then-assert-confidence-level shape
-      -- (CLAUDE.md's table-driven-tests guidance). Materialized by
-      -- 'materializeCallerCounts'.
+      -- (CLAUDE.md's table-driven-tests guidance). Confidence classification
+      -- is an internal CTE step inside the collapsed 'materializeDeadCode'
+      -- (Plan 198 Phase A) -- observed via 'dead_code.confidence', not a
+      -- standalone table, so every case here seeds no 'entry' rows, making
+      -- every proc unreachable/dead by construction (see
+      -- 'DeadCodeReachability.materializeDeadCodeClosure') and therefore
+      -- present in the final 'dead_code' output.
       [ assertConfidence "no caller at all -> high confidence"
           [ ProcInfo "obj" "fn" "function" (Just 1) ]
           [] []
@@ -331,8 +336,16 @@ tests = testGroup "Relations"
           ("obj", "of_Calculate") "medium"
       ]
 
-    , testGroup "deadCodeRows / materializeDeadCode"
-      [ testCase "caller counts land in dead_code_rows: naive counts every name-match, scoped only resolved edges" $
+    , testGroup "materializeDeadCode"
+      -- Plan 198 Phase A: the 8-table caller-count/confidence chain
+      -- (has_naive_caller / has_scoped_caller / caller_count_naive /
+      -- caller_count_scoped / confidence / caller_count_naive_final /
+      -- caller_count_scoped_final / dead_code_rows) is gone. A single
+      -- 'materializeDeadCode' call now goes straight from the four
+      -- pre-existing input relations (proc_dead, proc_meta, call_ref,
+      -- resolved_call_edge) to 'dead_code', with INTEGER counts throughout
+      -- -- no VARCHAR round-trip.
+      [ testCase "caller counts land in dead_code: naive counts every name-match, scoped only resolved edges" $
           withHandle inMemory $ \conn -> do
             initSchema conn
             withAppenderPool conn phaseATables $ \pool ->
@@ -350,15 +363,12 @@ tests = testGroup "Relations"
                 [] Set.empty
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
-            materializeCallerCounts conn
-            materializeDeadCodeRows conn
-            -- dead_code_rows is a raw materialized relation: every
-            -- column round-trips as TEXT (see PB.Pipeline.DuckDb.materializeDeadCode's
-            -- own TRY_CAST doc comment) -- cast explicitly rather than reading
-            -- into an Int column directly.
+            materializeDeadCode conn
+            -- dead_code's counts are real INTEGER columns now -- no TRY_CAST
+            -- round-trip through an intermediate TEXT relation.
             rows <- queryHandle conn
-              "SELECT TRY_CAST(naive_n AS INTEGER), TRY_CAST(scoped_n AS INTEGER) \
-              \FROM dead_code_rows WHERE object = 'obj' AND proc = 'fn'"
+              "SELECT caller_count_naive, caller_count_scoped \
+              \FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
               :: IO [(Int, Int)]
             rows @?= [(3, 1)]
 
@@ -368,7 +378,7 @@ tests = testGroup "Relations"
           -- (object, name) simulate two overloads with different cyclomatic
           -- complexity. materializeDeadCode's ROW_NUMBER() tie-break must pick
           -- the highest cyclomatic deterministically (see its own doc comment
-          -- in PB.Pipeline.DuckDb).
+          -- in PB.Pipeline.DuckDb.Materialize).
           withHandle inMemory $ \conn -> do
             initSchema conn
             withAppenderPool conn phaseATables $ \pool ->
@@ -379,8 +389,6 @@ tests = testGroup "Relations"
               [] [] [] Set.empty
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
-            materializeCallerCounts conn
-            materializeDeadCodeRows conn
             materializeDeadCode conn
             rows <- queryHandle conn
               "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
@@ -403,8 +411,6 @@ tests = testGroup "Relations"
               [] [] [] Set.empty
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
-            materializeCallerCounts conn
-            materializeDeadCodeRows conn
             materializeDeadCode conn
             rows <- queryHandle conn
               "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
@@ -582,10 +588,14 @@ tests = testGroup "Relations"
     ]
   ]
 
--- | Assert 'materializeCallerCounts'' materialized @confidence@ relation
--- classifies the given (object, proc) at the expected level. Confidence
--- classification reads only @proc@\/@call_ref@\/@resolved_call_edge@, not
--- @proc_dead@, so no dead-code closure needs to run first.
+-- | Assert 'materializeDeadCode'\'s confidence classification (a CTE step
+-- internal to that materializer, not a standalone table -- see Plan 198
+-- Phase A) puts the given (object, proc) at the expected level. The
+-- classification itself reads only @proc_meta@\/@call_ref@\/
+-- @resolved_call_edge@, but observing it requires the proc to actually
+-- appear in @dead_code@, which requires @proc_dead@ membership -- so no
+-- @entry@ rows are seeded here, making every proc unreachable/dead by
+-- construction.
 assertConfidence
   :: String
   -> [ProcInfo] -> [(Text, Text, Text)] -> [(Text, Text, Text, Text)]
@@ -596,8 +606,13 @@ assertConfidence name procs calls resolved (obj, proc) expectedLevel =
     initSchema conn
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved [] Set.empty
-    _ <- initDeadCodeRelations conn
-    materializeCallerCounts conn
+    dcRows <- initDeadCodeRelations conn
+    -- No 'entry' rows are seeded above, so every proc is unreachable and
+    -- therefore dead by construction -- 'confidence' is no longer a
+    -- standalone table (Plan 198 Phase A collapsed it into 'dead_code'),
+    -- so it's observed on the one dead_code row this produces.
+    materializeDeadCodeClosure dcRows conn
+    materializeDeadCode conn
     rows <- queryHandle conn
-              (Query $ "SELECT level FROM confidence WHERE object = '" <> obj <> "' AND proc = '" <> proc <> "'") :: IO [Only Text]
+              (Query $ "SELECT confidence FROM dead_code WHERE object = '" <> obj <> "' AND proc_name = '" <> proc <> "'") :: IO [Only Text]
     [ lvl | Only lvl <- rows ] @?= [expectedLevel]

@@ -40,8 +40,6 @@ import PB.Pipeline.DuckDb.Materialize
   , materializeRiskCount
   , materializeDeadCode
   , materializeLiveProc
-  , materializeCallerCounts
-  , materializeDeadCodeRows
   , materializeTaintPaths
   , materializeTaintAnnotations
   )
@@ -51,12 +49,11 @@ import qualified Data.Set        as Set
 import qualified Data.Text       as T
 import Data.Time.Clock        (getCurrentTime)
 
--- | Phase B computes the five relation materializers directly in DuckDB
+-- | Phase B computes the relation materializers directly in DuckDB
 -- (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
 -- 'PB.Pipeline.DuckDb.materializeRiskCount',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc',
--- 'PB.Pipeline.DuckDb.materializeCallerCounts',
--- 'PB.Pipeline.DuckDb.materializeDeadCodeRows'), invoked in 'runPhaseB' after
+-- 'PB.Pipeline.DuckDb.materializeDeadCode'), invoked in 'runPhaseB' after
 -- the input relation views are built. Per-relation progress is folded into the ordinary
 -- 'Progress.timedStep' events.
 
@@ -141,21 +138,21 @@ timedQueryRows label action = Progress.timedStepRows label (do
 --   schema input relations
 --   ('Relations.initSchemaRelations', over @schema_morphisms@\/
 --   @schema_objects@).
--- * **B2 (SQL materializers):** the five relation materializers run as direct
+-- * **B2 (SQL materializers):** the relation materializers run as direct
 --   DuckDB SQL, in dependency order after the input relation views exist:
 --   'PB.Pipeline.DuckDb.materializeImpliedFkPairs' (consumed by
 --   'materializeImpliedFk'), 'PB.Pipeline.DuckDb.materializeRiskCount'
 --   (consumed by 'materializeColumnRisk'),
 --   'PB.Pipeline.DuckDb.materializeLiveProc' (the @live_proc@ table the CLI
---   reads), 'PB.Pipeline.DuckDb.materializeCallerCounts', and finally
---   'PB.Pipeline.DuckDb.materializeDeadCodeRows' (which depends on the
---   @confidence@\/@caller_count_*@ tables the previous step built, and is
---   consumed by 'materializeDeadCode'). The only sequencing that remains
+--   reads), and 'PB.Pipeline.DuckDb.materializeDeadCode' (a single CTE chain
+--   straight from @proc_dead@\/@proc_meta@\/@call_ref@\/@resolved_call_edge@
+--   to @dead_code@ -- Plan 198 Phase A collapsed the prior 8-table
+--   intermediate chain). The only sequencing that remains
 --   manual is the Phase A→B boundary enforced by B1 (the input relation views' source
 --   tables must be populated before the views are created), which is a
---   genuine data dependency. Finally the two SQL materializers project derived
---   output tables into their API-facing shapes (@dead_code_rows@→@dead_code@,
---   @path_leg_fwd@\/@path_leg_back@→@decomposition_coslice@).
+--   genuine data dependency. Finally the schema materializer projects its
+--   derived output table into its API-facing shape (@path_leg_fwd@\/
+--   @path_leg_back@→@decomposition_coslice@).
 runPhaseB :: Handle -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   Progress.emitEvent (Progress.EvPhase "B")
@@ -188,8 +185,6 @@ runPhaseB conn mDefaultNamespace = do
   materializeImpliedFkPairs conn
   materializeRiskCount conn
   materializeLiveProc conn
-  materializeCallerCounts conn
-  materializeDeadCodeRows conn
   materializeDeadCode conn
   materializeDecompositionCoslice conn
   materializeImpliedFk conn
@@ -216,10 +211,10 @@ materializeAllRelationsViews conn catFks = do
   Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure schRows conn
   reportTaintDefUseFanout conn
 
--- | The five relation materializers run as direct DuckDB SQL, invoked in
+-- | The relation materializers run as direct DuckDB SQL, invoked in
 -- dependency order inside 'runPhaseB' (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
 -- 'PB.Pipeline.DuckDb.materializeRiskCount', 'PB.Pipeline.DuckDb.materializeLiveProc',
--- 'PB.Pipeline.DuckDb.materializeCallerCounts', 'PB.Pipeline.DuckDb.materializeDeadCodeRows').
+-- 'PB.Pipeline.DuckDb.Materialize.materializeDeadCode').
 -- The taint, dead-reach, and schema-coslice relations are produced
 -- algebraically (Haskell or SQL); the schema/dead-code consumers read the
 -- same pre-materialized input tables they always did.
