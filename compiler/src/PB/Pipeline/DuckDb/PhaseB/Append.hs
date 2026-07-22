@@ -21,7 +21,7 @@ import PB.Analysis.SchemaCategory
   )
 import PB.Pipeline.SqlParse    (TableRef (..))
 import PB.Pipeline.Serialise   ()
-import PB.Pipeline.DuckDb      (Handle, withRaw, aText, aMaybeText, aInt, aMaybeInt, aBool, jsonList)
+import PB.Pipeline.DuckDb      (Handle, withRaw, aText, aMaybeText, aInt, aMaybeInt, aMaybeSpan, aBool, jsonList)
 import PB.Pipeline.DuckDb.Appender (forEachRow)
 
 import qualified Data.Text as T
@@ -54,6 +54,7 @@ appendResolvedCalls conn rows = withRaw conn "resolved_calls" $ \app ->
     aMaybeText app (rcTargetProc   r)
     aText      app (rcKind         r)
     aText      app (rcConfidence   r)
+    aMaybeSpan app (rcSpan         r)
 
 appendInterprocEdges :: Handle -> [Taint.InterprocEdge] -> IO ()
 appendInterprocEdges _    [] = pure ()

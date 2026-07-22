@@ -52,13 +52,13 @@ module PB.Pipeline.DuckDb.PhaseA
   ) where
 
 import PB.Prelude
-import PB.AST.Ident             (identOrig)
+import PB.AST.Ident             (identOrig, identSpan, provenanceSpan)
 import PB.Analysis.TypeResolve  (LocalVar (..), CallSite (..), GlobalVar (..), ResolvedVarRef (..))
 import PB.Analysis.Dataflow     qualified as Dataflow
 import PB.Analysis.TaintEdges   qualified as TaintEdges
 import PB.Analysis.DeadVars     (DeadVarFinding (..), deadVarKindText)
 import PB.Analysis.TypeFamily   (TypeMismatchFinding (..), mismatchKindText)
-import PB.Pipeline.DuckDb       (aText, aMaybeText, aInt, aMaybeInt, aBool)
+import PB.Pipeline.DuckDb       (aText, aMaybeText, aInt, aMaybeInt, aMaybeSpan, aBool)
 import PB.Pipeline.DuckDb.Appender (AppenderPool, appendRow, forEachRow)
 
 import qualified Data.Map.Strict as Map
@@ -407,6 +407,7 @@ appendCallSites pool css = appendRow pool "call_sites" $ \app ->
     aText     app (csCallType cs)
     aMaybeInt app (csLine cs)
     aMaybeText app (csReceiverObject cs)
+    aMaybeSpan app (csToNameSpan cs)
 
 appendVarRefs :: AppenderPool -> [ResolvedVarRef] -> IO ()
 appendVarRefs _    [] = pure ()
@@ -421,6 +422,7 @@ appendVarRefs pool rvrs = appendRow pool "resolved_var_refs" $ \app ->
     aMaybeText app (rvrTargetObject rvr)
     aText      app (rvrKind         rvr)
     aText      app (rvrConfidence   rvr)
+    aMaybeSpan app (rvrSpan         rvr)
 
 appendGlobalVars :: AppenderPool -> [GlobalVar] -> IO ()
 appendGlobalVars _    [] = pure ()
@@ -445,6 +447,7 @@ appendProcDefs pool flows = appendRow pool "proc_defs" $ \app ->
       aInt      app (Dataflow.dsStmtIdx d)
       aMaybeInt app (Dataflow.dsLine d)
       aText     app (Dataflow.dsKind d)
+      aMaybeSpan app (provenanceSpan (identSpan (Dataflow.dsVar d)))
 
 appendProcUses :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcUses _    [] = pure ()
@@ -459,6 +462,7 @@ appendProcUses pool flows = appendRow pool "proc_uses" $ \app ->
       aInt      app (Dataflow.usStmtIdx u)
       aMaybeInt app (Dataflow.usLine u)
       aText     app (Dataflow.usKind u)
+      aMaybeSpan app (provenanceSpan (identSpan (Dataflow.usVar u)))
 
 appendSqlStmts :: AppenderPool -> [SqlStmtRow] -> IO ()
 appendSqlStmts _    [] = pure ()

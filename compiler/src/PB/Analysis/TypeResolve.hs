@@ -67,10 +67,12 @@ import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..))
 import PB.AST.Expr
 import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapEmpty,
                            identMapInsertWith, identMapLookup, identMapToList, identOrig,
-                           identSetFromList, identSetLookup, identSetUnion, mkIdent)
+                           identSetFromList, identSetLookup, identSetUnion, identSpan, mkIdent,
+                           provenanceSpan)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
+import PB.Lexing.Token    (SourceSpan)
 import PB.Analysis.CallClassify   (collectBodyLocals, resolveReceiverType, resolveLvalueType)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
@@ -182,6 +184,11 @@ data CallSite = CallSite
     -- 'ExCall'\/'ExDispatch', and for an 'ExMethodCall' whose receiver isn't
     -- statically resolvable (e.g. a chained-call receiver such as
     -- @a.b().c()@'s @c@ -- skipped rather than guessed).
+  , csToNameSpan     :: Maybe SourceSpan
+    -- ^ The real source span of the identifier token(s) 'csToName' was
+    -- flattened from -- distinct from 'csLine' (the enclosing statement's
+    -- line, which 'PB.Analysis.Taint.buildInterprocEdges' matches call
+    -- sites against def\/use sites by, and so must stay untouched).
   } deriving (Eq, Show)
 
 instance ToJSON CallSite where
@@ -193,6 +200,7 @@ instance ToJSON CallSite where
     , "callType"       .= csCallType       cs
     , "line"           .= csLine           cs
     , "receiverObject" .= csReceiverObject cs
+    , "toNameSpan"     .= csToNameSpan     cs
     ]
 
 data GlobalVar = GlobalVar
@@ -248,6 +256,7 @@ data ResolvedCall = ResolvedCall
   , rcTargetProc   :: Maybe Text
   , rcKind         :: Text   -- "virtual" | "static" | "inherited" | "unresolved"
   , rcConfidence   :: Text   -- "high" | "medium" | "low"
+  , rcSpan         :: Maybe SourceSpan  -- ^ see 'CallSite.csToNameSpan'
   } deriving (Eq, Show)
 
 instance ToJSON ResolvedCall where
@@ -262,6 +271,7 @@ instance ToJSON ResolvedCall where
     , "targetProc"   .= rcTargetProc   rc
     , "kind"         .= rcKind         rc
     , "confidence"   .= rcConfidence   rc
+    , "span"         .= rcSpan         rc
     ]
 
 -- | One resolved read\/write reference to a named identifier -- the
@@ -281,6 +291,10 @@ data ResolvedVarRef = ResolvedVarRef
   , rvrTargetObject :: Maybe Text
   , rvrKind         :: Text   -- "local" | "param" | "instance" | "global" | "control" | "class" | "builtin_property" | "unresolved"
   , rvrConfidence   :: Text   -- "high" | "unresolved"
+  , rvrSpan         :: Maybe SourceSpan
+    -- ^ The real source span of the trailing identifier segment
+    -- ('rvrName') -- distinct from 'rvrLine' (the enclosing statement's
+    -- line; kept as-is for parity with 'CallSite.csLine').
   } deriving (Eq, Show)
 
 instance ToJSON ResolvedVarRef where
@@ -294,6 +308,7 @@ instance ToJSON ResolvedVarRef where
     , "targetObject" .= rvrTargetObject rvr
     , "kind"         .= rvrKind         rvr
     , "confidence"   .= rvrConfidence   rvr
+    , "span"         .= rvrSpan         rvr
     ]
 
 -- ---------------------------------------------------------------------------
@@ -447,6 +462,9 @@ callSitesExpr env file obj proc_ mLine = foldExprs classify
           , csCallType       = "ExCall"
           , csLine           = mLine
           , csReceiverObject = Nothing
+          , csToNameSpan     = case reverse (segments lv) of
+              (finalSeg:_) -> provenanceSpan (identSpan (segName finalSeg))
+              []           -> Nothing
           } ]
     classify ExMethodCall { receiver = recv, method = m } =
       [ CallSite
@@ -457,8 +475,9 @@ callSitesExpr env file obj proc_ mLine = foldExprs classify
           , csCallType       = "ExMethodCall"
           , csLine           = mLine
           , csReceiverObject = resolveReceiverType env recv
+          , csToNameSpan     = provenanceSpan (identSpan m)
           } ]
-    classify (ExDispatch de) =
+    classify (ExDispatch de@DispatchExpr { name = n }) =
       [ CallSite
           { csFile           = file
           , csObject         = obj
@@ -467,6 +486,7 @@ callSitesExpr env file obj proc_ mLine = foldExprs classify
           , csCallType       = "ExDispatch"
           , csLine           = mLine
           , csReceiverObject = Nothing
+          , csToNameSpan     = provenanceSpan (identSpan n)
           } ]
     classify _ = []
 
@@ -564,13 +584,14 @@ classifyLvalueRef
   :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Text -> Lvalue -> ResolvedVarRef
 classifyLvalueRef wsEnv env file obj proc_ mLine access lv =
   case reverse (segments lv) of
-    []                  -> ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved"
+    []                  -> ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved" Nothing
     (finalSeg : restRev) ->
       let nm = identOrig (segName finalSeg)
           (kind, tgt, conf) = case reverse restRev of
             []         -> classifyRoot (segName finalSeg)
             prefixSegs -> classifyMember prefixSegs (segName finalSeg)
       in ResolvedVarRef file obj proc_ mLine nm access tgt kind conf
+           (provenanceSpan (identSpan (segName finalSeg)))
   where
     classifyRoot n
       | identCanon n == "this"  = ("class", Just obj, "high")
@@ -955,6 +976,7 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
        , rcTargetProc   = tProc
        , rcKind         = kind
        , rcConfidence   = conf
+       , rcSpan         = csToNameSpan cs
        }
   where
     dispatch site = case csCallType site of

@@ -33,6 +33,7 @@ module PB.Pipeline.DuckDb.PhaseB.Query
 import PB.Prelude
 import PB.AST.Ident             (Ident, IdentMap, IdentSet, identMapFromListWith, identSetSingleton, identSetUnion, mkIdent)
 import PB.AST.Type             (parseTypeText)
+import PB.Lexing.Token          (SourceSpan (..))
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite (..), GlobalVar (..)
   )
@@ -46,7 +47,7 @@ import PB.Analysis.SchemaCategory
 import PB.Pipeline.SqlParse    (TableRef (..))
 import PB.Pipeline.DuckDb      (Handle, queryHandle)
 
-import Database.DuckDB.Simple.FromRow  (FromRow (..), field)
+import Database.DuckDB.Simple.FromRow  (FromRow (..), RowParser, field)
 
 import qualified Data.Map.Strict         as Map
 import qualified Data.Set                as Set
@@ -75,8 +76,30 @@ instance FromRow LocalVar where
       , lvPbType    = parseTypeText rawType_
       }
 
+-- | Read four nullable INTEGER span columns (in @start_line, start_col,
+-- end_line, end_col@ order) as one 'SourceSpan', all-or-nothing -- every
+-- write site fills all four together or leaves all four NULL, so partial
+-- construction never arises in practice.
+fieldSpan :: RowParser (Maybe SourceSpan)
+fieldSpan = do
+  sl <- field; sc <- field; el <- field; ec <- field
+  pure (SourceSpan <$> sl <*> sc <*> el <*> ec)
+
 instance FromRow CallSite where
-  fromRow = CallSite <$> field <*> field <*> field <*> field <*> field <*> field <*> field
+  fromRow = do
+    f_  <- field; o_  <- field; fp_ <- field; tn_ <- field
+    ct_ <- field; l_  <- field; ro_ <- field
+    sp_ <- fieldSpan
+    pure CallSite
+      { csFile           = f_
+      , csObject         = o_
+      , csFromProc       = fp_
+      , csToName         = tn_
+      , csCallType       = ct_
+      , csLine           = l_
+      , csReceiverObject = ro_
+      , csToNameSpan     = sp_
+      }
 
 instance FromRow GlobalVar where
   fromRow = do
@@ -97,11 +120,13 @@ instance FromRow Taint.DefRow where
   fromRow = Taint.DefRow
     <$> field <*> field <*> field <*> field
     <*> field <*> field <*> field <*> field
+    <*> fieldSpan
 
 instance FromRow Taint.UseRow where
   fromRow = Taint.UseRow
     <$> field <*> field <*> field <*> field
     <*> field <*> field <*> field <*> field
+    <*> fieldSpan
 
 instance FromRow TaintEdges.TaintIntraEdgeRow where
   fromRow = TaintEdges.TaintIntraEdgeRow <$> field <*> field <*> field <*> field
@@ -113,6 +138,7 @@ instance FromRow Taint.ResolvedCallRow where
   fromRow = do
     f_  <- field; o_  <- field; fp_ <- field; tn_ <- field; ct_ <- field
     l_  <- field; to_ <- field; tp_ <- field; k_  <- field; c_  <- field
+    sp_ <- fieldSpan
     pure Taint.ResolvedCallRow
       { Taint.rcrFile           = f_
       , Taint.rcrObject         = o_
@@ -125,6 +151,7 @@ instance FromRow Taint.ResolvedCallRow where
       , Taint.rcrResolutionKind = k_
       , Taint.rcrConfidence     = c_
       , Taint.rcrReturnType     = Nothing
+      , Taint.rcrSpan           = sp_
       }
 
 instance FromRow DwRetrieveColRow where
@@ -188,7 +215,9 @@ queryLocalVars conn = queryHandle conn
 
 queryCallSites :: Handle -> IO [CallSite]
 queryCallSites conn = queryHandle conn
-  "SELECT file, object, from_proc, to_name, call_type, line, receiver_object FROM call_sites"
+  "SELECT file, object, from_proc, to_name, call_type, line, receiver_object, \
+  \to_name_start_line, to_name_start_col, to_name_end_line, to_name_end_col \
+  \FROM call_sites"
 
 queryGlobalVars :: Handle -> IO [GlobalVar]
 queryGlobalVars conn = queryHandle conn
@@ -228,12 +257,14 @@ queryObjInfo conn = do
 
 queryProcDefs :: Handle -> IO [Taint.DefRow]
 queryProcDefs conn = queryHandle conn
-  "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind \
+  "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind, \
+  \var_start_line, var_start_col, var_end_line, var_end_col \
   \FROM proc_defs"
 
 queryProcUses :: Handle -> IO [Taint.UseRow]
 queryProcUses conn = queryHandle conn
-  "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind \
+  "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind, \
+  \var_start_line, var_start_col, var_end_line, var_end_col \
   \FROM proc_uses"
 
 -- | @proc_defs@\/@proc_uses@ rows 'PB.Pipeline.Passes.runPass67' already
@@ -258,7 +289,9 @@ queryTaintReturnRows conn = queryHandle conn
 queryResolvedCalls :: Handle -> IO [Taint.ResolvedCallRow]
 queryResolvedCalls conn = queryHandle conn
   "SELECT file, object, from_proc, to_name, call_type, line, \
-  \target_object, target_proc, kind, confidence FROM resolved_calls"
+  \target_object, target_proc, kind, confidence, \
+  \to_name_start_line, to_name_start_col, to_name_end_line, to_name_end_col \
+  \FROM resolved_calls"
 
 -- | Reconstruct per-file TaintFileInputs from the sql_statements and
 -- procedures tables.  SqlStmt values are re-derived from raw_sql using

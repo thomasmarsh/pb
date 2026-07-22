@@ -20,6 +20,7 @@ module PB.Pipeline.DuckDb
   , aMaybeText
   , aInt
   , aMaybeInt
+  , aMaybeSpan
   , aBool
   , checkSt
   , checkAppenderSt
@@ -50,6 +51,7 @@ import Database.DuckDB.FFI
   )
 
 import Data.Aeson               (ToJSON, encode)
+import PB.Lexing.Token          (SourceSpan (..))
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BSL
 import qualified Data.Text               as T
@@ -131,24 +133,43 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       , "CREATE TABLE IF NOT EXISTS local_vars \
         \(file TEXT, object TEXT, proc_name TEXT, \
         \var_name TEXT, raw_type TEXT, is_param BOOLEAN, scope_line INTEGER)"
+      -- Plan 195 Phase E.5b: to_name_start_line/col, to_name_end_line/col
+      -- carry the callee identifier token's own span, additive alongside
+      -- line (the enclosing statement's line, which
+      -- PB.Analysis.Taint.buildInterprocEdges matches call sites against
+      -- def/use sites by, and so must stay untouched).
       , "CREATE TABLE IF NOT EXISTS call_sites \
         \(file TEXT, object TEXT, from_proc TEXT, \
-        \to_name TEXT, call_type TEXT, line INTEGER, receiver_object TEXT)"
+        \to_name TEXT, call_type TEXT, line INTEGER, receiver_object TEXT, \
+        \to_name_start_line INTEGER, to_name_start_col INTEGER, \
+        \to_name_end_line INTEGER, to_name_end_col INTEGER)"
       -- The canonical variable/property cross-reference relation
       -- (PB.Analysis.TypeResolve.ResolvedVarRef), parallel to resolved_calls
       -- but fully resolved at extraction time (no later cross-file stage
       -- needed -- see that type's own header comment for why).
+      -- name_start_line/col, name_end_line/col carry the referenced
+      -- identifier's own span, additive alongside line (the statement's
+      -- line).
       , "CREATE TABLE IF NOT EXISTS resolved_var_refs \
         \(file TEXT, object TEXT, from_proc TEXT, line INTEGER, \
-        \name TEXT, access TEXT, target_object TEXT, kind TEXT, confidence TEXT)"
+        \name TEXT, access TEXT, target_object TEXT, kind TEXT, confidence TEXT, \
+        \name_start_line INTEGER, name_start_col INTEGER, \
+        \name_end_line INTEGER, name_end_col INTEGER)"
       , "CREATE TABLE IF NOT EXISTS global_vars \
         \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)"
+      -- var_start_line/col, var_end_line/col carry the def/use variable's
+      -- own token span, additive alongside line (the statement's line,
+      -- which buildInterprocEdges matches on -- see call_sites above).
       , "CREATE TABLE IF NOT EXISTS proc_defs \
         \(file TEXT, object TEXT, proc_name TEXT, var_name TEXT, \
-        \block_id TEXT, stmt_index INTEGER, line INTEGER, kind TEXT)"
+        \block_id TEXT, stmt_index INTEGER, line INTEGER, kind TEXT, \
+        \var_start_line INTEGER, var_start_col INTEGER, \
+        \var_end_line INTEGER, var_end_col INTEGER)"
       , "CREATE TABLE IF NOT EXISTS proc_uses \
         \(file TEXT, object TEXT, proc_name TEXT, var_name TEXT, \
-        \block_id TEXT, stmt_index INTEGER, line INTEGER, kind TEXT)"
+        \block_id TEXT, stmt_index INTEGER, line INTEGER, kind TEXT, \
+        \var_start_line INTEGER, var_start_col INTEGER, \
+        \var_end_line INTEGER, var_end_col INTEGER)"
       , "CREATE TABLE IF NOT EXISTS sql_statements \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
@@ -227,10 +248,15 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       , "CREATE TABLE IF NOT EXISTS resolved_types \
         \(file TEXT, object TEXT, proc_name TEXT, var_name TEXT, \
         \raw_type TEXT, kind TEXT, target TEXT, scope TEXT, scope_line INTEGER)"
+      -- to_name_start_line/col, to_name_end_line/col carry the callee
+      -- identifier token's own span, additive alongside line -- see
+      -- call_sites above for why line itself must stay untouched.
       , "CREATE TABLE IF NOT EXISTS resolved_calls \
         \(file TEXT, object TEXT, from_proc TEXT, to_name TEXT, \
         \call_type TEXT, line INTEGER, \
-        \target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT)"
+        \target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT, \
+        \to_name_start_line INTEGER, to_name_start_col INTEGER, \
+        \to_name_end_line INTEGER, to_name_end_col INTEGER)"
       , "CREATE TABLE IF NOT EXISTS interproc_edges \
         \(caller_object TEXT, caller_proc TEXT, caller_line INTEGER, \
         \callee_object TEXT, callee_proc TEXT, \
@@ -395,6 +421,20 @@ aInt app n =
 aMaybeInt :: DuckDBAppender -> Maybe Int -> IO ()
 aMaybeInt app Nothing  = checkSt "append_null" =<< c_duckdb_append_null app
 aMaybeInt app (Just n) = aInt app n
+
+-- | Append a span as four nullable INTEGER columns, in @start_line,
+-- start_col, end_line, end_col@ order -- all four NULL for 'Nothing'.
+aMaybeSpan :: DuckDBAppender -> Maybe SourceSpan -> IO ()
+aMaybeSpan app Nothing = do
+  aMaybeInt app Nothing
+  aMaybeInt app Nothing
+  aMaybeInt app Nothing
+  aMaybeInt app Nothing
+aMaybeSpan app (Just sp) = do
+  aInt app (ssStartLine sp)
+  aInt app (ssStartCol  sp)
+  aInt app (ssEndLine   sp)
+  aInt app (ssEndCol    sp)
 
 aBool :: DuckDBAppender -> Bool -> IO ()
 aBool app b =

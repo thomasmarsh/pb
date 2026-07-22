@@ -40,11 +40,12 @@ import PB.AST.BodyStmt     (BodyStmt (..), foldStmts)
 import PB.AST.Ident        (Ident, identOrig, mkIdent)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
+import PB.Lexing.Token     (SourceSpan)
 import PB.Analysis.Dataflow (extractSqlHostVars)
 import PB.Analysis.TypeResolve (parseParams)
 
 import Data.Aeson
-  ( FromJSON (..), ToJSON (..), (.:), (.:?), (.!=)
+  ( FromJSON (..), ToJSON (..), (.:)
   , object, withObject, (.=)
   )
 import qualified Data.HashMap.Strict as HM
@@ -65,13 +66,11 @@ data DefRow = DefRow
   , drStmtIdx  :: Int
   , drLine     :: Maybe Int
   , drKind     :: Text
+  , drSpan     :: Maybe SourceSpan
+    -- ^ The def variable's own token span -- distinct from 'drLine' (the
+    -- enclosing statement's line, which 'buildInterprocEdges' matches
+    -- against 'ResolvedCallRow.rcrCallLine' and so must stay untouched).
   } deriving (Eq, Show)
-
-instance FromJSON DefRow where
-  parseJSON = withObject "DefRow" $ \o ->
-    DefRow <$> o .: "file" <*> o .: "object" <*> o .: "proc_name"
-           <*> o .: "var_name" <*> o .: "block_id" <*> o .: "stmt_index"
-           <*> o .:? "line" .!= Nothing <*> o .: "kind"
 
 data UseRow = UseRow
   { urFile     :: Text
@@ -82,13 +81,8 @@ data UseRow = UseRow
   , urStmtIdx  :: Int
   , urLine     :: Maybe Int
   , urKind     :: Text
+  , urSpan     :: Maybe SourceSpan  -- ^ see 'DefRow.drSpan'
   } deriving (Eq, Show)
-
-instance FromJSON UseRow where
-  parseJSON = withObject "UseRow" $ \o ->
-    UseRow <$> o .: "file" <*> o .: "object" <*> o .: "proc_name"
-           <*> o .: "var_name" <*> o .: "block_id" <*> o .: "stmt_index"
-           <*> o .:? "line" .!= Nothing <*> o .: "kind"
 
 data ResolvedCallRow = ResolvedCallRow
   { rcrFile           :: Text
@@ -102,17 +96,8 @@ data ResolvedCallRow = ResolvedCallRow
   , rcrResolutionKind :: Text
   , rcrConfidence     :: Text
   , rcrReturnType     :: Maybe Text
+  , rcrSpan           :: Maybe SourceSpan  -- ^ see 'DefRow.drSpan'
   } deriving (Eq, Show)
-
-instance FromJSON ResolvedCallRow where
-  parseJSON = withObject "ResolvedCallRow" $ \o ->
-    ResolvedCallRow <$> o .: "file" <*> o .: "object" <*> o .: "fromProc"
-                    <*> o .: "toName" <*> o .: "callType"
-                    <*> o .:? "line" .!= Nothing
-                    <*> o .:? "targetObject" .!= Nothing
-                    <*> o .:? "targetProc" .!= Nothing
-                    <*> o .: "kind" <*> o .: "confidence"
-                    <*> o .:? "return_type" .!= Nothing
 
 data GlobalVarRow = GlobalVarRow
   { gvrVarName :: Text

@@ -22,6 +22,7 @@ import PB.Pipeline.DuckDb.PhaseA
 import PB.Pipeline.DuckDb.PhaseB.Append (appendResolvedCalls)
 import PB.Analysis.TypeResolve (ResolvedCall (..))
 import PB.Analysis.Taint qualified as Taint
+import PB.Lexing.Token (SourceSpan (..))
 
 import qualified Data.Set as Set
 
@@ -80,11 +81,11 @@ seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs = do
   appendDwObjects pool
     [ DwObjectRow "f.srd" o "" "" Nothing | o <- Set.toList dwObjs ]
   appendResolvedCalls conn $
-    [ ResolvedCall "f.srf" obj fromProc toName "call" (Just 1) Nothing Nothing "call" "high"
+    [ ResolvedCall "f.srf" obj fromProc toName "call" (Just 1) Nothing Nothing "call" "high" Nothing
     | (obj, fromProc, toName) <- calls
     ]
     <> [ ResolvedCall "f.srf" obj fromProc (tgtObj <> "." <> tgtProc) "call" (Just 1)
-           (Just tgtObj) (Just tgtProc) "call" "high"
+           (Just tgtObj) (Just tgtProc) "call" "high" Nothing
        | (obj, fromProc, tgtObj, tgtProc) <- resolved
        ]
   -- Plan 166 Stage 2: seed inheritance as objects.ancestor rows; the
@@ -97,7 +98,9 @@ seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs = do
 
 -- | A resolved_calls row builder for the 'MaterializedRelations' pure-function tests
 -- below -- fields these functions never read (file, call_type, resolution
--- kind, confidence, return_type) get fixed placeholder values.
+-- kind, confidence, return_type) get fixed placeholder values. 'rcrSpan' is
+-- derived from the same 'mLine' as 'rcrCallLine' (a degenerate one-line span)
+-- since 'resolvedCallEdgeRows' displays via 'rcrSpan' now.
 mkResolvedCall :: Text -> Text -> Text -> Maybe (Text, Text) -> Maybe Int -> Taint.ResolvedCallRow
 mkResolvedCall obj fromProc toName mTarget mLine = Taint.ResolvedCallRow
   { Taint.rcrFile           = "f.srf"
@@ -111,4 +114,5 @@ mkResolvedCall obj fromProc toName mTarget mLine = Taint.ResolvedCallRow
   , Taint.rcrResolutionKind = "call"
   , Taint.rcrConfidence     = "high"
   , Taint.rcrReturnType     = Nothing
+  , Taint.rcrSpan           = (\l -> SourceSpan l 1 l 1) <$> mLine
   }

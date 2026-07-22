@@ -10,7 +10,7 @@ import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident        (mkIdent, identMapEmpty, identMapFromList, identMapLookup,
+import PB.AST.Ident        (mkIdent, mkIdentAt, identMapEmpty, identMapFromList, identMapLookup,
                              identSetEmpty, identSetFromList, identSetMember, identSetSingleton)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
@@ -329,6 +329,30 @@ tests = testGroup "TypeResolve"
             [s1, s2] -> do
               csToName s1 @?= "f_try"
               csToName s2 @?= "f_catch"
+            other -> assertFailure ("expected 2 sites, got " ++ show (length other))
+
+      -- Plan 195 Phase E.5b: two same-named calls sharing one physical
+      -- line (the same 'csLine', both statement lines equal) must still
+      -- be distinguishable by 'csToNameSpan''s column -- the actual
+      -- regression case Phase F exists to fix, since 'csLine' alone
+      -- cannot tell the two call sites apart.
+      , testCase "two calls sharing one physical line are distinguished by csToNameSpan column" $ do
+          let sp1  = SourceSpan 20 1 20 8
+              sp2  = SourceSpan 20 11 20 18
+              body = [ Located 20 (BsCall (ExCall
+                         { callee   = Lvalue [LvSegment (mkIdentAt sp1 "f_dupe") Nothing]
+                         , callArgs = []
+                         }))
+                     , Located 20 (BsCall (ExCall
+                         { callee   = Lvalue [LvSegment (mkIdentAt sp2 "f_dupe") Nothing]
+                         , callArgs = []
+                         })) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [s1, s2] -> do
+              csLine s1 @?= csLine s2
+              csToNameSpan s1 @?= Just sp1
+              csToNameSpan s2 @?= Just sp2
             other -> assertFailure ("expected 2 sites, got " ++ show (length other))
 
       , testCase "nested ExMethodCall receiver: a.b().c() yields call sites for both b and c" $ do
@@ -674,6 +698,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Just 5
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
@@ -693,6 +718,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
               pm  = identMapFromList
                       [ ("w_child",  identSetEmpty)
@@ -714,6 +740,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
             [rc] -> do
@@ -732,6 +759,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Just 10
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList
                      [ ("w_main", identSetEmpty)
@@ -755,6 +783,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
@@ -777,6 +806,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 , csReceiverObject = Just "w_other"
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
@@ -799,6 +829,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 , csReceiverObject = Just "w_child"
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList
                      [ ("w_child",  identSetEmpty)
@@ -820,6 +851,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
@@ -834,6 +866,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 , csReceiverObject = Just "w_other"
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_other", identSetEmpty)]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
@@ -849,6 +882,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_t", identSetFromList ["f_helper"])]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
@@ -867,6 +901,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 , csReceiverObject = Just "W_Other"
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
@@ -891,6 +926,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty (Set.singleton "messagebox") Set.empty of
             [rc] -> do
@@ -909,6 +945,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
           case resolveCalls [site] identMapEmpty Map.empty Set.empty (Set.singleton "retrieve") of
             [rc] -> do
@@ -927,6 +964,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of

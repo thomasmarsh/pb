@@ -7,6 +7,7 @@ module PB.Lexing.Token
 
 import PB.Prelude
 import Control.DeepSeq (NFData)
+import Data.Aeson      (ToJSON (..), object, (.=))
 import GHC.Generics    (Generic)
 
 -- | Source location for a token, resolved back to the true raw file
@@ -23,6 +24,14 @@ data SourceSpan = SourceSpan
   } deriving (Eq, Ord, Show, Generic)
 
 instance NFData SourceSpan
+
+instance ToJSON SourceSpan where
+  toJSON sp = object
+    [ "startLine" .= ssStartLine sp
+    , "startCol"  .= ssStartCol  sp
+    , "endLine"   .= ssEndLine   sp
+    , "endCol"    .= ssEndCol    sp
+    ]
 
 data TokenKind
   = TkStringDouble

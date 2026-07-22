@@ -8,6 +8,7 @@ module PB.AST.Ident
   , mkIdentDerived
   , mkIdentSynthetic
   , mkIdent
+  , provenanceSpan
   , IdentSet
   , identSetEmpty
   , identSetSingleton
@@ -31,11 +32,12 @@ import Control.DeepSeq (NFData (..))
 import Data.Aeson     (ToJSON (..))
 import Data.Hashable  (Hashable (..))
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import Data.String    (IsString (..))
 import GHC.Generics   (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
-import PB.Lexing.Token (SourceSpan)
+import PB.Lexing.Token (SourceSpan (..))
 
 -- | Where an 'Ident''s identity came from.  'Eq'\/'Ord'\/'Hashable' on
 -- 'Ident' compare only 'identCanon', so this field has no effect on
@@ -94,6 +96,16 @@ mkIdentDerived sps t = Ident t (T.toLower t) (FromSource sps)
 -- | Mint an 'Ident' with no source span, by design.
 mkIdentSynthetic :: Text -> Text -> Ident
 mkIdentSynthetic reason t = Ident t (T.toLower t) (Synthetic reason)
+
+-- | Flatten an 'IdentProvenance' to the single overall span it covers -- the
+-- start of its first token through the end of its last, or 'Nothing' for a
+-- 'Synthetic' ident (no source span to report).
+provenanceSpan :: IdentProvenance -> Maybe SourceSpan
+provenanceSpan (FromSource sps) = Just (SourceSpan (ssStartLine start_) (ssStartCol start_) (ssEndLine end_) (ssEndCol end_))
+  where
+    start_ = NE.head sps
+    end_   = NE.last sps
+provenanceSpan (Synthetic _) = Nothing
 
 -- | Legacy constructor — temporarily kept as a bridge during the
 -- Phase E.5 migration.  Every call site must be converted to

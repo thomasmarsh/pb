@@ -49,6 +49,16 @@ tests = testGroup "Ident"
             other -> fail $ "expected Synthetic, got " <> show other
       ]
 
+  , testGroup "provenanceSpan"
+      [ testCase "FromSource with one span returns that span" $
+          provenanceSpan (identSpan (mkIdentAt sp1 "foo")) @?= Just sp1
+      , testCase "FromSource with multiple spans combines first's start with last's end" $
+          provenanceSpan (identSpan (mkIdentDerived (sp1 :| [sp2]) "foo::bar"))
+            @?= Just (SourceSpan (ssStartLine sp1) (ssStartCol sp1) (ssEndLine sp2) (ssEndCol sp2))
+      , testCase "Synthetic returns Nothing" $
+          provenanceSpan (identSpan (mkIdentSynthetic "test reason" "foo")) @?= Nothing
+      ]
+
   , testGroup "Provenance does not affect Eq/Ord"
       [ testCase "FromSource and Synthetic with same text are equal" $
           mkIdentAt sp1 "n_cst_util" @?= mkIdentSynthetic "test" "N_CST_UTIL"

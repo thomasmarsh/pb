@@ -43,6 +43,7 @@ defRow file obj proc var line stmtIdx = DefRow
   { drFile = file, drObject = obj, drProcName = proc
   , drVarName = var, drBlockId = "b0", drStmtIdx = stmtIdx
   , drLine = Just line, drKind = "assign"
+  , drSpan = Nothing
   }
 
 useRow :: Text -> Text -> Text -> Text -> Int -> Text -> UseRow
@@ -50,6 +51,7 @@ useRow file obj proc var line kind = UseRow
   { urFile = file, urObject = obj, urProcName = proc
   , urVarName = var, urBlockId = "b0", urStmtIdx = 0
   , urLine = Just line, urKind = kind
+  , urSpan = Nothing
   }
 
 edge :: Text -> Text -> Maybe Int -> Text -> Text -> Text -> Text -> Text -> Text -> InterprocEdge

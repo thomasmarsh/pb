@@ -54,6 +54,7 @@ import PB.Analysis.SchemaCategory
   ( SchObject (..), StmtId (..), CatFkRow (..), schObjectKey )
 import PB.Pipeline.SqlParse (TableRef (..))
 import PB.Analysis.Taint qualified as Taint
+import PB.Lexing.Token (SourceSpan (..))
 
 import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
@@ -327,7 +328,7 @@ lastDotSegment t = case reverse (T.splitOn "." t) of
 resolvedCallEdgeRows :: [Taint.ResolvedCallRow] -> [ResolvedCallEdge]
 resolvedCallEdgeRows calls =
   [ ResolvedCallEdge (Taint.rcrObject c) (Taint.rcrFromProc c) to tp
-      (maybe "" (T.pack . show) (Taint.rcrCallLine c))
+      (maybe "" (T.pack . show . ssStartLine) (Taint.rcrSpan c))
   | c <- calls
   , Just to <- [Taint.rcrTargetObject c]
   , Just tp <- [Taint.rcrTargetProc c]

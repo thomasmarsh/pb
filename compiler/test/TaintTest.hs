@@ -40,6 +40,7 @@ defRow file obj proc var line stmtIdx = DefRow
   { drFile = file, drObject = obj, drProcName = proc
   , drVarName = var, drBlockId = "b0", drStmtIdx = stmtIdx
   , drLine = Just line, drKind = "assign"
+  , drSpan = Nothing
   }
 
 useRow :: Text -> Text -> Text -> Text -> Int -> Text -> UseRow
@@ -47,6 +48,7 @@ useRow file obj proc var line kind = UseRow
   { urFile = file, urObject = obj, urProcName = proc
   , urVarName = var, urBlockId = "b0", urStmtIdx = 0
   , urLine = Just line, urKind = kind
+  , urSpan = Nothing
   }
 
 edge :: Text -> Text -> Maybe Int -> Text -> Text -> Text -> Text -> Text -> Text -> InterprocEdge
@@ -135,7 +137,7 @@ tests = testGroup "Taint"
   , testGroup "buildInterprocEdges"
     [ testCase "arg edge from resolved call" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "of_calc" "virtual"
-                    (Just 10) (Just "ob") (Just "pB") "virtual" "high" Nothing]
+                    (Just 10) (Just "ob") (Just "pB") "virtual" "high" Nothing Nothing]
             uses = [useRow "w.srf" "oa" "pA" "ls_x" 10 "rhs"]
             metas = [ProcMeta "w.srf" "ob" "pB" "function" "string as_arg" "" Nothing]
             edges = buildInterprocEdges rc [] uses Set.empty metas
@@ -148,12 +150,12 @@ tests = testGroup "Taint"
 
     , testCase "unresolved call produces no edge" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "foo" "unresolved"
-                    (Just 10) Nothing Nothing "unresolved" "low" Nothing]
+                    (Just 10) Nothing Nothing "unresolved" "low" Nothing Nothing]
         in buildInterprocEdges rc [] [] Set.empty [] @?= []
 
     , testCase "builtin call with non-void return produces return edge" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "len" "builtin"
-                    (Just 10) Nothing Nothing "builtin" "high" (Just "long")]
+                    (Just 10) Nothing Nothing "builtin" "high" (Just "long") Nothing]
             defs = [defRow "w.srf" "oa" "pA" "li_len" 10 0]
             edges = buildInterprocEdges rc defs [] Set.empty []
         in case edges of
@@ -164,7 +166,7 @@ tests = testGroup "Taint"
 
     , testCase "multiple args matched by position" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
-                    (Just 3) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+                    (Just 3) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing]
             uses = [ useRow "w.srf" "oa" "pA" "v1" 3 "rhs"
                    , useRow "w.srf" "oa" "pA" "v2" 3 "rhs" ]
             metas = [ProcMeta "w.srf" "ob" "procB" "function" "integer a, string b" "" Nothing]
@@ -177,7 +179,7 @@ tests = testGroup "Taint"
 
     , testCase "extra args beyond params get *extra callee_context" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
-                    (Just 1) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+                    (Just 1) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing]
             uses = [ useRow "w.srf" "oa" "pA" "a" 1 "rhs"
                    , useRow "w.srf" "oa" "pA" "b" 1 "rhs"
                    , useRow "w.srf" "oa" "pA" "c" 1 "rhs" ]
@@ -188,7 +190,7 @@ tests = testGroup "Taint"
 
     , testCase "void callee return type produces no return edge" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
-                    (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+                    (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing]
             defs = [defRow "w.srf" "oa" "pA" "result" 5 0]
             metas = [ProcMeta "w.srf" "ob" "procB" "subroutine" "" "none" Nothing]
             edges = buildInterprocEdges rc defs [] Set.empty metas
@@ -197,7 +199,7 @@ tests = testGroup "Taint"
 
     , testCase "no assignment at call line produces no return edge" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
-                    (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+                    (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing]
             -- def is on a different line than the call
             defs = [defRow "w.srf" "oa" "pA" "result" 99 0]
             metas = [ProcMeta "w.srf" "ob" "procB" "function" "" "integer" Nothing]
@@ -207,7 +209,7 @@ tests = testGroup "Taint"
 
     , testCase "callee name excluded from arg vars" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "myfunc" "virtual"
-                    (Just 7) (Just "ob") (Just "myfunc") "virtual" "high" Nothing]
+                    (Just 7) (Just "ob") (Just "myfunc") "virtual" "high" Nothing Nothing]
             uses = [ useRow "w.srf" "oa" "pA" "myfunc" 7 "rhs"  -- callee name
                    , useRow "w.srf" "oa" "pA" "argVar" 7 "rhs" ]
             metas = [ProcMeta "w.srf" "ob" "myfunc" "function" "string s" "" Nothing]
@@ -301,9 +303,9 @@ tests = testGroup "Taint"
 
     , testCase "mutual recursion A↔B produces two arg edges without looping" $
         let rc = [ ResolvedCallRow "w.srf" "oa" "procA" "procB" "virtual"
-                     (Just 1) (Just "ob") (Just "procB") "virtual" "high" Nothing
+                     (Just 1) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing
                  , ResolvedCallRow "w.srf" "ob" "procB" "procA" "virtual"
-                     (Just 2) (Just "oa") (Just "procA") "virtual" "high" Nothing ]
+                     (Just 2) (Just "oa") (Just "procA") "virtual" "high" Nothing Nothing ]
             uses = [ useRow "w.srf" "oa" "procA" "x" 1 "rhs"
                    , useRow "w.srf" "ob" "procB" "y" 2 "rhs" ]
             metas = [ ProcMeta "w.srf" "oa" "procA" "function" "integer p" "" Nothing
