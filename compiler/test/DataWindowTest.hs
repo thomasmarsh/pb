@@ -225,6 +225,65 @@ tests = testGroup "DataWindow"
               cs -> assertFailure ("expected 1 control, got " <> show (length cs))
       ]
 
+  , testGroup "WHERE-clause operand identifiers carry real source spans"
+      [ testCase "plain table.column EXP1 / :hostvar EXP2 get real positions" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "table(retrieve=\"PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
+                  \WHERE( EXP1 =~\"t.kodfilter~\" OP =~\"=~\" EXP2 =~\":kodfilter~\" ) )\" )"
+                ]
+          case parseDataWindow src of
+            Left err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw -> case dwTable dw >>= dtRetrieve of
+              Just (DwRetrieveOk r) -> case drWhere r of
+                [wc] -> do
+                  case dwcParsedExp1 wc of
+                    Just (ExLvalue (Lvalue [LvSegment t' Nothing, LvSegment col Nothing])) -> do
+                      provenanceSpan (identSpan t')  @?= Just (SourceSpan 5 73 5 74)
+                      provenanceSpan (identSpan col) @?= Just (SourceSpan 5 75 5 84)
+                    other -> assertFailure ("expected 2-segment lvalue, got " <> show other)
+                  case dwcParsedExp2 wc of
+                    Just (ExHostVar (Lvalue [LvSegment v Nothing])) ->
+                      provenanceSpan (identSpan v) @?= Just (SourceSpan 5 106 5 115)
+                    other -> assertFailure ("expected host var, got " <> show other)
+                ws -> assertFailure ("expected 1 WHERE clause, got " <> show (length ws))
+              other -> assertFailure ("expected DwRetrieveOk, got " <> show other)
+
+      , testCase "leading-paren leakage: anchor advances past the stripped '(' to the real identifier column" $ do
+          -- Real .srd shape (doc/spec.md 7.3): a boundary row's EXP1 carries a
+          -- surplus leading '(' that 'stripSurplusParens' strips before
+          -- parsing -- the anchor must advance past exactly that stripped
+          -- prefix, not stay pinned at the raw attribute start.
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "table(retrieve=\"PBSELECT( VERSION(400) TABLE(NAME=~\"misth_final~\") \
+                  \WHERE( EXP1 =~\"( misth_final.kodfinal~\" OP =~\"=~\" \
+                  \EXP2 =~\":arg_kodfinal )~\" ) )\" )"
+                ]
+          case parseDataWindow src of
+            Left err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw -> case dwTable dw >>= dtRetrieve of
+              Just (DwRetrieveOk r) -> case drWhere r of
+                [wc] -> do
+                  case dwcParsedExp1 wc of
+                    Just (ExLvalue (Lvalue [LvSegment t' Nothing, LvSegment col Nothing])) -> do
+                      provenanceSpan (identSpan t')  @?= Just (SourceSpan 5 85 5 96)
+                      provenanceSpan (identSpan col) @?= Just (SourceSpan 5 97 5 105)
+                    other -> assertFailure ("expected 2-segment lvalue, got " <> show other)
+                  case dwcParsedExp2 wc of
+                    Just (ExHostVar (Lvalue [LvSegment v Nothing])) ->
+                      provenanceSpan (identSpan v) @?= Just (SourceSpan 5 127 5 139)
+                    other -> assertFailure ("expected host var, got " <> show other)
+                ws -> assertFailure ("expected 1 WHERE clause, got " <> show (length ws))
+              other -> assertFailure ("expected DwRetrieveOk, got " <> show other)
+      ]
+
   , testGroup "scanBlockAttrs"
       [ testCase "empty string → []" $
           scanBlockAttrs "" @?= []
@@ -595,13 +654,13 @@ tests = testGroup "DataWindow"
 
   , testGroup "DwTable"
       [ testCase "no columns, no retrieve" $
-          parseDwTable (scanBlockAttrs "") @?=
+          parseDwTable (1,1) (scanBlockAttrs "") @?=
             DwTable [] Nothing Nothing Nothing []
 
       , testCase "single column extracted" $ do
           let attrs = scanBlockAttrs
                 "column=(type=long name=aa dbname=\"aa\" ) "
-          let tbl = parseDwTable attrs
+          let tbl = parseDwTable (1,1) attrs
           length (dtColumns tbl) @?= 1
           dcName (head' (dtColumns tbl)) @?= "aa"
           dcType (head' (dtColumns tbl)) @?= "long"
@@ -609,67 +668,67 @@ tests = testGroup "DataWindow"
       , testCase "multiple columns extracted" $ do
           let attrs = scanBlockAttrs
                 "column=(type=long name=a ) column=(type=char(10) name=b )"
-          length (dtColumns (parseDwTable attrs)) @?= 2
+          length (dtColumns (parseDwTable (1,1) attrs)) @?= 2
 
       , testCase "raw SQL retrieve stored as DwRetrieveRaw" $ do
           let attrs = scanBlockAttrs "retrieve=\"SELECT 1 FROM dual\" "
-          dtRetrieve (parseDwTable attrs) @?= Just (DwRetrieveRaw "SELECT 1 FROM dual")
+          dtRetrieve (parseDwTable (1,1) attrs) @?= Just (DwRetrieveRaw "SELECT 1 FROM dual")
 
       , testCase "PBSELECT retrieve parsed into DwRetrieveOk" $ do
           let attrs = scanBlockAttrs "retrieve=\"PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )\" "
-          dtRetrieve (parseDwTable attrs) @?=
+          dtRetrieve (parseDwTable (1,1) attrs) @?=
               Just (DwRetrieveOk (DwRetrieve 400 ["t"] [] [] [] []))
 
       , testCase "update table name extracted" $ do
           let attrs = scanBlockAttrs "update=\"misth_ypal\" updatewhere=0 "
-          dtUpdate      (parseDwTable attrs) @?= Just "misth_ypal"
-          dtUpdateWhere (parseDwTable attrs) @?= Just 0
+          dtUpdate      (parseDwTable (1,1) attrs) @?= Just "misth_ypal"
+          dtUpdateWhere (parseDwTable (1,1) attrs) @?= Just 0
 
       , testCase "arguments=((...)) format parsed" $ do
           let attrs = scanBlockAttrs
                 "arguments=((\"arg1\", string),(\"arg2\", long)) "
-          dtArguments (parseDwTable attrs) @?=
+          dtArguments (parseDwTable (1,1) attrs) @?=
             [DwArgument "arg1" "string", DwArgument "arg2" "long"]
 
       , testCase "ARG() format parsed from retrieve when arguments= absent" $ do
           let attrs = scanBlockAttrs
                 "retrieve=\"PBSELECT( ARG(NAME = ~\"myarg~\" TYPE = string) )\" "
-          dtArguments (parseDwTable attrs) @?= [DwArgument "myarg" "string"]
+          dtArguments (parseDwTable (1,1) attrs) @?= [DwArgument "myarg" "string"]
 
       , testCase "both arg formats present — deduplicated" $ do
           let attrs = scanBlockAttrs $ T.unwords
                 [ "retrieve=\"PBSELECT( ARG(NAME = ~\"a~\" TYPE = string) )\""
                 , "arguments=((\"a\", string))"
                 ]
-          dtArguments (parseDwTable attrs) @?= [DwArgument "a" "string"]
+          dtArguments (parseDwTable (1,1) attrs) @?= [DwArgument "a" "string"]
 
       , testCase "column with dddw.name" $ do
           let attrs = scanBlockAttrs
                 "column=(type=long name=x dddw.name=pick_foo ) "
-          let cols = dtColumns (parseDwTable attrs)
+          let cols = dtColumns (parseDwTable (1,1) attrs)
           length cols @?= 1
           dcDddwName (head' cols) @?= Just "pick_foo"
 
       , testCase "column missing name skipped" $ do
           let attrs = scanBlockAttrs
                 "column=(type=long ) column=(type=char(10) name=ok ) "
-          let cols = dtColumns (parseDwTable attrs)
+          let cols = dtColumns (parseDwTable (1,1) attrs)
           length cols @?= 1
           dcName (head' cols) @?= "ok"
       ]
 
   , testGroup "PBSELECT"
       [ testCase "single table, no where" $
-          parsePbSelect "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )"
+          parsePbSelect (1,1) "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )"
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [] [] [])
 
       , testCase "single table with column" $
-          parsePbSelect
+          parsePbSelect (1,1)
             "PBSELECT( VERSION(400) TABLE(NAME=~\"emp~\") COLUMN(NAME=~\"emp.id~\") )"
           @?= DwRetrieveOk (DwRetrieve 400 ["emp"] ["emp.id"] [] [] [])
 
       , testCase "single table, one where clause" $
-          parsePbSelect
+          parsePbSelect (1,1)
             ( "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") COLUMN(NAME=~\"t.x~\")"
            <> "WHERE( EXP1 =~\"t.x~\" OP =~\"=~\" EXP2 =~\":arg_x~\" ) )" )
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] ["t.x"] []
@@ -678,7 +737,7 @@ tests = testGroup "DataWindow"
                   (Just (ExHostVar (Lvalue [LvSegment "arg_x" Nothing])))] [])
 
       , testCase "multi-table, multiple where clauses with LOGIC" $
-          parsePbSelect
+          parsePbSelect (1,1)
             ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") TABLE(NAME=~\"b~\")"
            <> " COLUMN(NAME=~\"a.x~\")"
            <> " WHERE( EXP1 =~\"a.x~\" OP =~\"=~\" EXP2 =~\":p~\" LOGIC =~\"and~\" )"
@@ -692,7 +751,7 @@ tests = testGroup "DataWindow"
                     (Just (ExHostVar (Lvalue [LvSegment "q" Nothing]))) ] [])
 
       , testCase "host var in EXP2 retains colon prefix" $ do
-          let result = parsePbSelect
+          let result = parsePbSelect (1,1)
                 "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
                 \WHERE( EXP1 =~\"t.id~\" OP =~\"=~\" EXP2 =~\":my_arg~\" ) )"
           case result of
@@ -700,7 +759,7 @@ tests = testGroup "DataWindow"
             DwRetrieveOk dr -> dwcExp2 (head' (drWhere dr)) @?= ":my_arg"
 
       , testCase "operator with multi-char value" $
-          parsePbSelect
+          parsePbSelect (1,1)
             "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
             \WHERE( EXP1 =~\"t.x~\" OP =~\"is not~\" EXP2 =~\"null~\" ) )"
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] []
@@ -709,7 +768,7 @@ tests = testGroup "DataWindow"
                   (Just ExNull)] [])
 
       , testCase "ARG outside outer paren parsed" $
-          parsePbSelect
+          parsePbSelect (1,1)
             ( "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\")"
            <> " WHERE( EXP1 =~\"t.id~\" OP =~\"=~\" EXP2 =~\":aid~\" ) )"
            <> " ARG(NAME = ~\"aid~\" TYPE = string)" )
@@ -720,12 +779,12 @@ tests = testGroup "DataWindow"
                   (Just (ExHostVar (Lvalue [LvSegment "aid" Nothing])))] [])
 
       , testCase "ARG date type" $
-          parsePbSelect
+          parsePbSelect (1,1)
             "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") ) ARG(NAME = ~\"dt~\" TYPE = date)"
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [DwArgument "dt" "date"] [] [])
 
       , testCase "fallback raw on non-PBSELECT input" $
-          parsePbSelect "SELECT x FROM t"
+          parsePbSelect (1,1) "SELECT x FROM t"
           @?= DwRetrieveRaw "SELECT x FROM t"
 
       , testGroup "WHERE operand parsing (dwcParsedExp1/dwcParsedExp2)"
@@ -733,7 +792,7 @@ tests = testGroup "DataWindow"
           -- corpus, this session) — see doc/plan/163-unified-statement-footprint.md
           -- "Phase 0 findings" and the Plan 163 Phase 1 BACKLOG entry.
           [ testCase "plain table.column EXP1 parses to ExLvalue; :arg EXP2 to ExHostVar" $
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"afxfilterd~\") \
                      \WHERE( EXP1 =~\"afxfilterd.kodfilter~\" OP =~\"=~\" \
                      \EXP2 =~\":kodfilter~\" ) )" of
@@ -746,14 +805,14 @@ tests = testGroup "DataWindow"
                     Just (ExHostVar (Lvalue [LvSegment "kodfilter" Nothing]))
 
           , testCase "literal NULL (uppercase) EXP2 parses to ExNull" $
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
                      \WHERE( EXP1 =~\"t.x~\" OP =~\"is~\" EXP2 =~\"NULL~\" ) )" of
                 DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
                 DwRetrieveOk dr -> dwcParsedExp2 (head' (drWhere dr)) @?= Just ExNull
 
           , testCase "literal negative-int EXP2 (-1) parses to ExNeg (ExInt)" $
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"usrusers~\") \
                      \WHERE( EXP1 =~\"usrusers.koduser~\" OP =~\"<>~\" EXP2 =~\"-1~\" ) )" of
                 DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
@@ -764,7 +823,7 @@ tests = testGroup "DataWindow"
                   dwcParsedExp2 wc @?= Just (ExNeg (ExInt "1"))
 
           , testCase "literal small-int EXP2 (1) parses to ExInt" $
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"misth_zpepidom~\") \
                      \WHERE( EXP1 =~\"misth_zpepidom.isasf~\" OP =~\"=~\" EXP2 =~\"1~\" ) )" of
                 DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
@@ -778,7 +837,7 @@ tests = testGroup "DataWindow"
               -- EXP1/EXP2 text. dwcExp1/dwcExp2 preserve that verbatim (needed for
               -- reconstructRetrieveSql); dwcParsedExp1/dwcParsedExp2 strip the
               -- provably-surplus leading '(' / trailing ')' before parsing.
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"misth_final~\") \
                      \WHERE( EXP1 =~\"( misth_final.kodfinal~\" OP =~\"=~\" \
                      \EXP2 =~\":arg_kodfinal )~\" ) )" of
@@ -797,7 +856,7 @@ tests = testGroup "DataWindow"
               -- 3-row AND chain is itself wrapped in an outer group, so the first
               -- row's EXP1 carries 2 leading '(' (outer + this row's own) and the
               -- last row's EXP2 carries 2 trailing ')' (this row's own + outer).
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"misth_final_ypal_epidom~\") \
                      \WHERE( EXP1 =~\"( ( misth_final_ypal_epidom.kodfinal~\" OP =~\"=~\" \
                      \EXP2 =~\":arg_kodfinal )~\" LOGIC =~\"and~\" ) \
@@ -822,7 +881,7 @@ tests = testGroup "DataWindow"
           , testCase "balanced internal parens are not stripped (real function call untouched)" $
               -- A legitimately balanced call in EXP2 must survive: only a strict
               -- paren-count imbalance triggers stripping, never a matched pair.
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
                      \WHERE( EXP1 =~\"t.x~\" OP =~\"=~\" EXP2 =~\"upper(x)~\" ) )" of
                 DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
@@ -833,7 +892,7 @@ tests = testGroup "DataWindow"
 
       , testGroup "PBSELECT JOIN"
           [ testCase "single join parsed into drJoins" $
-              parsePbSelect
+              parsePbSelect (1,1)
                 ( "PBSELECT( VERSION(400) TABLE(NAME=~\"usruserperm~\") \
                   \TABLE(NAME=~\"usrapps~\") \
                   \JOIN (LEFT=~\"usruserperm.kodapp~\" OP =~\"=~\" \
@@ -842,7 +901,7 @@ tests = testGroup "DataWindow"
                     [DwJoin "usruserperm.kodapp" "=" "usrapps.kodapp" Nothing Nothing])
 
           , testCase "chained joins preserved in order" $
-              case parsePbSelect
+              case parsePbSelect (1,1)
                      ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") \
                        \JOIN (LEFT=~\"a.x~\" OP =~\"=~\" RIGHT=~\"b.x~\") \
                        \JOIN (LEFT=~\"b.y~\" OP =~\"=~\" RIGHT=~\"c.y~\") \
@@ -851,7 +910,7 @@ tests = testGroup "DataWindow"
                 DwRetrieveOk dr -> map djLeft (drJoins dr) @?= ["a.x", "b.y", "c.z"]
 
           , testCase "join with OUTER1 attribute" $
-              parsePbSelect
+              parsePbSelect (1,1)
                 ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") \
                   \JOIN (LEFT=~\"a.x~\" OP =~\"=~\" RIGHT=~\"b.x~\" \
                   \OUTER1 =~\"a.x~\") )" )
@@ -859,7 +918,7 @@ tests = testGroup "DataWindow"
                     [DwJoin "a.x" "=" "b.x" (Just "a.x") Nothing])
 
           , testCase "join with OUTER2 attribute" $
-              parsePbSelect
+              parsePbSelect (1,1)
                 ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") \
                   \JOIN (LEFT=~\"a.x~\" OP =~\"=~\" RIGHT=~\"b.x~\" \
                   \OUTER2 =~\"b.x~\") )" )
@@ -867,7 +926,7 @@ tests = testGroup "DataWindow"
                     [DwJoin "a.x" "=" "b.x" Nothing (Just "b.x")])
 
           , testCase "malformed join block degrades to skip, whole PBSELECT still parses" $
-              parsePbSelect
+              parsePbSelect (1,1)
                 "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") JOIN(GARBAGE) )"
               @?= DwRetrieveOk (DwRetrieve 400 ["a"] [] [] [] [])
 
@@ -878,7 +937,7 @@ tests = testGroup "DataWindow"
                   src = "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") "
                      <> T.concat [joinText i | i <- [1 .. n]]
                      <> ")"
-              case parsePbSelect src of
+              case parsePbSelect (1,1) src of
                 DwRetrieveRaw _ -> assert False
                 DwRetrieveOk dr -> length (drJoins dr) === n
           ]

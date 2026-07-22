@@ -111,7 +111,7 @@ tests = testGroup "DwFootprint"
                     \WHERE( EXP1 =~\"afxfilterd.kodfilter~\" OP =~\"=~\" \
                     \EXP2 =~\":kodfilter~\" ) )"
               table = DwTable
-                { dtColumns = [], dtRetrieve = Just (parsePbSelect sql)
+                { dtColumns = [], dtRetrieve = Just (parsePbSelect (1,1) sql)
                 , dtUpdate = Nothing, dtUpdateWhere = Nothing, dtArguments = []
                 }
               ctx = mkDwFootprintCtx [CatColumnRow Nothing "afxfilterd" "kodfilter"] Nothing
@@ -126,7 +126,7 @@ tests = testGroup "DwFootprint"
                     \WHERE( EXP1 =~\"afxfilterd.kodfilter~\" OP =~\"=~\" \
                     \EXP2 =~\":kodfilter~\" ) )"
               table = DwTable
-                { dtColumns = [], dtRetrieve = Just (parsePbSelect sql)
+                { dtColumns = [], dtRetrieve = Just (parsePbSelect (1,1) sql)
                 , dtUpdate = Nothing, dtUpdateWhere = Nothing, dtArguments = []
                 }
           in dwRetrieveFootprint ctx0 "afxfilterd.srd" "dw_afx" table @?= Set.empty

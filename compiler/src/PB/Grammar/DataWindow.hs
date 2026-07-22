@@ -59,7 +59,7 @@ classifyBlock dw blk@DwBlock { dwbKeyword = kw, dwbContent = content } = case kw
     "datawindow" ->
         dw { dwObject = parseDwObjectAttrs content }
     "table" ->
-        dw { dwTable = Just (parseDwTable (scanBlockAttrs content)) }
+        dw { dwTable = Just (parseDwTable (dwbLine blk, dwbCol blk) (scanBlockAttrs content)) }
     "group" ->
         dw { dwGroups = dwGroups dw ++ maybeToList (parseDwGroup content) }
     _ | Just bk <- parseBandKind kw ->
@@ -119,18 +119,22 @@ readAllDigits t = case TR.decimal t of
 -- ---------------------------------------------------------------------------
 -- Table block
 
-parseDwTable :: [DwAttr] -> DwTable
-parseDwTable attrs = DwTable
+-- | 'blkAnchor' is the enclosing @table(...)@ block's own real
+-- @(line, col)@ (its 'dwbLine'\/'dwbCol'), composed via 'resolveDwPos' with
+-- the @retrieve=@ attribute's own relative position to anchor the PBSELECT
+-- sub-grammar's identifiers at their true file position.
+parseDwTable :: (Int, Int) -> [DwAttr] -> DwTable
+parseDwTable blkAnchor attrs = DwTable
     { dtColumns     = extractColumns attrs
-    , dtRetrieve    = fmap parsePbSelect rawRetrieve
+    , dtRetrieve    = (\(txt, relPos) -> parsePbSelect (resolveDwPos blkAnchor relPos) txt)
+                        <$> lookupQuotedWithPos "retrieve" attrs
     , dtUpdate      = lookupQuoted "update" attrs
                       <|> lookupUnquoted "update" attrs
     , dtUpdateWhere = readMaybe . T.unpack =<< lookupUnquoted "updatewhere" attrs
     , dtArguments   = dedupeArgs (extractArguments attrs ++ argFromRetrieve)
     }
   where
-    rawRetrieve     = lookupQuoted "retrieve" attrs
-    argFromRetrieve = maybe [] extractArgEntries rawRetrieve
+    argFromRetrieve = maybe [] extractArgEntries (lookupQuoted "retrieve" attrs)
 
 -- ---------------------------------------------------------------------------
 -- Attr lookup helpers
@@ -139,16 +143,21 @@ lookupUnquoted :: Text -> [DwAttr] -> Maybe Text
 lookupUnquoted key attrs =
     listToMaybe [v | DwAttrUnquoted k v <- attrs, T.toLower k == T.toLower key]
 
-lookupQuoted :: Text -> [DwAttr] -> Maybe Text
-lookupQuoted key attrs =
-    listToMaybe [v | DwAttrQuoted k v _ <- attrs, T.toLower k == T.toLower key]
-
--- | Like 'lookupQuoted' but returns the value's own relative @(line, col)@
--- (see 'DwAttrQuoted') instead of its text -- used to recover a real source
+-- | Look up a quoted attribute's value together with its own relative
+-- @(line, col)@ (see 'DwAttrQuoted') -- used to recover a real source
 -- position for a quoted attribute that gets re-tokenized into an 'Expr'.
+-- 'lookupQuoted'/'lookupQuotedPos' are single-field projections of this, so
+-- text and position always come from the same 'DwAttrQuoted' occurrence by
+-- construction rather than two independent scans that merely happen to agree.
+lookupQuotedWithPos :: Text -> [DwAttr] -> Maybe (Text, (Int, Int))
+lookupQuotedWithPos key attrs =
+    listToMaybe [(v, p) | DwAttrQuoted k v p <- attrs, T.toLower k == T.toLower key]
+
+lookupQuoted :: Text -> [DwAttr] -> Maybe Text
+lookupQuoted key attrs = fst <$> lookupQuotedWithPos key attrs
+
 lookupQuotedPos :: Text -> [DwAttr] -> Maybe (Int, Int)
-lookupQuotedPos key attrs =
-    listToMaybe [p | DwAttrQuoted k _ p <- attrs, T.toLower k == T.toLower key]
+lookupQuotedPos key attrs = snd <$> lookupQuotedWithPos key attrs
 
 subBlockContents :: Text -> [DwAttr] -> [Text]
 subBlockContents key attrs =
@@ -409,8 +418,11 @@ parseGroupBy content =
 
 type PbsP = Parsec Void Text
 
-parsePbSelect :: Text -> DwRetrieveOrRaw
-parsePbSelect src = case parse pPbSelect "" src of
+-- | 'anchor' is the retrieve text's own real @(line, col)@ in the .srd
+-- file (see 'parseDwTable'), threaded down to 'pWhereBlock' so EXP1/EXP2
+-- identifiers get a real position instead of a degenerate one.
+parsePbSelect :: (Int, Int) -> Text -> DwRetrieveOrRaw
+parsePbSelect anchor src = case parse (pPbSelect anchor) "" src of
     Left  _ -> DwRetrieveRaw src
     Right r -> DwRetrieveOk r
 
@@ -429,21 +441,36 @@ pPbsBlock kw inner = do
     _ <- char ')'
     pure result
 
--- A PBSELECT string value: either ~"..."~" (tilde-quoted) or '...' (single-quoted).
-pPbsStr :: PbsP Text
-pPbsStr =
-    pbSelectTildeStr <|>
-    (char '\'' *> (T.pack <$> manyTill anySingle (char '\'')))
+-- | A PBSELECT string value: either ~"..."~" (tilde-quoted) or '...'
+-- (single-quoted), paired with its own content's relative @(line, col)@
+-- (1,1-based, the same convention 'DwAttrQuoted' uses) -- for composing
+-- with a real file anchor via 'resolveDwPos'.
+pPbsStrPos :: PbsP (Text, (Int, Int))
+pPbsStrPos = tildeQuoted <|> singleQuoted
+  where
+    tildeQuoted = do
+        pos <- getSourcePos
+        val <- pbSelectTildeStr
+        pure (val, shiftCol pos 2)  -- past the opening ~"
+    singleQuoted = do
+        pos <- getSourcePos
+        val <- char '\'' *> (T.pack <$> manyTill anySingle (char '\''))
+        pure (val, shiftCol pos 1)  -- past the opening '
+    shiftCol p n = (unPos (sourceLine p), unPos (sourceColumn p) + n)
 
--- KEY ws* = ws* <pPbsStr>
-pKvStr :: Text -> PbsP Text
-pKvStr key = do
+-- | KEY ws* = ws* <pPbsStrPos>, paired with the value's own position (see
+-- 'pPbsStrPos').
+pKvStrPos :: Text -> PbsP (Text, (Int, Int))
+pKvStrPos key = do
     pPbsWs
     _ <- string' key
     pPbsWs
     _ <- char '='
     pPbsWs
-    pPbsStr
+    pPbsStrPos
+
+pKvStr :: Text -> PbsP Text
+pKvStr key = fst <$> pKvStrPos key
 
 pVersionBlock :: PbsP Int
 pVersionBlock = pPbsBlock "VERSION" (pPbsWs *> L.decimal <* pPbsWs)
@@ -454,59 +481,64 @@ pTableBlock = pPbsBlock "TABLE" (pKvStr "NAME" <* pPbsWs)
 pColumnBlock :: PbsP Text
 pColumnBlock = pPbsBlock "COLUMN" (pKvStr "NAME" <* pPbsWs)
 
-pWhereBlock :: PbsP DwWhereClause
-pWhereBlock = pPbsBlock "WHERE" $ do
-    exp1  <- pKvStr "EXP1"
-    op    <- pKvStr "OP"
-    exp2  <- pKvStr "EXP2"
-    logic <- optional (try (pKvStr "LOGIC"))
+pWhereBlock :: (Int, Int) -> PbsP DwWhereClause
+pWhereBlock anchor = pPbsBlock "WHERE" $ do
+    (exp1, exp1Pos) <- pKvStrPos "EXP1"
+    op              <- pKvStr "OP"
+    (exp2, exp2Pos) <- pKvStrPos "EXP2"
+    logic           <- optional (try (pKvStr "LOGIC"))
     pPbsWs
     pure (DwWhereClause exp1 op exp2 logic
-            (parseWhereOperand exp1) (parseWhereOperand exp2))
+            (parseWhereOperandAt (resolveDwPos anchor exp1Pos) exp1)
+            (parseWhereOperandAt (resolveDwPos anchor exp2Pos) exp2))
 
 -- | Parse a WHERE-clause operand (dwcExp1/dwcExp2) through the same
--- tokenizeExprAt/parseExpr pipeline DwControl's expression/format fields use.
--- Strips surplus grouping parens first (see 'stripSurplusParens' — this is
--- the ".srd WHERE-clause paren leakage" fix, doc/spec.md 7.3). parseExpr is
--- total (ExRaw fallback); a top-level ExRaw means nothing structured was
--- recognized, so store Nothing rather than a useless raw-token wrapper.
--- No real anchor position is threaded through the PBSELECT/WHERE
--- sub-grammar yet (tracked separately in BACKLOG.md) -- (0, 1) preserves
--- this call site's prior behavior unchanged rather than regressing it.
-parseWhereOperand :: Text -> Maybe Expr
-parseWhereOperand raw =
-    case parseExpr (tokenizeExprAt (0, 1) (stripSurplusParens raw)) of
+-- tokenizeExprAt/parseExpr pipeline DwControl's expression/format fields use,
+-- anchored at the operand's own real file position. Strips surplus grouping
+-- parens first (see 'stripLeadingOpens'/'stripTrailingCloses' — this is the
+-- ".srd WHERE-clause paren leakage" fix, doc/spec.md 7.3), advancing the anchor past exactly
+-- the leading text that got stripped (the same 'advanceThroughText'
+-- composition DwControl's format-string "~t" prefix uses) so a boundary
+-- row's identifiers keep their true column even after the leading '(' is
+-- discarded. parseExpr is total (ExRaw fallback); a top-level ExRaw means
+-- nothing structured was recognized, so store Nothing rather than a
+-- useless raw-token wrapper.
+parseWhereOperandAt :: (Int, Int) -> Text -> Maybe Expr
+parseWhereOperandAt pos raw =
+    let leadingStripped = stripLeadingOpens raw
+        prefix          = T.take (T.length raw - T.length leadingStripped) raw
+        stripped        = stripTrailingCloses leadingStripped
+        exprPos         = advanceThroughText pos prefix
+    in case parseExpr (tokenizeExprAt exprPos stripped) of
         ExRaw _ -> Nothing
         expr    -> Just expr
 
+netParenBalance :: Text -> Int
+netParenBalance t = T.length (T.filter (== '(') t) - T.length (T.filter (== ')') t)
+
 -- | Strip a leading run of '(' from the front of the text while its net
 -- paren count (opens minus closes) is positive, and a trailing run of ')'
--- from the back while net negative. Never touches an already-balanced
--- parenthesized sub-expression (a real function call, `(a+b)`) since those
--- have net-zero balance throughout. Fixes the ".srd WHERE-clause paren
--- leakage" bug (doc/spec.md 7.3, BACKLOG.md): PowerBuilder's WHERE grid
--- splices a visual group's literal parens onto whichever row sits at the
--- group's boundary, with no separate field recording the grouping — so
--- EXP1/EXP2 can carry a surplus of leading/trailing parens left over from
--- a group spanning that row and its siblings. Recovering each row's own
--- comparison operands only needs this local surplus stripped; the true
--- cross-row group nesting is discarded (not represented in DwWhereClause
--- at all) since dwcParsedExp1/dwcParsedExp2 only need the operand itself.
-stripSurplusParens :: Text -> Text
-stripSurplusParens = stripTrailingCloses . stripLeadingOpens
-  where
-    netParenBalance :: Text -> Int
-    netParenBalance t = T.length (T.filter (== '(') t) - T.length (T.filter (== ')') t)
+-- from the back while net negative (see 'stripTrailingCloses'). Never
+-- touches an already-balanced parenthesized sub-expression (a real function
+-- call, `(a+b)`) since those have net-zero balance throughout. Fixes the
+-- ".srd WHERE-clause paren leakage" bug (doc/spec.md 7.3, BACKLOG.md):
+-- PowerBuilder's WHERE grid splices a visual group's literal parens onto
+-- whichever row sits at the group's boundary, with no separate field
+-- recording the grouping — so EXP1/EXP2 can carry a surplus of leading/
+-- trailing parens left over from a group spanning that row and its
+-- siblings. Recovering each row's own comparison operands only needs this
+-- local surplus stripped; the true cross-row group nesting is discarded
+-- (not represented in DwWhereClause at all) since dwcParsedExp1/
+-- dwcParsedExp2 only need the operand itself.
+stripLeadingOpens :: Text -> Text
+stripLeadingOpens t = case T.uncons (T.stripStart t) of
+    Just ('(', rest) | netParenBalance t > 0 -> stripLeadingOpens rest
+    _                                        -> t
 
-    stripLeadingOpens :: Text -> Text
-    stripLeadingOpens t = case T.uncons (T.stripStart t) of
-        Just ('(', rest) | netParenBalance t > 0 -> stripLeadingOpens rest
-        _                                        -> t
-
-    stripTrailingCloses :: Text -> Text
-    stripTrailingCloses t = case T.unsnoc (T.stripEnd t) of
-        Just (rest, ')') | netParenBalance t < 0 -> stripTrailingCloses rest
-        _                                        -> t
+stripTrailingCloses :: Text -> Text
+stripTrailingCloses t = case T.unsnoc (T.stripEnd t) of
+    Just (rest, ')') | netParenBalance t < 0 -> stripTrailingCloses rest
+    _                                        -> t
 
 pJoinBlock :: PbsP DwJoin
 pJoinBlock = pPbsBlock "JOIN" $ do
@@ -565,11 +597,11 @@ pSkipAnyNamedBlock = do
 data PbsInner  = PbsTable Text | PbsColumn Text | PbsWhere DwWhereClause | PbsJoin DwJoin | PbsInnerSkip
 data PbsOuter  = PbsArg DwArgument | PbsOuterSkip
 
-pInnerBlock :: PbsP PbsInner
-pInnerBlock =
+pInnerBlock :: (Int, Int) -> PbsP PbsInner
+pInnerBlock anchor =
     PbsTable      <$> try pTableBlock  <|>
     PbsColumn     <$> try pColumnBlock <|>
-    PbsWhere      <$> try pWhereBlock  <|>
+    PbsWhere      <$> try (pWhereBlock anchor) <|>
     PbsJoin       <$> try pJoinBlock   <|>
     PbsInnerSkip  <$  try pSkipAnyNamedBlock
 
@@ -578,8 +610,8 @@ pOuterBlock =
     PbsArg       <$> try pArgBlock <|>
     PbsOuterSkip <$  try pSkipAnyNamedBlock
 
-pPbSelect :: PbsP DwRetrieve
-pPbSelect = do
+pPbSelect :: (Int, Int) -> PbsP DwRetrieve
+pPbSelect anchor = do
     pPbsWs
     _ <- string' "PBSELECT"
     pPbsWs
@@ -587,7 +619,7 @@ pPbSelect = do
     pPbsWs
     version <- fromMaybe 0 <$> optional (try pVersionBlock)
     pPbsWs
-    inner   <- many (try pInnerBlock <* pPbsWs)
+    inner   <- many (try (pInnerBlock anchor) <* pPbsWs)
     _ <- optional (char ')')
     pPbsWs
     outer   <- many (try pOuterBlock <* pPbsWs)
