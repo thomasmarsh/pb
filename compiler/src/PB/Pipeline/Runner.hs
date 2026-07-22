@@ -657,7 +657,9 @@ appendToDb pool (CFPs r) = do
   appendTaintReturnRows pool (cpsTaintReturnRows r)
   appendSourceFiles pool (catMaybes [cpsSourceContent r])
 appendToDb pool (CFDw r) = do
-  appendDwObjects        pool [cdDwObjectRow r]
+  let dw = cdDwObjectRow r
+  appendObjects           pool [ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"]
+  appendDwObjects        pool [dw]
   appendDwControls       pool (cdDwControls r)
   appendDwRetrieveTables pool (cdDwRetrieveTables r)
   appendDwRetrieveColumns pool (cdDwRetrieveColumns r)

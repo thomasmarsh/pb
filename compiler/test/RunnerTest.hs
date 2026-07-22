@@ -1,7 +1,7 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, validateDdlNamespaceConfig, CompiledFile (..), CompiledPs (..), CompiledDw (..))
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, CompiledFile (..), CompiledPs (..), CompiledDw (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
 import PB.Pipeline.DuckDb.PhaseA
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
@@ -11,6 +11,8 @@ import PB.Pipeline.DuckDb.PhaseA
   , DwRetrieveWhereRow (..)
   , SqlStmtTableRow (..)
   )
+import PB.Pipeline.DuckDb          (inMemory, initSchema, queryHandle, withHandle)
+import PB.Pipeline.DuckDb.Appender (withAppenderPool)
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow
   ( DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..)
@@ -37,6 +39,7 @@ import PB.Pipeline.SqlParse
 
 import Control.DeepSeq (force)
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
+import Database.DuckDB.Simple.FromRow  (FromRow (..), field)
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Map.Strict   as Map
@@ -81,6 +84,27 @@ freshRelPathRoot = do
   removeFile path
   createDirectoryIfMissing True path
   pure path
+
+-- | Row shape for reading back an 'objects' row keyed on (object, file).
+data ObjRowQ = ObjRowQ
+  { orqKind           :: Text
+  , orqAncestor       :: Maybe Text
+  , orqLayoutJson     :: Maybe Text
+  , orqTypeBlocksJson :: Maybe Text
+  , orqConfidence     :: Text
+  }
+instance FromRow ObjRowQ where
+  fromRow = ObjRowQ <$> field <*> field <*> field <*> field <*> field
+
+-- | Phase A tables needed to append a single 'CompiledDw' with no controls,
+-- call sites, or var refs -- mirrors the table set in 'appendToDb'\'s CFDw
+-- branch plus 'source_files' ('cdSourceContent' is always @Just@).
+dwFixturePhaseATables :: [Text]
+dwFixturePhaseATables =
+  [ "objects", "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
+  , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+  , "source_files"
+  ]
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -1250,6 +1274,42 @@ tests = testGroup "Pipeline.Runner"
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
           Right (sf, _) -> force sf @?= sf
+    ]
+
+  , testGroup "appendToDb writes a kind='datawindow' objects row for DW files (Plan 198 Phase B)"
+    [ testCase "CFDw compiled file: objects row has kind=datawindow, ancestor/layout_json/type_blocks_json NULL, confidence carried through" $ do
+        let dwFile = DataWindowFile
+              { dwRelease  = 400
+              , dwObject   = DwObjectAttrs mempty
+              , dwTable    = Nothing
+              , dwBands    = []
+              , dwGroups   = []
+              , dwControls = []
+              , dwUnknowns = []
+              , dwMeta     = mempty
+              }
+            ws = buildWorkspaceEnv []
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty
+                (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed"
+                (PsDw "d_test.srd" "" dwFile)
+        case cf of
+          CFDw _ -> pure ()
+          _      -> assertFailure "expected CFDw"
+        withHandle inMemory $ \conn -> do
+          initSchema conn
+          withAppenderPool conn dwFixturePhaseATables $ \pool -> appendToDb pool cf
+          objRows <- queryHandle conn
+            "SELECT kind, ancestor, layout_json, type_blocks_json, confidence \
+            \FROM objects WHERE object = 'd_test' AND file = 'd_test.srd'"
+          case objRows of
+            [r] -> do
+              orqKind           r @?= "datawindow"
+              orqAncestor       r @?= Nothing
+              orqLayoutJson     r @?= Nothing
+              orqTypeBlocksJson r @?= Nothing
+              orqConfidence     r @?= "confirmed"
+            _ -> assertFailure
+                   ("expected exactly one objects row for d_test, got " <> show (length objRows))
     ]
   ]
 

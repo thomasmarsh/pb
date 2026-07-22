@@ -31,8 +31,6 @@ _ALL_OBJECTS_CTE = """
 WITH all_objects AS (
     SELECT object, kind, file, ancestor FROM objects
     WHERE file NOT LIKE '__stdlib__%'
-    UNION ALL
-    SELECT object, 'datawindow' AS kind, file, NULL AS ancestor FROM dw_objects
 )
 """
 
@@ -82,26 +80,7 @@ def list_objects(
 def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor FROM objects WHERE object = ? AND file NOT LIKE '__stdlib__%'", [name]))
     if not obj_rows:
-        # Fall back to dw_objects for DataWindow objects
-        dw_rows = rows(conn.execute("SELECT object AS name, file FROM dw_objects WHERE object = ?", [name]))
-        if not dw_rows:
-            return None
-        dw = dw_rows[0]
-        callers = rows(conn.execute("SELECT DISTINCT object AS caller FROM call_sites WHERE to_name = ?", [name]))
-        return {
-            "name": dw["name"],
-            "kind": "datawindow",
-            "file": dw["file"],
-            "ancestor": None,
-            "metrics": None,
-            "procedures": [],
-            "ancestors": [],
-            "descendants": [],
-            "callers": [c["caller"] for c in callers],
-            "callees": [],
-            "dws_used": [],
-            "tables_accessed": [],
-        }
+        return None
     obj = obj_rows[0]
 
     metrics = rows(conn.execute("SELECT * FROM object_metrics WHERE object = ?", [name]))
@@ -206,10 +185,7 @@ def get_resolved_var_refs(conn: duckdb.DuckDBPyConnection, object_name: str, pro
 def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects WHERE object = ?", [name]))
     if not obj_rows:
-        dw_rows = rows(conn.execute("SELECT object AS name, file FROM dw_objects WHERE object = ?", [name]))
-        if not dw_rows:
-            return None
-        obj_rows = [{"name": dw_rows[0]["name"], "kind": "datawindow", "file": dw_rows[0]["file"]}]
+        return None
 
     file_path = obj_rows[0]["file"]
     lines = []
@@ -445,7 +421,6 @@ def get_dw_queries(conn: duckdb.DuckDBPyConnection) -> dict[str, str]:
 
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects WHERE file NOT LIKE '__stdlib__%' ORDER BY kind, object"))
-    dw_rows = rows(conn.execute("SELECT object AS name, 'datawindow' AS kind, file FROM dw_objects ORDER BY object"))
     proc_rows = rows(
         conn.execute(
             "SELECT object, proc_type, proc_name AS name, params, return_type, "
@@ -458,7 +433,7 @@ def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         procs_by_obj.setdefault(p["object"], []).append(p)
 
     libraries: dict[str, list[dict[str, Any]]] = {}
-    for obj in obj_rows + dw_rows:
+    for obj in obj_rows:
         fpath = obj.get("file", "")
         lib = pbl_name(fpath)
         obj_entry = {
