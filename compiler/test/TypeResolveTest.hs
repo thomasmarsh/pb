@@ -9,6 +9,7 @@ import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
+import PB.AST.DataWindow   (DwTable (..), DwColumn (..))
 import PB.AST.Expr
 import PB.AST.Ident        (mkIdent, mkIdentAt, identMapEmpty, identMapFromList, identMapLookup,
                              identSetEmpty, identSetFromList, identSetMember, identSetSingleton)
@@ -21,7 +22,7 @@ import PB.Lexing.Splitter  (Statement (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (mkLogicalLine)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
-import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv)
+import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv, withDwTables, withDwParamBindings)
 import PB.Analysis.TypeResolve
 
 -- ---------------------------------------------------------------------------
@@ -45,6 +46,18 @@ mkTB :: T.Text -> T.Text -> TypeBlock
 mkTB nm anc = TypeBlock
   { tbDecl = mkTypeDecl nm anc Nothing
   , tbBody = []
+  }
+
+mkDwCol :: T.Text -> T.Text -> DwColumn
+mkDwCol nm ty = DwColumn
+  { dcName = nm, dcType = ty, dcDbName = Nothing, dcUpdate = False
+  , dcKey = False, dcUpdateWhere = False, dcDddwName = Nothing, dcAttrs = Map.empty
+  }
+
+mkDwTable :: [DwColumn] -> DwTable
+mkDwTable cols = DwTable
+  { dtColumns = cols, dtRetrieve = Nothing, dtUpdate = Nothing
+  , dtUpdateWhere = Nothing, dtArguments = []
   }
 
 mkFn :: T.Text -> T.Text -> [Located BodyStmt] -> FunctionBlock
@@ -407,6 +420,62 @@ tests = testGroup "TypeResolve"
               csReceiverObject s2 @?= Just "window"     -- super
               csReceiverObject s3 @?= Just "datawindow" -- dw_1 (control, via ControlIndex)
             other -> assertFailure ("expected 3 sites, got " ++ show (length other))
+
+      , testCase "ExMethodCall receiver resolves a multi-segment plain instance-var chain (Plan 196 Phase 4 item 2)" $ do
+          -- Real corpus shape: iw_parent.ilst_history.ishead(), where
+          -- iw_parent is a plain instance var (type w_child) and
+          -- ilst_history is in turn a plain instance var declared on
+          -- w_child -- previously unresolvable since
+          -- 'CallClassify.resolveLvalueType''s multi-segment branch only
+          -- ever walked 'ControlIndex', never 'weInstanceVars'.
+          let body = [ Located 5 (BsCall (ExMethodCall
+                { receiver   = ExLvalue (Lvalue [LvSegment "iw_parent" Nothing, LvSegment "ilst_history" Nothing])
+                , method     = "ishead"
+                , methodArgs = []
+                })) ]
+              sf = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtUserDefined "w_child") "iw_parent" Nothing) ] ]
+                , srFunctions = [ mkFn "f_go" "" body ]
+                }
+              sfChild = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_child" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtUserDefined "uc_lnklist") "ilst_history" Nothing) ] ] }
+              wsEnv = buildWorkspaceEnv [sf, sfChild]
+              idx   = buildControlIndex [sf, sfChild]
+          case extractCallSites wsEnv idx "test.srw" "w_test" sf of
+            [s] -> csReceiverObject s @?= Just "uc_lnklist"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "ExMethodCall receiver resolves a 3+-hop pure nested-control chain (regression)" $ do
+          -- Real corpus shape: tab1.page1.uo_epidom.uf_filter(), all three
+          -- pure nested visual-tree controls with no intervening instance
+          -- var -- resolveMemberChainType/resolveChain must be walked with
+          -- the FULL segment list from a stable root (w_test); re-deriving
+          -- one hop at a time from just the previous hop's resolved TYPE
+          -- (the first version of this fix) silently broke this exact shape,
+          -- caught by real-corpus --db re-verification before this session's
+          -- Stage 4 (final.pbl/w_misth_final_details_form_edit.srw:74).
+          let body = [ Located 5 (BsCall (ExMethodCall
+                { receiver   = ExLvalue (Lvalue
+                    [LvSegment "tab1" Nothing, LvSegment "page1" Nothing, LvSegment "uo_epidom" Nothing])
+                , method     = "uf_filter"
+                , methodArgs = []
+                })) ]
+              sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_test")) []
+                    , TypeBlock (mkTypeDecl "page1" "tabpage" (Just "tab1")) []
+                    , TypeBlock (mkTypeDecl "uo_epidom" "u_epidom" (Just "page1")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractCallSites wsEnv idx "test.srw" "w_test" sf of
+            [s] -> csReceiverObject s @?= Just "u_epidom"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
       ]
 
   , testGroup "extractVarRefs"
@@ -557,6 +626,147 @@ tests = testGroup "TypeResolve"
               (rvrKind receiver, rvrDeclaredType receiver) @?= ("control", Just "datawindow")
               (rvrKind tail_, rvrDeclaredType tail_) @?= ("builtin_property", Nothing)
             other -> assertFailure ("expected 2 refs (one per segment), got " ++ show (length other))
+
+      , testCase "dotted: inherited builtin property resolves via ancestor chain, not just a direct name match" $ do
+          -- w_printer's own name is not "window", but it descends from it
+          -- (Plan 196 Phase 4, item 3 -- real corpus: afxlib.pbl/w_printer.srw:97,
+          -- this.Control[]={this.cbx_1,&...}).
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_printer" "window" ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "this" Nothing, LvSegment "Control" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_printer" sf of
+            [receiver, tail_] -> do
+              (rvrKind receiver, rvrTargetObject receiver) @?= ("class", Just "w_printer")
+              (rvrKind tail_, rvrDeclaredType tail_) @?= ("builtin_property", Nothing)
+            other -> assertFailure ("expected 2 refs, got " ++ show (length other))
+
+      , testCase "bare single-segment builtin property (implicit self-access, no explicit this.)" $ do
+          -- A menu item's bare 'ParentWindow' with no qualifying receiver at
+          -- all (real corpus: m_misth_final_details_list.srm:462, "parentwindow.triggerevent(...)").
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "m_test" "menu" ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "parentwindow" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "m_test" sf of
+            [r] -> rvrKind r @?= "builtin_property"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "nested control reached via a plain instance-var hop resolves at hop 2+, not just hop 1" $ do
+          -- iw_parent (instance var of type w_child) . dw_main (a control
+          -- declared on w_child, not a BsLocalVar) -- real corpus:
+          -- wiz_misth_final_details.srw:45, uo_step1.dw_misth_final.update().
+          let sf = emptySrFile
+                { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
+                    [ Located 1 (BsLocalVar [] (PtUserDefined "w_child") "iw_parent" Nothing) ] ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "iw_parent" Nothing, LvSegment "dw_main" Nothing])))) ] ]
+                }
+              sfChild = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_child" "window"
+                    , TypeBlock (mkTypeDecl "dw_main" "datawindow" (Just "w_child")) []
+                    ]
+                }
+              wsEnv = buildWorkspaceEnv [sf, sfChild]
+              idx   = buildControlIndex [sf, sfChild]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [receiver, tail_] -> do
+              (rvrKind receiver, rvrDeclaredType receiver) @?= ("instance", Just "w_child")
+              (rvrKind tail_, rvrDeclaredType tail_) @?= ("control", Just "datawindow")
+            other -> assertFailure ("expected 2 refs, got " ++ show (length other))
+
+      , testCase "var ref: a 3+-hop pure nested-control chain resolves every hop from the same stable anchor (regression)" $ do
+          -- Same real-corpus shape and same regression as the ExMethodCall
+          -- receiver version above (tab1.page1.uo_epidom), but for a plain
+          -- var read rather than a call receiver.
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_test")) []
+                    , TypeBlock (mkTypeDecl "page1" "tabpage" (Just "tab1")) []
+                    , TypeBlock (mkTypeDecl "uo_epidom" "u_epidom" (Just "page1")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "tab1" Nothing, LvSegment "page1" Nothing, LvSegment "uo_epidom" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [hop1, hop2, hop3] -> do
+              (rvrKind hop1, rvrDeclaredType hop1) @?= ("control", Just "tab")
+              (rvrKind hop2, rvrDeclaredType hop2) @?= ("control", Just "tabpage")
+              (rvrKind hop3, rvrDeclaredType hop3) @?= ("control", Just "u_epidom")
+            other -> assertFailure ("expected 3 refs, got " ++ show (length other))
+
+      , testCase "dotted: adw.object.<column> on a bare datawindow param resolves 'object', column is dw_column with no known type (unbound)" $ do
+          -- Real corpus shape: uo_misth_final_ypal_epidom_details_grid.sru:28,
+          -- adw.object.kodfinal[row] where adw is a bare 'ref datawindow adw'
+          -- param with no static binding -- Plan 196 Phase 4 item 1's
+          -- "genuinely unknown" case: kind stays dw_column (we know this is
+          -- a dynamic column read), declared_type stays Nothing (we don't
+          -- know which .srd, so we can't know the column's real type).
+          let sf = emptySrFile
+                { srFunctions = [ mkFn "f_go" "datawindow adw"
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "adw" Nothing, LvSegment "object" Nothing, LvSegment "kodfinal" Nothing])))) ] ] }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [_param, objSeg, colSeg] -> do
+              (rvrKind objSeg, rvrDeclaredType objSeg) @?= ("builtin_property", Nothing)
+              (rvrKind colSeg, rvrDeclaredType colSeg, rvrConfidence colSeg) @?= ("dw_column", Nothing, "low")
+            other -> assertFailure ("expected 3 refs, got " ++ show (length other))
+
+      , testCase "dotted: dw_1.object.<column> on a statically-bound DW control resolves the column's real declared type" $ do
+          -- dw_1's own dataobject="d_test" is known (ControlHierarchy), and
+          -- d_test's own .srd column list (weDwTables) declares kodfinal as
+          -- type "string" -- the column segment should get that real type,
+          -- not a generic/unknown placeholder.
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test"))
+                        [ Located 1 (BsLocalVar [] (PtPrimitive "string") "dataobject" (Just (ExStr "d_test"))) ]
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "dw_1" Nothing, LvSegment "object" Nothing, LvSegment "kodfinal" Nothing])))) ] ]
+                }
+              wsEnv = withDwTables (Map.fromList [("d_test", mkDwTable [mkDwCol "kodfinal" "string"])])
+                        (buildWorkspaceEnv [sf])
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, objSeg, colSeg] -> do
+              (rvrKind objSeg, rvrDeclaredType objSeg) @?= ("builtin_property", Just "d_test")
+              (rvrKind colSeg, rvrDeclaredType colSeg, rvrConfidence colSeg) @?= ("dw_column", Just "string", "high")
+            other -> assertFailure ("expected 3 refs, got " ++ show (length other))
+
+      , testCase "dotted: adw.object.<column> resolves the column's real type once Plan 196 Phase 4 item 1's param-binding trace supplies adw's inferred DW" $ do
+          -- Combines Part D (weDwTables) and Part E (weDwParamBindings):
+          -- 'adw' is still a bare, unbound-at-declaration 'datawindow' param,
+          -- but the workspace-wide DwParamBinding trace (built separately,
+          -- from every caller's own literal argument -- see
+          -- DwParamBindingTest.hs) has already determined it's always
+          -- 'd_test' -- exactly the corpus shape this phase set out to fix.
+          let sf = emptySrFile
+                { srFunctions = [ mkFn "f_go" "datawindow adw"
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "adw" Nothing, LvSegment "object" Nothing, LvSegment "kodfinal" Nothing])))) ] ] }
+              wsEnv = withDwParamBindings (Map.singleton ("w_test", "f_go", 0) "d_test")
+                        (withDwTables (Map.fromList [("d_test", mkDwTable [mkDwCol "kodfinal" "string"])])
+                          (buildWorkspaceEnv [sf]))
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [_param, objSeg, colSeg] -> do
+              (rvrKind objSeg, rvrDeclaredType objSeg) @?= ("builtin_property", Just "d_test")
+              (rvrKind colSeg, rvrDeclaredType colSeg, rvrConfidence colSeg) @?= ("dw_column", Just "string", "high")
+            other -> assertFailure ("expected 3 refs, got " ++ show (length other))
 
       , testCase "dotted: unresolvable receiver -> every segment unresolved, no guessing" $ do
           let sf = emptySrFile { srFunctions = [ mkFn "f_go" ""

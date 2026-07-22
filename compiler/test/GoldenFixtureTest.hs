@@ -50,11 +50,11 @@ dwEnv = ScopedTypeEnv
   , steLocal        = Map.empty
   , steHierarchy    = Map.empty
   , steObject       = ""
-  , steControlIndex = Map.empty, steParams = Set.empty
+  , steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
   }
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty "" Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty Map.empty "" Map.empty
 
 lv :: Text -> Lvalue
 lv n = Lvalue [LvSegment (mkIdent n) Nothing]

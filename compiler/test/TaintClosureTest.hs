@@ -80,7 +80,7 @@ snk o p v t l = TaintSink o p v t "db_write" "high" l
 -- fixtures -- those functions are what's under test here, not edge
 -- extraction.
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty "" Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty Map.empty "" Map.empty
 
 lvExpr :: Text -> Expr
 lvExpr n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])

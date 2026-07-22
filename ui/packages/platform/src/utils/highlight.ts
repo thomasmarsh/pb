@@ -114,6 +114,7 @@ const VAR_LINK_CLASS: Record<ResolvedVarRefInfo["kind"], string | null> = {
   control: "src-link-control",
   class: "src-link-obj",
   builtin_property: "src-link-builtin",
+  dw_column: "src-link-dwcolumn",
   unresolved: null,
 };
 

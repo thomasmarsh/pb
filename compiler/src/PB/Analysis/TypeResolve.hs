@@ -49,6 +49,7 @@ module PB.Analysis.TypeResolve
   , buildUserTypeSet
   -- exposed for testing and Church spike
   , builtinClassNames
+  , isDwFamilyType
   , classifyPbType
   , classifyControlType
   , parseParams
@@ -56,6 +57,8 @@ module PB.Analysis.TypeResolve
   , callSitesExpr
   , walkBodyCallSites
   , classifyLvalueChain
+  , classifyChainHops
+  , resolveReceiverTypeXref
   , varRefsExpr
   , walkBodyVarRefs
   , srFileObject
@@ -63,7 +66,7 @@ module PB.Analysis.TypeResolve
 
 import PB.Prelude
 import PB.AST.BodyStmt
-import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..))
+import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..), DwTable (..), DwColumn (..))
 import PB.AST.Expr
 import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapEmpty,
                            identMapInsertWith, identMapLookup, identMapToList, identOrig,
@@ -73,12 +76,14 @@ import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
-import PB.Analysis.CallClassify   (collectBodyLocals, resolveReceiverType)
-import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType)
+import PB.Analysis.CallClassify   (collectBodyLocals)
+import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
+                                      resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
                                     lookupInstanceVarOwner, procEnv)
 
 import Data.Aeson         (ToJSON (..), (.=))
+import Data.Foldable      (find)
 import qualified Data.Aeson as A
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -334,6 +339,21 @@ builtinClassNames = Set.fromList
   , "window", "childwindow", "sheet", "tab"
   ]
 
+-- | The narrower subset of 'builtinClassNames' that carries the
+-- @object.\<column\>@ dynamic pseudo-property (Plan 196 Phase 4 item 1) --
+-- that pseudo-property does not exist on e.g. a plain window or button.
+dwFamilyClassNames :: Set.Set Text
+dwFamilyClassNames = Set.fromList ["datawindow", "datastore", "datawindowchild"]
+
+-- | True when @ty@ itself, or any ancestor reached by walking @inherits@, is
+-- one of 'dwFamilyClassNames'. Exported so both 'classifyChainHops' (a
+-- receiver's own resolved type) and 'PB.Analysis.DwParamBinding' (a
+-- parameter's declared type) share one definition of "is this DW-family"
+-- rather than risking two independent copies drifting apart.
+isDwFamilyType :: Map.Map Ident Ident -> Text -> Bool
+isDwFamilyType inherits ty =
+  any (\a -> identCanon a `Set.member` dwFamilyClassNames) (ancestorChain (mkIdent ty) inherits)
+
 -- | Classify a PbType into a resolution kind and optional target name.
 -- Mirrors Python classify_type() in type_resolution.py. objs\/userTypes are
 -- matched case-insensitively via 'identSetLookup' -- PB identifiers are
@@ -433,32 +453,49 @@ paramsToVars file obj procN paramsText scopeLine =
 -- ---------------------------------------------------------------------------
 -- Call site extraction
 
-walkBodyCallSites :: ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [CallSite]
-walkBodyCallSites env file obj proc_ = foldStmts classify
+walkBodyCallSites :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [CallSite]
+walkBodyCallSites wsEnv env file obj proc_ = foldStmts classify
   where
     classify (Located line stmt) = case stmt of
-      BsCall expr        -> callSitesExpr env file obj proc_ (Just line) expr
-      BsAssign _ rhs     -> callSitesExpr env file obj proc_ (Just line) rhs
-      BsAssignExpr l rhs -> callSitesExpr env file obj proc_ (Just line) l
-                         <> callSitesExpr env file obj proc_ (Just line) rhs
-      BsReturn (Just e)  -> callSitesExpr env file obj proc_ (Just line) e
-      BsLocalVar { varInit = Just e } -> callSitesExpr env file obj proc_ (Just line) e
-      BsIf IfStmt { ifCond = c } -> callSitesExpr env file obj proc_ (Just line) c
+      BsCall expr        -> callSitesExpr wsEnv env file obj proc_ (Just line) expr
+      BsAssign _ rhs     -> callSitesExpr wsEnv env file obj proc_ (Just line) rhs
+      BsAssignExpr l rhs -> callSitesExpr wsEnv env file obj proc_ (Just line) l
+                         <> callSitesExpr wsEnv env file obj proc_ (Just line) rhs
+      BsReturn (Just e)  -> callSitesExpr wsEnv env file obj proc_ (Just line) e
+      BsLocalVar { varInit = Just e } -> callSitesExpr wsEnv env file obj proc_ (Just line) e
+      BsIf IfStmt { ifCond = c } -> callSitesExpr wsEnv env file obj proc_ (Just line) c
       BsFor ForStmt { forFrom = fr, forTo = to_, forStep = step } ->
-        callSitesExpr env file obj proc_ (Just line) fr
-        <> callSitesExpr env file obj proc_ (Just line) to_
-        <> maybe [] (callSitesExpr env file obj proc_ (Just line)) step
+        callSitesExpr wsEnv env file obj proc_ (Just line) fr
+        <> callSitesExpr wsEnv env file obj proc_ (Just line) to_
+        <> maybe [] (callSitesExpr wsEnv env file obj proc_ (Just line)) step
       BsDo DoStmt { doCond = pre, doLoop = post } ->
         condCallSites line pre <> condCallSites line post
-      BsChoose ChooseStmt { chooseExpr = x } -> callSitesExpr env file obj proc_ (Just line) x
+      BsChoose ChooseStmt { chooseExpr = x } -> callSitesExpr wsEnv env file obj proc_ (Just line) x
       _ -> []
 
     condCallSites _    Nothing            = []
-    condCallSites line (Just (DoWhile e)) = callSitesExpr env file obj proc_ (Just line) e
-    condCallSites line (Just (DoUntil e)) = callSitesExpr env file obj proc_ (Just line) e
+    condCallSites line (Just (DoWhile e)) = callSitesExpr wsEnv env file obj proc_ (Just line) e
+    condCallSites line (Just (DoUntil e)) = callSitesExpr wsEnv env file obj proc_ (Just line) e
 
-callSitesExpr :: ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Expr -> [CallSite]
-callSitesExpr env file obj proc_ mLine = foldExprs classify
+-- | Resolve an 'ExMethodCall' receiver's declared type for 'csReceiverObject',
+-- reusing 'classifyChainHops' -- the same per-hop fold 'classifyLvalueChain'
+-- uses -- so a call receiver gets exactly the same instance-var-chain\/
+-- nested-control\/ancestor-chain-builtin resolution power a var-ref chain
+-- already has (Plan 196 Phase 4 item 2). 'PB.Analysis.CallClassify.
+-- resolveReceiverType' is a different, narrower resolver reused by SSA
+-- effect classification and deliberately left alone.
+resolveReceiverTypeXref :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Expr -> Maybe Text
+resolveReceiverTypeXref wsEnv env obj proc_ (ExLvalue lv) = terminalDeclTy (classifyChainHops wsEnv env obj proc_ lv)
+resolveReceiverTypeXref wsEnv env obj proc_ (ExCall lv _) = terminalDeclTy (classifyChainHops wsEnv env obj proc_ lv)
+resolveReceiverTypeXref _     _   _   _     _             = Nothing
+
+terminalDeclTy :: [(Text, Maybe Text, Text, Maybe Text)] -> Maybe Text
+terminalDeclTy hops = case reverse hops of
+  ((_, _, _, declTy) : _) -> declTy
+  []                      -> Nothing
+
+callSitesExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Expr -> [CallSite]
+callSitesExpr wsEnv env file obj proc_ mLine = foldExprs classify
   where
     classify ExCall { callee = lv } =
       [ CallSite
@@ -481,7 +518,7 @@ callSitesExpr env file obj proc_ mLine = foldExprs classify
           , csToName         = identOrig m
           , csCallType       = "ExMethodCall"
           , csLine           = mLine
-          , csReceiverObject = resolveReceiverType env recv
+          , csReceiverObject = resolveReceiverTypeXref wsEnv env obj proc_ recv
           , csToNameSpan     = provenanceSpan (identSpan m)
           } ]
     classify (ExDispatch de@DispatchExpr { name = n }) =
@@ -531,22 +568,22 @@ extractCallSites wsEnv controlIdx file obj sf = concat
   [ concatMap (\fb ->
       let body = fbBody fb
           env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (fnsParams (fbSig fb))))
-      in walkBodyCallSites env file obj (identOrig (fnsName (fbSig fb))) body
+      in walkBodyCallSites wsEnv env file obj (identOrig (fnsName (fbSig fb))) body
     ) (srFunctions sf)
   , concatMap (\sb ->
       let body = sbBody sb
           env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (ssParams (sbSig sb))))
-      in walkBodyCallSites env file obj (identOrig (ssName (sbSig sb))) body
+      in walkBodyCallSites wsEnv env file obj (identOrig (ssName (sbSig sb))) body
     ) (srSubroutines sf)
   , concatMap (\ev ->
       let body = evBody ev
           env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (esRawSig (evSig ev))))
-      in walkBodyCallSites env file obj (identOrig (esName (evSig ev))) body
+      in walkBodyCallSites wsEnv env file obj (identOrig (esName (evSig ev))) body
     ) (srEvents sf)
   , concatMap (\ob ->
       let body = obBody ob
           env  = withBodyLocals body (procEnv wsEnv controlIdx obj [])
-      in walkBodyCallSites env file obj (identOrig (obEvent ob)) body
+      in walkBodyCallSites wsEnv env file obj (identOrig (obEvent ob)) body
     ) (srOnBlocks sf)
   ]
   where
@@ -561,8 +598,8 @@ extractDwCallSites wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls
   where
     env = procEnv wsEnv controlIdx obj []
     fromCtrl ctrl =
-      foldMap (callSitesExpr env file obj "" Nothing) (dwcParsedExpression ctrl)
-      <> foldMap (callSitesExpr env file obj "" Nothing) (dwcParsedFormat ctrl)
+      foldMap (callSitesExpr wsEnv env file obj "" Nothing) (dwcParsedExpression ctrl)
+      <> foldMap (callSitesExpr wsEnv env file obj "" Nothing) (dwcParsedFormat ctrl)
 
 -- ---------------------------------------------------------------------------
 -- Variable/property reference extraction
@@ -602,51 +639,194 @@ classifyLvalueChain
   :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Text -> Lvalue -> [ResolvedVarRef]
 classifyLvalueChain wsEnv env file obj proc_ mLine access lv =
   case segments lv of
-    []           -> [ ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved" Nothing Nothing ]
-    (seg0 : rest) ->
-      let (kind0, tgt0, conf0, declTy0) = classifyRoot (segName seg0)
-          row0 = mkRow seg0 (hopAccess rest) tgt0 kind0 conf0 declTy0
-      in row0 : go declTy0 rest
+    [] -> [ ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved" Nothing Nothing ]
+    segs -> zipWith3 mkRow segs (accesses segs) (classifyChainHops wsEnv env obj proc_ lv)
   where
-    hopAccess rest = if null rest then access else "read"
+    accesses segs = replicate (length segs - 1) "read" ++ [access]
 
-    mkRow seg acc tgt kind conf declTy =
+    mkRow seg acc (kind, tgt, conf, declTy) =
       ResolvedVarRef file obj proc_ mLine (identOrig (segName seg)) acc tgt kind conf
         (provenanceSpan (identSpan (segName seg))) declTy
 
-    go _      []           = []
-    go recvTy (seg : rest) =
-      let (kind, tgt, conf, declTy) = classifyMemberOf recvTy (segName seg)
-          row = mkRow seg (hopAccess rest) tgt kind conf declTy
-      in row : go declTy rest
+-- | Classify every segment of a dotted 'Lvalue' chain into a (kind, target
+-- object, confidence, declared type) tuple per hop, threading each hop's own
+-- resolved type forward as the next hop's receiver type -- the resolution
+-- logic 'classifyLvalueChain' wraps into 'ResolvedVarRef' rows, and
+-- 'resolveReceiverTypeXref' reuses directly (keeping only the terminal hop)
+-- for an 'ExMethodCall' receiver. The single place ancestor-chain\/nested-
+-- control\/instance-var-chain hop resolution lives, so every cross-reference
+-- consumer sees identical resolution power (Plan 196 Phase 4 item 2).
+-- Deliberately separate from 'PB.Analysis.CallClassify.resolveLvalueType',
+-- which serves a narrower need (SSA effect classification via
+-- 'classifyExpr'\/'classifyEffects', consumed by 'PB.Compile.FromSSA') and
+-- must not gain a 'WorkspaceEnv' dependency that would ripple into the
+-- compile pipeline for a cross-reference-only fix.
+classifyChainHops :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Lvalue -> [(Text, Maybe Text, Text, Maybe Text)]
+classifyChainHops wsEnv env obj proc_ lv =
+  case segments lv of
+    []            -> []
+    (seg0 : rest) ->
+      let hop0 = classifyRoot (segName seg0)
+      in publicRow hop0 : go (contOf hop0) rest
+  where
+    publicRow (kind, tgt, conf, declTy, _) = (kind, tgt, conf, declTy)
+    contOf    (_, _, _, _, cont)           = cont
 
+    go _    []           = []
+    go cont (seg : rest) =
+      let hop = classifyMemberOf cont (segName seg)
+      in publicRow hop : go (contOf hop) rest
+
+    -- 'literalAnchor' at hop 1 always tests @obj@'s own control declarations
+    -- for this segment, *independent* of which branch below actually wins
+    -- display -- PowerBuilder's own codegen declares an identically-named
+    -- instance var for *every* placed control (e.g. a window with a
+    -- @tab1@ control also declares a plain instance var @tab1 tab1@), so
+    -- 'lookupInstanceVarOwner' succeeds for virtually every real nested
+    -- control's own name and would otherwise always win priority, silently
+    -- discarding the one piece of state (the visual-tree anchor) a
+    -- *further* nested-control hop needs. See 'classifyMemberOf's own
+    -- 'literalExt'\/'hasAExt' for the full design rationale (confirmed via
+    -- real-corpus regression, not hypothetical).
     classifyRoot n
-      | identCanon n == "this"  = ("class", Just obj, "high", Just (T.toLower obj))
+      | identCanon n == "this"  =
+          ("class", Just obj, "high", Just (T.toLower obj), Just (mkOrdinary (T.toLower obj) Nothing literalAnchor))
       | identCanon n == "super" =
           case Map.lookup (mkIdent obj) (steHierarchy env) of
-            Just anc -> ("class", Just (identOrig anc), "high", Just (T.toLower (identOrig anc)))
-            Nothing  -> ("unresolved", Nothing, "unresolved", Nothing)
+            Just anc -> let ancTy = T.toLower (identOrig anc)
+                        in ("class", Just (identOrig anc), "high", Just ancTy, Just (mkOrdinary ancTy Nothing literalAnchor))
+            Nothing  -> ("unresolved", Nothing, "unresolved", Nothing, Nothing)
       | Just ty <- Map.lookup n (steLocal env) =
-          ( if n `Set.member` steParams env then "param" else "local"
-          , Nothing, "high", Just (T.toLower (renderPbType ty)) )
+          let tyTxt   = T.toLower (renderPbType ty)
+              isParam = n `Set.member` steParams env
+              -- A 'ref datawindow' param has no static binding on its own
+              -- declaration; Plan 196 Phase 4 item 1's 'PB.Analysis.
+              -- DwParamBinding' traces it instead, one hop across the call
+              -- graph to whichever literal DW every caller passes at this
+              -- position (only populated when every caller agrees).
+              dwBind
+                | isParam, isDwFamily tyTxt
+                = Map.lookup n (steParamIndex env)
+                    >>= \idx -> Map.lookup (obj, proc_, idx) (weDwParamBindings wsEnv)
+                | otherwise = Nothing
+          in ( if isParam then "param" else "local"
+             , Nothing, "high", Just tyTxt, Just (mkOrdinary tyTxt dwBind literalAnchor) )
       | Just (ancIdent, ty) <- lookupInstanceVarOwner wsEnv (mkIdent obj) n =
-          ("instance", Just (identOrig ancIdent), "high", Just (T.toLower (renderPbType ty)))
+          let tyTxt = T.toLower (renderPbType ty)
+          in ("instance", Just (identOrig ancIdent), "high", Just tyTxt, Just (mkOrdinary tyTxt Nothing literalAnchor))
       | Just ty <- Map.lookup n (steGlobal env) =
-          ("global", Nothing, "high", Just (T.toLower (renderPbType ty)))
-      | Just ctrlTy <- resolveMemberChainType (steControlIndex env) (steHierarchy env) obj [identCanon n] =
-          ("control", Just ctrlTy, "high", Just ctrlTy)
-      | otherwise = ("unresolved", Nothing, "unresolved", Nothing)
+          let tyTxt = T.toLower (renderPbType ty)
+          in ("global", Nothing, "high", Just tyTxt, Just (mkOrdinary tyTxt Nothing literalAnchor))
+      | Just ctrlTy <- literalCtrl =
+          ("control", Just ctrlTy, "high", Just ctrlTy,
+           Just (mkOrdinary ctrlTy (dwBindingFor obj [nSeg]) literalAnchor))
+      | isBuiltinFamily (mkIdent obj) =
+          -- A bare, unqualified name inside the enclosing object's own
+          -- script is an implicit @this.@ access -- if 'obj' itself is (or
+          -- descends from) a builtin class, an otherwise-unresolvable bare
+          -- name is most plausibly that builtin ancestor's own inherited
+          -- property (e.g. a menu item's bare @ParentWindow@), not a typo.
+          ("builtin_property", Nothing, "high", Nothing, Nothing)
+      | otherwise = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
+      where
+        nSeg          = identCanon n
+        literalCtrl   = resolveMemberChainType (steControlIndex env) (steHierarchy env) obj [nSeg]
+        literalAnchor = const (obj, [nSeg]) <$> literalCtrl
 
-    -- | Classify one member hop given the receiver type already resolved by
-    -- the previous hop (this fold's own accumulator) -- not re-derived.
-    classifyMemberOf Nothing _ = ("unresolved", Nothing, "unresolved", Nothing)
-    classifyMemberOf (Just recvTy) finalName
+    -- | True when @ty@ itself, or any ancestor reached by walking
+    -- 'steHierarchy', is a recognized builtin class name. A user-defined
+    -- descendant of a builtin class (e.g. @w_printer from window@) inherits
+    -- that builtin's own property\/method surface, so a member unresolved
+    -- against the descendant's own name must still be checked against every
+    -- ancestor up to the builtin root before giving up.
+    isBuiltinFamily ty = any isBuiltinName (ancestorChain ty (steHierarchy env))
+    isBuiltinName a = identCanon a `Set.member` builtinClassNames || identCanon a `Set.member` pbBuiltins
+
+    isDwFamily recvTy = isDwFamilyType (steHierarchy env) recvTy
+
+    -- | The literal @.srd@ name statically bound to the control resolved by
+    -- walking @root@ down @path@, if any -- reuses the exact @(root, path)@
+    -- arguments 'resolveMemberChainType' was just called with, so this never
+    -- re-derives a different chain.
+    dwBindingFor root path = resolveMemberChainDwBinding (steControlIndex env) (steHierarchy env) root path
+
+    mkOrdinary ty dwBind ctrlAnchor = OrdinaryRecv ty dwBind ctrlAnchor
+
+    -- | Classify one member hop given the previous hop's own continuation
+    -- context (this fold's own accumulator). 'OrdinaryRecv' carries the
+    -- current hop's own declared type (for instance-var\/global-like
+    -- lookups), its own statically-known DataWindow binding if applicable
+    -- (so the *next* hop can expose that binding's column namespace if it
+    -- turns out to be the DW pseudo-property @object@), and the inherited
+    -- visual-tree @(anchor, pathFromAnchor)@, if the chain up to (not
+    -- including) this hop was reachable via 'resolveMemberChainType' at all.
+    --
+    -- The anchor is threaded and tested *independent* of which branch below
+    -- wins display, for the same reason 'classifyRoot' computes
+    -- 'literalAnchor' independently: PowerBuilder's codegen gives every
+    -- placed control a same-named instance var, so 'lookupInstanceVarOwner'
+    -- succeeds for virtually every real nested-control segment and would
+    -- otherwise always win the instance-var branch below, silently breaking
+    -- the anchor for any *further* nested-control hop even though the
+    -- visual tree is still perfectly walkable underneath. Confirmed as a
+    -- real regression via real-corpus `--db` re-verification, not
+    -- hypothetical: a 3+-hop pure nested-control chain with no intervening
+    -- instance var (@tab1.page1.uo_epidom.uf_filter()@,
+    -- `final.pbl/w_misth_final_details_form_edit.srw:74`) silently lost its
+    -- `ExMethodCall` receiver resolution once hop 1 ('tab1', which *also*
+    -- has a same-named instance var per that codegen convention) reset the
+    -- anchor to 'Nothing' merely because 'lookupInstanceVarOwner' won
+    -- display there.
+    --
+    -- 'literalExt' extends the inherited anchor with this segment (one
+    -- 'resolveMemberChainType' call, re-derived from the *same* stable
+    -- anchor with the growing suffix -- 'resolveChain' is not decomposable
+    -- into independent single-segment calls, since it switches between two
+    -- different root-tracking conventions as it walks a real chain).
+    -- 'hasAExt' is the "has-a" fallback: 'recvTy' is a plain instance
+    -- var\/param's own type (never itself reached via a control chain, or
+    -- the literal continuation just failed), so a nested visual control on
+    -- it starts a *fresh* one-segment chain rooted at 'recvTy' (e.g.
+    -- @iw_parent.dw_main@, where @iw_parent@ is an instance var and
+    -- @dw_main@ is a control declared on its class -- 'PB.Analysis.
+    -- ControlHierarchy''s own module documentation calls this the "has-a"
+    -- convention, the literal-name walk the "visual-tree" convention).
+    -- 'literalExt' wins when both succeed, since it reflects the actually-
+    -- declared chain rather than a same-named coincidence.
+    classifyMemberOf Nothing _ = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
+    classifyMemberOf (Just (DwColumnsNamespace mDwName)) finalName =
+      let mCol = mDwName >>= \dwName -> Map.lookup (T.toLower dwName) (weDwTables wsEnv)
+                                     >>= find (\c -> identCanon (mkIdent (dcName c)) == identCanon finalName)
+                                     . dtColumns
+      in ("dw_column", Nothing, if isJust mCol then "high" else "low", dcType <$> mCol, Nothing)
+    classifyMemberOf (Just (OrdinaryRecv recvTy recvDwBinding ctrlAnchor)) finalName
+      | identCanon finalName == "object" && isDwFamily recvTy =
+          ("builtin_property", Nothing, "high", recvDwBinding, Just (DwColumnsNamespace recvDwBinding))
       | Just (ancIdent, ty) <- lookupInstanceVarOwner wsEnv (mkIdent recvTy) finalName =
-          ("instance", Just (identOrig ancIdent), "high", Just (T.toLower (renderPbType ty)))
-      | identCanon (mkIdent recvTy) `Set.member` builtinClassNames
-        || identCanon (mkIdent recvTy) `Set.member` pbBuiltins =
-          ("builtin_property", Nothing, "high", Nothing)
-      | otherwise = ("unresolved", Nothing, "unresolved", Nothing)
+          let tyTxt = T.toLower (renderPbType ty)
+          in ("instance", Just (identOrig ancIdent), "high", Just tyTxt, Just (mkOrdinary tyTxt Nothing bestAnchor))
+      | Just ctrlTy <- bestCtrl =
+          ("control", Just ctrlTy, "high", Just ctrlTy, Just (mkOrdinary ctrlTy bestDw bestAnchor))
+      | isBuiltinFamily (mkIdent recvTy) =
+          ("builtin_property", Nothing, "high", Nothing, Nothing)
+      | otherwise = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
+      where
+        fSeg       = identCanon finalName
+        literalExt = ctrlAnchor >>= \(r, p) ->
+          let p' = p <> [fSeg]
+          in (,) (r, p') <$> resolveMemberChainType (steControlIndex env) (steHierarchy env) r p'
+        hasAExt    = (,) (recvTy, [fSeg]) <$> resolveMemberChainType (steControlIndex env) (steHierarchy env) recvTy [fSeg]
+        bestExt    = literalExt <|> hasAExt
+        bestAnchor = fst <$> bestExt
+        bestCtrl   = snd <$> bestExt
+        bestDw     = bestAnchor >>= \(r, p) -> dwBindingFor r p
+
+-- | What the *next* hop of a dotted chain should resolve against, given the
+-- current hop's own classification -- see 'classifyChainHops'\'s
+-- 'classifyMemberOf' doc for the full design rationale.
+data ChainContinuation
+  = OrdinaryRecv Text (Maybe Text) (Maybe (Text, [Text]))
+  | DwColumnsNamespace (Maybe Text)
 
 -- | Read references to every named identifier appearing in an expression
 -- tree (RHS, conditions, call args, returns, ...) -- calls

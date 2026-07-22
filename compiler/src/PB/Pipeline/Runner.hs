@@ -34,7 +34,8 @@ import PB.Compile.InstrTypes (linearize)
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
-import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv, procEnv)
+import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv, withDwTables,
+                                 withDwParamBindings, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.SchemaCategory
@@ -57,6 +58,7 @@ import PB.Analysis.TypeResolve
   , parseParams, paramsToVars
   )
 import PB.Analysis.DeadVars (DeadVarFinding, findDeadVars)
+import PB.Analysis.DwParamBinding (buildDwParamBindings)
 import PB.Analysis.TypeCheck
   ( TypeCheckCtx (..), TypeCheckWorkspace (..)
   , buildTypeCheckWorkspace, checkBody
@@ -782,9 +784,18 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
     pure outcome) files
   let allParsedSrFiles = map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0]
-  wsEnv <- Progress.timedStep "Building workspace type env" $ do
-    let wsEnv' = buildWorkspaceEnv allParsedSrFiles
-    _ <- evaluate (Map.size (weGlobals wsEnv') + Map.size (weHierarchy wsEnv'))
+      -- Every parsed DataWindow's own column schema, keyed by its lowercased
+      -- '.srd' base filename (matching 'resolveMemberChainDwBinding's
+      -- literal dataobject= convention) -- feeds the object.<column> dynamic
+      -- pseudo-property resolution (Plan 196 Phase 4 item 1).
+      allDwTables = Map.fromList
+        [ (T.toLower (T.pack (takeBaseName fp)), tbl)
+        | PsDw fp _ dw <- outcomes0
+        , Just tbl <- [dwTable dw]
+        ]
+  wsEnv0 <- Progress.timedStep "Building workspace type env" $ do
+    let wsEnv' = withDwTables allDwTables (buildWorkspaceEnv allParsedSrFiles)
+    _ <- evaluate (Map.size (weGlobals wsEnv') + Map.size (weHierarchy wsEnv') + Map.size (weDwTables wsEnv'))
     pure wsEnv'
 
   -- Plan 164 Phase C: workspace-wide control/object hierarchy index, built
@@ -806,6 +817,18 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     let tcw' = buildTypeCheckWorkspace allParsedSrFiles
     _ <- evaluate (identMapSize (tcwProcMap tcw') + Map.size (tcwParams tcw'))
     pure tcw'
+
+  -- Plan 196 Phase 4 item 1's harder half: for a 'ref datawindow' parameter
+  -- with no static binding on its own declaration, trace every call site
+  -- across the workspace passing a literal DW-bound control at that
+  -- parameter's position -- built once here (needs 'tcw''s procMap/params
+  -- and 'controlIdx', both only available past this point) and attached to
+  -- 'wsEnv' before any per-file compilation reads it.
+  wsEnv <- Progress.timedStep "Building DW param bindings" $ do
+    let dwParamBindings = buildDwParamBindings (tcwProcMap tcw) (tcwInherits tcw) (tcwParams tcw) controlIdx allParsedSrFiles
+        wsEnv2 = withDwParamBindings dwParamBindings wsEnv0
+    _ <- evaluate (Map.size dwParamBindings)
+    pure wsEnv2
 
   -- Every DW file, already parsed in Phase A0 above -- Plan 163 Phase 3
   -- needs this cross-file (a PowerScript SetItem call may reference a DW

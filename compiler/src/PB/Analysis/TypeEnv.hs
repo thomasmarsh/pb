@@ -10,6 +10,8 @@ module PB.Analysis.TypeEnv
   , WorkspaceEnv (..)
   , ScopedTypeEnv (..)
   , buildWorkspaceEnv
+  , withDwTables
+  , withDwParamBindings
   , procEnv
   , lookupScopedVar
   , lookupScopedVarOrSelf
@@ -19,6 +21,7 @@ module PB.Analysis.TypeEnv
 
 import PB.Prelude
 import PB.AST.BodyStmt (BodyStmt (..))
+import PB.AST.DataWindow (DwTable)
 import PB.AST.Ident    (Ident, identCanon, identOrig, mkIdent)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
@@ -129,6 +132,8 @@ data WorkspaceEnv = WorkspaceEnv
   { weGlobals      :: Map.Map Ident PbType                       -- srVariables + forward instances
   , weInstanceVars :: Map.Map Ident (Map.Map Ident PbType)       -- object name → instance vars
   , weHierarchy    :: Map.Map Ident Ident                        -- full inheritance map
+  , weDwTables     :: Map.Map Text DwTable                       -- lowercased .srd base filename → parsed column schema (Plan 196 Phase 4 item 1)
+  , weDwParamBindings :: Map.Map (Text, Text, Int) Text          -- (object, proc, param index) → inferred literal .srd binding (Plan 196 Phase 4 item 1)
   } deriving (Eq, Show)
 
 -- | Procedure-scoped env built per (object, procedure) call site.
@@ -144,6 +149,9 @@ data ScopedTypeEnv = ScopedTypeEnv
                                                -- map, so 'steLocal' alone can no longer tell param from
                                                -- local; this set is fixed at 'procEnv' time and never
                                                -- touched by that later merge.
+  , steParamIndex   :: Map.Map Ident Int       -- ^ each param's 0-based declaration position -- lets a
+                                               -- 'ref datawindow' param be looked up in
+                                               -- 'weDwParamBindings' by position (Plan 196 Phase 4 item 1).
   , steHierarchy    :: Map.Map Ident Ident
   , steObject       :: Text          -- enclosing object name; root for multi-hop chain resolution
   , steControlIndex :: ControlIndex  -- workspace-wide control index; see PB.Analysis.ControlHierarchy
@@ -152,9 +160,25 @@ data ScopedTypeEnv = ScopedTypeEnv
 buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv
 buildWorkspaceEnv sfs = WorkspaceEnv
   { weGlobals      = foldl' (\m sf -> m <> extractWsGlobals sf)     Map.empty sfs
+  , weDwTables     = Map.empty
+  , weDwParamBindings = Map.empty
   , weInstanceVars = foldl' (\m sf -> Map.unionWith (<>) m (extractInstanceVars sf)) Map.empty sfs
   , weHierarchy    = foldl' (\m sf -> m <> extractTypeDecls sf)      Map.empty sfs
   }
+
+-- | Attach the workspace's inferred @ref datawindow@ parameter bindings
+-- (Plan 196 Phase 4 item 1), mirroring 'withDwTables''s additive shape.
+withDwParamBindings :: Map.Map (Text, Text, Int) Text -> WorkspaceEnv -> WorkspaceEnv
+withDwParamBindings binds ws = ws { weDwParamBindings = binds }
+
+-- | Attach the workspace's parsed DataWindow column schemas (Plan 196
+-- Phase 4 item 1). Kept separate from 'buildWorkspaceEnv' itself (whose
+-- input is @['SrFile']@, PowerScript source only -- @.srd@ files parse to a
+-- distinct 'PB.AST.DataWindow.DataWindowFile', never an 'SrFile') so the
+-- ~40 existing 'buildWorkspaceEnv' call sites that don't care about
+-- DataWindow column schemas (every unit test fixture) are unaffected.
+withDwTables :: Map.Map Text DwTable -> WorkspaceEnv -> WorkspaceEnv
+withDwTables tbls ws = ws { weDwTables = tbls }
 
 -- Globals: srGlobalInstances + forward instances + srVariables (NOT TypeBlock body vars).
 extractWsGlobals :: SrFile -> Map.Map Ident PbType
@@ -201,6 +225,7 @@ procEnv ws idx objName params = ScopedTypeEnv
                          ]
   , steLocal        = Map.fromList [(mkIdent n, ty) | (n, ty) <- params]
   , steParams       = Set.fromList [mkIdent n | (n, _) <- params]
+  , steParamIndex   = Map.fromList [(mkIdent n, i) | ((n, _), i) <- zip params [0 ..]]
   , steHierarchy    = weHierarchy ws
   , steObject       = objName
   , steControlIndex = idx

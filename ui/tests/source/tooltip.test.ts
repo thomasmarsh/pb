@@ -111,6 +111,14 @@ describe("buildVarTooltip", () => {
     expect(t?.html).toContain("badge-instance");
   });
 
+  it("uses a distinct dw_column color and badge, distinguishable from builtin_property (Plan 196 Phase 4 item 1)", () => {
+    const t = buildVarTooltip("kodfinal", makeVarRef({ kind: "dw_column", declared_type: "string" }));
+    expect(t?.color).toBe("#4dd0e1");
+    expect(t?.color).not.toBe("#dcdcaa");
+    expect(t?.html).toContain("badge-dwcolumn");
+    expect(t?.html).toContain("string");
+  });
+
   it("includes target_object when present", () => {
     const t = buildVarTooltip("lo_obj", makeVarRef({ kind: "class", target_object: "w_child" }));
     expect(t?.html).toContain("w_child");

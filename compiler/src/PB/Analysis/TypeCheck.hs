@@ -33,6 +33,7 @@ module PB.Analysis.TypeCheck
   , TypeCheckCtx (..)
   , TypeCheckWorkspace (..)
   , buildParamsMap
+  , selectSignature
   , buildTypeCheckWorkspace
   , inferExpr
   , checkBody

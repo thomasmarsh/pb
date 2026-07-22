@@ -48,6 +48,7 @@ import qualified TypeResolveTest
 import qualified TypeFamilyTest
 import qualified TypeCheckTest
 import qualified ControlHierarchyTest
+import qualified DwParamBindingTest
 import qualified CallClassifyTest
 import qualified CloneDetectTest
 
@@ -108,6 +109,7 @@ tests = testGroup "pb-compiler"
   , TypeFamilyTest.tests
   , TypeCheckTest.tests
   , ControlHierarchyTest.tests
+  , DwParamBindingTest.tests
   , CallClassifyTest.tests
   , CloneDetectTest.tests
   ]

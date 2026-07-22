@@ -70,6 +70,7 @@ library
     PB.Analysis.TypeFamily
     PB.Analysis.TypeCheck
     PB.Analysis.ControlHierarchy
+    PB.Analysis.DwParamBinding
     PB.Pipeline.Preprocess
     PB.Pipeline.Emit
     PB.Pipeline.Passes
@@ -228,6 +229,7 @@ test-suite pb-compiler-test
     , TypeFamilyTest
     , TypeCheckTest
     , ControlHierarchyTest
+    , DwParamBindingTest
     , CallClassifyTest
     , CloneDetectTest
     , ClosureTest

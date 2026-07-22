@@ -244,7 +244,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.singleton "x" (PtPrimitive "integer")
               , steGlobal   = Map.empty
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVar "x" env @?= Just (PtPrimitive "string")
 
@@ -254,7 +254,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.singleton "y" (PtPrimitive "long")
               , steGlobal   = Map.singleton "y" (PtPrimitive "integer")
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVar "y" env @?= Just (PtPrimitive "long")
 
@@ -264,7 +264,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.empty
               , steGlobal   = Map.singleton "z" (PtPrimitive "boolean")
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVar "z" env @?= Just (PtPrimitive "boolean")
 
@@ -274,7 +274,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.empty
               , steGlobal   = Map.empty
               , steHierarchy = Map.empty
-              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty
+              , steObject = "", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVar "FOO" env @?= Just (PtPrimitive "string")
 
@@ -366,7 +366,7 @@ tests = testGroup "TypeEnv"
     [ testCase "'this' resolves to the enclosing object's own type, regardless of steLocal/steInstance/steGlobal" $
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVarOrSelf "this" env @?= Just (PtUserDefined "w_main")
 
@@ -374,14 +374,14 @@ tests = testGroup "TypeEnv"
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
               , steHierarchy = Map.singleton "w_child" "w_parent"
-              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty
+              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVarOrSelf "super" env @?= Just (PtUserDefined "w_parent")
 
     , testCase "'super' with no ancestor in steHierarchy -> Nothing (never guess)" $
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVarOrSelf "super" env @?= Nothing
 
@@ -389,7 +389,7 @@ tests = testGroup "TypeEnv"
         let env = ScopedTypeEnv
               { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
               , steHierarchy = Map.singleton "w_child" "w_parent"
-              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty
+              , steObject = "w_child", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in do
           lookupScopedVarOrSelf "This"  env @?= Just (PtUserDefined "w_child")
@@ -399,7 +399,7 @@ tests = testGroup "TypeEnv"
         let env = ScopedTypeEnv
               { steLocal = Map.singleton "ls_x" (PtPrimitive "string")
               , steInstance = Map.empty, steGlobal = Map.empty
-              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty
+              , steHierarchy = Map.empty, steObject = "w_main", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
               }
         in lookupScopedVarOrSelf "ls_x" env @?= Just (PtPrimitive "string")
     ]
