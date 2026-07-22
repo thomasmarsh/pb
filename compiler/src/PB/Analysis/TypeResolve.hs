@@ -79,7 +79,7 @@ import PB.Analysis.CallClassify   (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
                                       resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
-                                    lookupInstanceVarOwner, procEnv)
+                                    isDescendantOf, lookupInstanceVarOwner, procEnv)
 
 import Data.Aeson         (ToJSON (..), (.=))
 import Data.Foldable      (find)
@@ -382,9 +382,6 @@ classifyPbType (PtUserDefined n) objs userTypes
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers for body walking
-
-segName :: LvSegment -> Ident
-segName (LvSegment n _) = n
 
 dispatchName :: DispatchExpr -> Text
 dispatchName (DispatchExpr _ _ _ _ n _) = identOrig n
@@ -702,7 +699,7 @@ classifyChainHops wsEnv env obj proc_ lv =
       | Just ctrlTy <- literalCtrl =
           ("control", Just ctrlTy, "high", Just ctrlTy,
            Just (mkOrdinary ctrlTy (dwBindingFor obj [nSeg]) literalAnchor))
-      | isBuiltinFamily (mkIdent obj) =
+      | isBuiltinFamily obj =
           -- A bare, unqualified name inside the enclosing object's own
           -- script is an implicit @this.@ access -- if 'obj' itself is (or
           -- descends from) a builtin class, an otherwise-unresolvable bare
@@ -721,8 +718,7 @@ classifyChainHops wsEnv env obj proc_ lv =
     -- that builtin's own property\/method surface, so a member unresolved
     -- against the descendant's own name must still be checked against every
     -- ancestor up to the builtin root before giving up.
-    isBuiltinFamily ty = any isBuiltinName (ancestorChain ty (steHierarchy env))
-    isBuiltinName a = identCanon a `Set.member` builtinClassNames || identCanon a `Set.member` pbBuiltins
+    isBuiltinFamily ty = isDescendantOf (steHierarchy env) ty (builtinClassNames <> pbBuiltins)
 
     isDwFamily recvTy = isDwFamilyType (steHierarchy env) recvTy
 
@@ -789,7 +785,7 @@ classifyChainHops wsEnv env obj proc_ lv =
           in ("instance", Just (identOrig ancIdent), "high", Just tyTxt, Just (mkOrdinary tyTxt Nothing bestAnchor))
       | Just ctrlTy <- bestCtrl =
           ("control", Just ctrlTy, "high", Just ctrlTy, Just (mkOrdinary ctrlTy bestDw bestAnchor))
-      | isBuiltinFamily (mkIdent recvTy) =
+      | isBuiltinFamily recvTy =
           ("builtin_property", Nothing, "high", Nothing, Nothing)
       | otherwise = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
       where
@@ -1038,29 +1034,39 @@ buildUserTypeSet = identSetFromList . concatMap fileUserTypes
 -- ---------------------------------------------------------------------------
 -- Type resolution
 
+-- | Shared classification core for 'resolveTypes'\/'resolveGlobalTypes':
+-- both call 'classifyPbType', apply the same 'classifyControlType' fallback
+-- for an "unresolved" result, then build a 'ResolvedType' -- they differ only
+-- in how the caller derives 'rtProcName'\/'rtScope'\/'rtScopeLine' from a
+-- 'LocalVar' vs a 'GlobalVar'.
+resolveOneType :: Text -> Text -> Text -> Text -> Text -> Text -> Int -> PbType -> IdentSet -> IdentSet -> ResolvedType
+resolveOneType file obj procN varName rawType scope scopeLine pbTy objs userTypes =
+  let (kind, target) = classifyPbType pbTy objs userTypes
+      -- Fallback: infer control type from variable name when unresolved
+      (kind', target') = case kind of
+        "unresolved" -> case classifyControlType varName of
+          Just ctrlType -> ("primitive", Just ctrlType)
+          Nothing       -> (kind, target)
+        _            -> (kind, target)
+  in ResolvedType
+       { rtFile      = file
+       , rtObject    = obj
+       , rtProcName  = procN
+       , rtVarName   = varName
+       , rtRawType   = rawType
+       , rtKind      = kind'
+       , rtTarget    = target'
+       , rtScope     = scope
+       , rtScopeLine = scopeLine
+       }
+
 -- | Classify each local variable's type.
 resolveTypes :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 resolveTypes vars objs userTypes = map resolve vars
   where
-    resolve lv =
-      let (kind, target) = classifyPbType (lvPbType lv) objs userTypes
-          -- Fallback: infer control type from variable name when unresolved
-          (kind', target') = case kind of
-            "unresolved" -> case classifyControlType (lvVarName lv) of
-              Just ctrlType -> ("primitive", Just ctrlType)
-              Nothing       -> (kind, target)
-            _            -> (kind, target)
-      in ResolvedType
-           { rtFile      = lvFile lv
-           , rtObject    = lvObject lv
-           , rtProcName  = lvProcName lv
-           , rtVarName   = lvVarName lv
-           , rtRawType   = lvRawType lv
-           , rtKind      = kind'
-           , rtTarget    = target'
-           , rtScope     = if lvIsParam lv then "param" else "local"
-           , rtScopeLine = lvScopeLine lv
-           }
+    resolve lv = resolveOneType (lvFile lv) (lvObject lv) (lvProcName lv) (lvVarName lv)
+      (lvRawType lv) (if lvIsParam lv then "param" else "local") (lvScopeLine lv)
+      (lvPbType lv) objs userTypes
 
 -- | Classify each instance (data member) variable's type. Unlike
 -- 'resolveTypes', an instance var has no owning procedure -- it is visible
@@ -1071,24 +1077,8 @@ resolveTypes vars objs userTypes = map resolve vars
 resolveGlobalTypes :: [GlobalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 resolveGlobalTypes vars objs userTypes = map resolve vars
   where
-    resolve gv =
-      let (kind, target) = classifyPbType (gvPbType gv) objs userTypes
-          (kind', target') = case kind of
-            "unresolved" -> case classifyControlType (gvName gv) of
-              Just ctrlType -> ("primitive", Just ctrlType)
-              Nothing       -> (kind, target)
-            _            -> (kind, target)
-      in ResolvedType
-           { rtFile      = gvFile gv
-           , rtObject    = gvObject gv
-           , rtProcName  = ""
-           , rtVarName   = gvName gv
-           , rtRawType   = gvType gv
-           , rtKind      = kind'
-           , rtTarget    = target'
-           , rtScope     = "instance"
-           , rtScopeLine = 0
-           }
+    resolve gv = resolveOneType (gvFile gv) (gvObject gv) "" (gvName gv)
+      (gvType gv) "instance" 0 (gvPbType gv) objs userTypes
 
 -- ---------------------------------------------------------------------------
 -- Call resolution

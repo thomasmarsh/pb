@@ -8,6 +8,7 @@ module PB.AST.Expr
   , Expr (..)
   , exprChildren
   , foldExprs
+  , segName
   ) where
 
 import PB.Prelude
@@ -23,6 +24,9 @@ data LvSegment = LvSegment
   { name      :: Ident
   , subscript :: Maybe [Text]
   } deriving (Eq, Show, Generic)
+
+segName :: LvSegment -> Ident
+segName (LvSegment n _) = n
 
 newtype Lvalue = Lvalue
   { segments :: [LvSegment]

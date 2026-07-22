@@ -24,8 +24,8 @@ import PB.AST.DataWindow
   ( DwTable (..), DwColumn (..), DwRetrieve (..), DwRetrieveOrRaw (..)
   , DwWhereClause (..), DwJoin (..)
   )
-import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
-import PB.AST.Ident (Ident, identCanon)
+import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..), segName)
+import PB.AST.Ident (identCanon)
 import PB.Analysis.SchemaCategory
   ( SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..)
   , CatColumnRow (..), splitColumnRef, resolveTableRef, catalogNamespacedTables
@@ -80,9 +80,6 @@ lvalueColumnRef _ = Nothing
 isPlainSegment :: LvSegment -> Bool
 isPlainSegment (LvSegment _ Nothing) = True
 isPlainSegment _                     = False
-
-segName :: LvSegment -> Ident
-segName (LvSegment n _) = n
 
 columnRefFromNames :: [Text] -> Maybe (TableRef, Text)
 columnRefFromNames names = case names of

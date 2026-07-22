@@ -197,9 +197,6 @@ buildTypeCheckWorkspace sfs = TypeCheckWorkspace
 -- ---------------------------------------------------------------------------
 -- Expression typing
 
-segName :: LvSegment -> Ident
-segName (LvSegment n _) = n
-
 -- | Classify a literal\/resolved class name into a 'TypeFamily'.
 -- Case-insensitive: 'resolveMemberChainType' always returns a lowercased
 -- class name (see 'PB.Analysis.ControlHierarchy''s module haddock), while

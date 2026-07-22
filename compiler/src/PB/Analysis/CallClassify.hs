@@ -237,9 +237,6 @@ calleeName (ExMethodCall recv m _) =
   in recvName <> "." <> identOrig m
 calleeName _ = "?"
 
-segName :: LvSegment -> Ident
-segName (LvSegment n _) = n
-
 lvHead :: Lvalue -> Text
 lvHead lv = case segments lv of { (s:_) -> identOrig (segName s); [] -> "_" }
 
