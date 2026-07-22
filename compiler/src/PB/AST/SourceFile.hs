@@ -21,12 +21,14 @@ module PB.AST.SourceFile
   , srPrimaryObject
   , splitAncestorRef
   , mkTypeDecl
+  , mkTypeDeclAt
   ) where
 
 import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
-import PB.AST.Ident       (Ident, mkIdent)
+import PB.AST.Ident       (Ident, mkIdent, mkIdentAt)
 import PB.AST.Located     (Located)
+import PB.Lexing.Token    (SourceSpan)
 import Control.DeepSeq    (NFData)
 import GHC.Generics       (Generic)
 import qualified Data.Text as T
@@ -88,6 +90,18 @@ mkTypeDecl name anc within =
        , tdWithin           = within
        }
 
+-- | Like 'mkTypeDecl' but attaches a real source span to 'tdName'.
+mkTypeDeclAt :: SourceSpan -> Text -> Text -> Maybe Text -> TypeDecl
+mkTypeDeclAt sp name anc within =
+  let (ancClass, ancOverride) = splitAncestorRef anc
+  in TypeDecl
+       { tdName             = mkIdentAt sp name
+       , tdAncestor         = anc
+       , tdAncestorClass    = ancClass
+       , tdAncestorOverride = ancOverride
+       , tdWithin           = within
+       }
+
 data TypeBlock = TypeBlock
   { tbDecl :: TypeDecl
   , tbBody :: [Located BodyStmt]
@@ -141,9 +155,9 @@ data EventBlock = EventBlock
   } deriving (Eq, Show, Generic)
 
 data OnBlock = OnBlock
-  { obQualName :: Text
-  , obOwner    :: Text
-  , obEvent    :: Text
+  { obQualName :: Ident
+  , obOwner    :: Ident
+  , obEvent    :: Ident
   , obBody     :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 

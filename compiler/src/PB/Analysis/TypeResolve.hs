@@ -488,7 +488,7 @@ extractLocalVars file obj sf = concat
       walkBodyLocalVars file obj (identOrig (esName (evSig ev))) (evBody ev)
     ) (srEvents sf)
   , concatMap (\ob ->
-      walkBodyLocalVars file obj (obEvent ob) (obBody ob)
+      walkBodyLocalVars file obj (identOrig (obEvent ob)) (obBody ob)
     ) (srOnBlocks sf)
   ]
 
@@ -519,7 +519,7 @@ extractCallSites wsEnv controlIdx file obj sf = concat
   , concatMap (\ob ->
       let body = obBody ob
           env  = withBodyLocals body (procEnv wsEnv controlIdx obj [])
-      in walkBodyCallSites env file obj (obEvent ob) body
+      in walkBodyCallSites env file obj (identOrig (obEvent ob)) body
     ) (srOnBlocks sf)
   ]
   where
@@ -675,7 +675,7 @@ extractVarRefs wsEnv controlIdx file obj sf = concat
   , concatMap (\ob ->
       let body = obBody ob
           env  = withBodyLocals body (procEnv wsEnv controlIdx obj [])
-      in walkBodyVarRefs wsEnv env file obj (obEvent ob) body
+      in walkBodyVarRefs wsEnv env file obj (identOrig (obEvent ob)) body
     ) (srOnBlocks sf)
   ]
   where
@@ -798,7 +798,7 @@ buildProcMap = foldl' addFile identMapEmpty
             map (fnsName . fbSig) (srFunctions sf)
             <> map (ssName . sbSig) (srSubroutines sf)
             <> map (esName . evSig) (srEvents sf)
-            <> map (mkIdent . obEvent) (srOnBlocks sf)
+            <> map obEvent (srOnBlocks sf)
       in identMapInsertWith identSetUnion objIdent names acc
 
 -- | All window/userobject-derived type names (not structures).

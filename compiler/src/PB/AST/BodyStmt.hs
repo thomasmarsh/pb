@@ -30,8 +30,8 @@ data AugOp = AugAdd | AugSub | AugMul | AugDiv
 
 -- | PB CALL statement: CALL ancestorobject [`controlname] :: event
 data PbCall = PbCall
-  { pbcAncestor :: Text
-  , pbcEvent    :: Text
+  { pbcAncestor :: Ident
+  , pbcEvent    :: Ident
   } deriving (Eq, Show, Generic)
 
 -- | One elseif branch: condition + body.

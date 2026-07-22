@@ -18,7 +18,7 @@ import PB.AST.BodyStmt
 import PB.AST.Expr        ( BinOp (..), Expr (..)
                           , DispatchExpr (..), DispatchMode (..)
                           , LvSegment (..), Lvalue (..) )
-import PB.AST.Ident       (mkIdent)
+import PB.AST.Ident       (mkIdentAt)
 import PB.AST.Located     (Located (..))
 import PB.AST.Type         (PbType (..))
 import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken, currentLine)
@@ -74,7 +74,7 @@ mkLocalVarStmts :: [Text] -> PbType -> Token -> [Token] -> [BodyStmt]
 mkLocalVarStmts mods ty nameT rest' = mapMaybe declStmt (splitArgs (nameT : rest'))
   where
     declStmt (n : initToks) | tkKind n == TkIdent =
-      Just (BsLocalVar mods ty (mkIdent (tkText n)) (parseInit initToks))
+      Just (BsLocalVar mods ty (mkIdentAt (tkSpan n) (tkText n)) (parseInit initToks))
     declStmt _ = Nothing
 
 -- ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ lvaluePrefix = goSegs
     goSegs (t:rest)
       | isSegmentName t = do
           (msub, afterSub) <- consumeSub rest
-          let seg = LvSegment (mkIdent (tkText t)) msub
+          let seg = LvSegment (mkIdentAt (tkSpan t) (tkText t)) msub
           case afterSub of
             (dot:more) | tkKind dot == TkDot ->
               case goSegs more of
@@ -192,7 +192,7 @@ parseDispBodyTokens objLv = go DmSync False False
                     , mode    = mode
                     , dynamic = dyn
                     , event   = isEv
-                    , name    = mkIdent (tkText t)
+                    , name    = mkIdentAt (tkSpan t) (tkText t)
                     , args    = map parseExpr (splitArgs inner)
                     }, after)
             _ -> Nothing
@@ -263,13 +263,13 @@ chainCalls e (dot : nm : lp : rest)
       Just (inner, after) ->
         chainCalls ExMethodCall
           { receiver   = e
-          , method     = mkIdent (tkText nm)
+          , method     = mkIdentAt (tkSpan nm) (tkText nm)
           , methodArgs = map parseExpr (splitArgs inner)
           } after
 chainCalls e (dot : nm : rest)
   | tkKind dot == TkDot
   , isSegmentName nm
-  = chainCalls ExMethodCall { receiver = e, method = mkIdent (tkText nm), methodArgs = [] } rest
+  = chainCalls ExMethodCall { receiver = e, method = mkIdentAt (tkSpan nm) (tkText nm), methodArgs = [] } rest
 chainCalls e ts = (e, ts)
 
 parseAtom :: [Token] -> Maybe (Expr, [Token])
@@ -295,7 +295,7 @@ parseAtom (t:rest)
         (e, r') <- parseAtom r
         pure (ExCreateUsing e, r')
       (cls:r) | tkKind cls `elem` [TkIdent, TkOtherKw, TkDatatype]
-        -> Just (ExCreate (mkIdent (tkText cls)), r)
+        -> Just (ExCreate (mkIdentAt (tkSpan cls) (tkText cls)), r)
       _ -> Nothing
 
   | tkKind t == TkLBrace
@@ -381,9 +381,9 @@ parseSingleToken t = case tkKind t of
   TkDateLiteral -> ExDate (tkText t)
   TkTimeLiteral -> ExTime (tkText t)
   TkEnumLiteral -> ExEnum (T.dropEnd 1 (tkText t))
-  TkIdent       -> ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
-  TkOtherKw     -> ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
-  TkDatatype    -> ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
+  TkIdent       -> ExLvalue (Lvalue [LvSegment (mkIdentAt (tkSpan t) (tkText t)) Nothing])
+  TkOtherKw     -> ExLvalue (Lvalue [LvSegment (mkIdentAt (tkSpan t) (tkText t)) Nothing])
+  TkDatatype    -> ExLvalue (Lvalue [LvSegment (mkIdentAt (tkSpan t) (tkText t)) Nothing])
   _             -> ExRaw [tkText t]
 
 -- ---------------------------------------------------------------------------
@@ -394,7 +394,7 @@ parsePbCall [callT, ancT, sepT, evT]
   | tkKind callT == TkOtherKw
   , tkKind ancT  `elem` [TkIdent, TkOtherKw]
   , tkKind sepT  == TkDoubleColon
-  = Just (PbCall (tkText ancT) (tkText evT))
+  = Just (PbCall (mkIdentAt (tkSpan ancT) (tkText ancT)) (mkIdentAt (tkSpan evT) (tkText evT)))
 parsePbCall _ = Nothing
 
 -- ---------------------------------------------------------------------------

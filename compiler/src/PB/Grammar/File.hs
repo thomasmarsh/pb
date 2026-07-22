@@ -19,11 +19,11 @@ import PB.Prelude
 import PB.Grammar.Body    (pBodyStmt, splitArgs)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken, currentLine)
 import PB.AST.BodyStmt    (BodyStmt)
-import PB.AST.Ident       (identOrig, mkIdent)
+import PB.AST.Ident       (Ident, identOrig, mkIdentAt, mkIdentDerived)
 import PB.AST.Located     (Located)
 import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
-  , TypeDecl (..), TypeBlock (..), mkTypeDecl
+  , TypeDecl (..), TypeBlock (..), mkTypeDeclAt
   , VariablesBlock (..), VarScope (..), VarDecl (..)
   , GlobalInstance (..)
   , FnSig (..), SubSig (..), EventSig (..)
@@ -31,11 +31,12 @@ import PB.AST.SourceFile
   , SrFile (..)
   )
 import PB.Lexing.Splitter (Statement (..))
-import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
+import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText, tkSpan)
 import PB.Pipeline.Preprocess (llStartLine, llText)
 
 import Text.Megaparsec (many, manyTill, lookAhead, try, parse, getInput)
 import Text.Megaparsec.Error (errorBundlePretty)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
 
 pEndKw :: Text -> FileParser ()
@@ -61,7 +62,7 @@ extractTypeDecl s =
       let within = case remainder of
             (w:cT:_) | T.toLower (tkText w) == "within" -> Just (tkText cT)
             _                                            -> Nothing
-      in Just (mkTypeDecl (tkText nameT) (tkText ancT) within)
+      in Just (mkTypeDeclAt (tkSpan nameT) (tkText nameT) (tkText ancT) within)
     _ -> Nothing
 
 pTypeDecl :: FileParser TypeDecl
@@ -107,7 +108,7 @@ buildVarDecls s =
       Just VarDecl
         { vdModifiers = map tkText mods
         , vdType      = tkText typeT
-        , vdName      = mkIdent (tkText n)
+        , vdName      = mkIdentAt (tkSpan n) (tkText n)
         }
     declFor _ _ _ = Nothing
 
@@ -130,7 +131,7 @@ pGlobalInstance :: FileParser GlobalInstance
 pGlobalInstance = do
   s <- satisfyStmt isGlobalInstance
   case stmtTokens s of
-    [_, typT, nameT] -> return (GlobalInstance (tkText typT) (mkIdent (tkText nameT)))
+    [_, typT, nameT] -> return (GlobalInstance (tkText typT) (mkIdentAt (tkSpan nameT) (tkText nameT)))
     _                -> fail "malformed global instance declaration"
 
 pVariablesBlock :: FileParser VariablesBlock
@@ -204,7 +205,7 @@ extractFnSig s =
       mods = map tkText modToks
       finish retTy name more =
         let (params, throws) = parseParamsAndThrows more
-        in Just (FnSig mods (tkText retTy) (mkIdent (tkText name)) params throws)
+        in Just (FnSig mods (tkText retTy) (mkIdentAt (tkSpan name) (tkText name)) params throws)
   in case rest of
     (_kw : retTy : name : lparen : more)
       | tkKind lparen == TkLParen -> finish retTy name more
@@ -219,7 +220,7 @@ extractSubSig s =
       mods = map tkText modToks
       finish name more =
         let (params, throws) = parseParamsAndThrows more
-        in Just (SubSig mods (mkIdent (tkText name)) params throws)
+        in Just (SubSig mods (mkIdentAt (tkSpan name) (tkText name)) params throws)
   in case rest of
     (_kw : name : lparen : more)
       | tkKind lparen == TkLParen -> finish name more
@@ -234,7 +235,7 @@ extractEvSig s =
   in case rest of
     (_kw : name : remainder) ->
         let rawSig = T.intercalate " " (map tkText remainder)
-        in Just (EventSig (mkIdent (tkText name)) rawSig)
+        in Just (EventSig (mkIdentAt (tkSpan name) (tkText name)) rawSig)
     _ -> Nothing
 
 pFnProto :: FileParser ProtoDecl
@@ -299,16 +300,25 @@ isOnDecl s = case stmtTokens s of
                                   , TkBoolTrue, TkBoolFalse, TkSqlKw ]
   _         -> False
 
-extractOnParts :: Statement -> Maybe (Text, Text, Text)
+extractOnParts :: Statement -> Maybe (Ident, Ident, Ident)
 extractOnParts s = case stmtTokens s of
   (_:rest) ->
-    let idents = [tkText t | t <- rest, tkKind t /= TkDot]
-    in case idents of
+    let identToks = [t | t <- rest, tkKind t /= TkDot]
+    in case identToks of
       []            -> Nothing
-      [ev]          -> Just (ev, "", ev)
-      _             -> case reverse idents of
+      [evT]         ->
+        let ev = mkIdentAt (tkSpan evT) (tkText evT)
+        in Just (ev, ev, ev)
+      _             -> case reverse identToks of
         []            -> Nothing
-        (ev:ownerRev) -> Just (T.intercalate "." idents, T.intercalate "." (reverse ownerRev), ev)
+        (evT:ownerRevToks) ->
+          let ev    = mkIdentAt (tkSpan evT) (tkText evT)
+              ownerToks = reverse ownerRevToks
+              owner = mkIdentDerived (NE.fromList (map tkSpan ownerToks))
+                                     (T.intercalate "." (map tkText ownerToks))
+              qual  = mkIdentDerived (NE.fromList (map tkSpan identToks))
+                                     (T.intercalate "." (map tkText identToks))
+          in Just (qual, owner, ev)
   _ -> Nothing
 
 -- ---------------------------------------------------------------------------

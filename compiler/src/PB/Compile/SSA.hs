@@ -36,7 +36,7 @@ module PB.Compile.SSA
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident    (identOrig, mkIdent)
+import PB.AST.Ident    (IdentProvenance (..), identOrig, identSpan, mkIdent, mkIdentDerived, mkIdentSynthetic)
 import PB.AST.Located  (Located (..))
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Analysis.TypeEnv (ScopedTypeEnv)
@@ -283,8 +283,12 @@ stmtToAssigns (BsCall expr) =
 -- PureCall.
 stmtToAssigns (BsPbCall (PbCall ancestor event)) =
   [SsaAssign (SsaVar "_")
-             (SsaConst (ExCall (Lvalue [LvSegment (mkIdent (ancestor <> "::" <> event)) Nothing]) []))
+             (SsaConst (ExCall (Lvalue [LvSegment dispatchIdent Nothing]) []))
              (noSubscriptLhs "_")]
+  where
+    dispatchIdent = case (identSpan ancestor, identSpan event) of
+      (FromSource as, FromSource es) -> mkIdentDerived (as <> es) (identOrig ancestor <> "::" <> identOrig event)
+      _ -> mkIdentSynthetic "PbCall non-FromSource" (identOrig ancestor <> "::" <> identOrig event)
 -- Control-flow statements produce no SSA assign of their own. CfgBuild.lower
 -- keeps the trailing control stmt as the last element of a block's cbStmts
 -- (so cfgTermToSsa's findControlStmt can find it), but its "value" is the

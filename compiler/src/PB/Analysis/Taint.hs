@@ -342,7 +342,7 @@ extractProcMeta file sf =
       , pmStartLine = Nothing }
     obMeta ob = ProcMeta
       { pmFile = file, pmObject = objName
-      , pmName = obEvent ob, pmProcType = "on"
+      , pmName = identOrig (obEvent ob), pmProcType = "on"
       , pmParams = ""
       , pmReturnType = ""
       , pmStartLine = Nothing }
@@ -356,7 +356,7 @@ extractTaintInputs file sf =
       bodies   = [ (objName, identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
               <> [ (objName, identOrig (ssName  (sbSig sb)), sbBody sb) | sb <- srSubroutines sf ]
               <> [ (objName, identOrig (esName  (evSig ev)), evBody ev) | ev <- srEvents      sf ]
-              <> [ (objName, obEvent ob,          obBody ob) | ob <- srOnBlocks    sf ]
+              <> [ (objName, identOrig (obEvent ob), obBody ob) | ob <- srOnBlocks    sf ]
       sqlStmts = concatMap (\(obj, proc, body) -> extractSqlStmts file obj proc body) bodies
       procMetas = extractProcMeta file sf
   in TaintFileInputs file objName sqlStmts procMetas

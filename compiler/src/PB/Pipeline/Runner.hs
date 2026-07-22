@@ -264,7 +264,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
               <>
               zip (spEvents      sp) [ (identOrig (esName  (evSig ev)), "event",      "",                   esRawSig     (evSig ev), "",                       evBody ev) | ev <- srEvents      sf ]
               <>
-              zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   "",                      "",                       obBody ob) | ob <- srOnBlocks    sf ]
+              zip (spOnBlocks    sp) [ (identOrig (obEvent ob), "on",     "",                   "",                      "",                       obBody ob) | ob <- srOnBlocks    sf ]
         -- Plan 164 Phase C / D3: runtime DataWindow-alias assignments
         -- (e.g. idw_epidom = tab1.page1.uo_epidom.dw), scanned across every
         -- procedure body in this file and merged into the static bindings.
@@ -388,7 +388,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
              [ (identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
           <> [ (identOrig (ssName  (sbSig sb)), sbBody sb) | sb <- srSubroutines sf ]
           <> [ (identOrig (esName  (evSig ev)), evBody ev) | ev <- srEvents      sf ]
-          <> [ (obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
+          <> [ (identOrig (obEvent ob), obBody ob) | ob <- srOnBlocks    sf ]
     (sqlRows, sqlColRows, sqlFilterRows, sqlTableRows) <- case mBridge of
       Nothing       ->
         -- No SQL bridge: extract raw SQL from BsRaw nodes (same as extractSqlStmts)

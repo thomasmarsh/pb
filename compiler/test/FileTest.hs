@@ -587,7 +587,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end on")]
               ]
         runSection pOnBlock stmts @?=
-          Right (OnBlock "modified" "" "modified" [])
+          Right (OnBlock "modified" "modified" "modified" [])
 
     , testCase "positive: bare on close (OtherKw event name)" $ do
         let stmts =
@@ -595,7 +595,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end on")]
               ]
         runSection pOnBlock stmts @?=
-          Right (OnBlock "close" "" "close" [])
+          Right (OnBlock "close" "close" "close" [])
 
     , testCase "positive: bare on char (Datatype event name)" $ do
         let stmts =
@@ -603,7 +603,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end on")]
               ]
         runSection pOnBlock stmts @?=
-          Right (OnBlock "char" "" "char" [])
+          Right (OnBlock "char" "char" "char" [])
 
     , testCase "positive: bare on ue_keypress with body" $ do
         let bodyStmt = mkStmt [(TkIdent, "call"), (TkIdent, "super")]
@@ -613,7 +613,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end on")]
               ]
         runSection pOnBlock stmts @?=
-          Right (OnBlock "ue_keypress" "" "ue_keypress"
+          Right (OnBlock "ue_keypress" "ue_keypress" "ue_keypress"
                    [loc1 (BsLocalVar [] (PtUserDefined "call") "super" Nothing)])
 
     , testCase "negative: on alone (no event name)" $ do
@@ -1220,7 +1220,7 @@ prop_onBlock_event_nonempty = property $ do
         , mkStmt [(TkDeclKw, "end on")]
         ]
   case runSection pOnBlock stmts of
-    Right ob -> assert (not (T.null (obEvent ob)))
+    Right ob -> assert (not (T.null (identOrig (obEvent ob))))
     Left _   -> pure ()
 
 prop_fnBlock_name_nonempty :: Property

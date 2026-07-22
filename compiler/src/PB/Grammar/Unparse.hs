@@ -131,7 +131,7 @@ unparseBodyStmt stmt = case stmt of
   BsInc lv              -> unparseLvalue lv <> " ++"
   BsDec lv              -> unparseLvalue lv <> " --"
   BsCall e              -> unparseExpr e
-  BsPbCall (PbCall anc ev) -> "call " <> anc <> " :: " <> ev
+  BsPbCall (PbCall anc ev) -> "call " <> identOrig anc <> " :: " <> identOrig ev
   BsReturn Nothing       -> "return"
   BsReturn (Just e)      -> "return " <> unparseExpr e
   BsIf (IfStmt cond then_ elseIfs else_) ->

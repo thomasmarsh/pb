@@ -1,8 +1,13 @@
 module PB.AST.Ident
   ( Ident
-  , mkIdent
+  , IdentProvenance (..)
   , identOrig
   , identCanon
+  , identSpan
+  , mkIdentAt
+  , mkIdentDerived
+  , mkIdentSynthetic
+  , mkIdent
   , IdentSet
   , identSetEmpty
   , identSetSingleton
@@ -25,19 +30,35 @@ import PB.Prelude
 import Control.DeepSeq (NFData (..))
 import Data.Aeson     (ToJSON (..))
 import Data.Hashable  (Hashable (..))
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.String    (IsString (..))
+import GHC.Generics   (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
+import PB.Lexing.Token (SourceSpan)
 
--- | A PowerBuilder identifier, carrying both the originally declared casing
--- (for display\/JSON) and a canonicalized lowercase form ('identCanon',
--- 'Eq'\/'Ord' compare only on this field). PB identifiers are
--- case-insensitive; every previous consumer that needed case-insensitive
--- comparison re-derived @T.toLower@ locally instead of relying on a
--- canonical form computed once at parse time.
+-- | Where an 'Ident''s identity came from.  'Eq'\/'Ord'\/'Hashable' on
+-- 'Ident' compare only 'identCanon', so this field has no effect on
+-- those instances.
+data IdentProvenance
+  = FromSource (NonEmpty SourceSpan)
+    -- ^ Real span(s) this Ident's identity traces to: a 1-element list for
+    -- an ordinary single-token identifier, 2+ for a compiler-built compound
+    -- name assembled from multiple real tokens.
+  | Synthetic Text
+    -- ^ No source span at all, by design.  The Text names the reason so
+    -- this is never confused with a position that was merely lost.
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData IdentProvenance
+
+-- | A PowerBuilder identifier, carrying the originally declared casing
+-- (for display\/JSON), a canonicalized lowercase form ('identCanon',
+-- 'Eq'\/'Ord' compare only on this field), and source provenance.
 data Ident = Ident
   { identOrig  :: Text
   , identCanon :: Text
+  , identSpan  :: IdentProvenance
   }
 
 instance Eq Ident where
@@ -53,16 +74,33 @@ instance Show Ident where
   show = show . identOrig
 
 instance IsString Ident where
-  fromString = mkIdent . T.pack
+  fromString = mkIdentSynthetic "IsString" . T.pack
 
 instance ToJSON Ident where
   toJSON = toJSON . identOrig
 
 instance NFData Ident where
-  rnf (Ident a b) = rnf a `seq` rnf b
+  rnf (Ident a b c) = rnf a `seq` rnf b `seq` rnf c
 
+-- | Mint an 'Ident' from a single real source token.
+mkIdentAt :: SourceSpan -> Text -> Ident
+mkIdentAt sp t = Ident t (T.toLower t) (FromSource (sp :| []))
+
+-- | Mint an 'Ident' assembled from multiple real source tokens
+-- (e.g. a @CALL ancestor::event@ super-dispatch name).
+mkIdentDerived :: NonEmpty SourceSpan -> Text -> Ident
+mkIdentDerived sps t = Ident t (T.toLower t) (FromSource sps)
+
+-- | Mint an 'Ident' with no source span, by design.
+mkIdentSynthetic :: Text -> Text -> Ident
+mkIdentSynthetic reason t = Ident t (T.toLower t) (Synthetic reason)
+
+-- | Legacy constructor — temporarily kept as a bridge during the
+-- Phase E.5 migration.  Every call site must be converted to
+-- 'mkIdentAt', 'mkIdentDerived', or 'mkIdentSynthetic' before this
+-- is deleted.
 mkIdent :: Text -> Ident
-mkIdent t = Ident t (T.toLower t)
+mkIdent = mkIdentSynthetic "unconverted mkIdent"
 
 -- | A set of 'Ident's keyed by canonical form, recovering the originally
 -- declared casing on lookup -- the shape 'PB.Analysis.TypeCheck''s

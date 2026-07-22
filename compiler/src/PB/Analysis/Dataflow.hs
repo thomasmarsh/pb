@@ -29,9 +29,9 @@ module PB.Analysis.Dataflow
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident    (Ident, mkIdent)
+import PB.AST.Ident    (Ident, mkIdent, mkIdentAt)
 import PB.AST.Located  (Located (..))
-import PB.Lexing.Token (Token (..))
+import PB.Lexing.Token (Token (..), tkSpan)
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..))
 import qualified Data.Aeson        as Aeson
 import Data.Char            (isAlpha)
@@ -140,7 +140,7 @@ walkExprIdents = foldExprs identOf
 -- a valid identifier -- the one mint point for 'extractDefVar''s token-list
 -- defs (and 'extractUseVars''s 'BsAugAssign' case).
 identTokenList :: [Token] -> [Ident]
-identTokenList toks = [ mkIdent (tkText t) | t <- toks, isIdent (tkText t) ]
+identTokenList toks = [ mkIdentAt (tkSpan t) (tkText t) | t <- toks, isIdent (tkText t) ]
 
 -- | Mint an 'Ident' for every valid-identifier 'Text' in a flat list -- the
 -- one mint point for 'ExRaw' tokens and 'Lvalue' subscript text.

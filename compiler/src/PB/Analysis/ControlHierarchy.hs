@@ -70,7 +70,7 @@ module PB.Analysis.ControlHierarchy
 import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt (..))
 import PB.AST.Expr        (Expr (..))
-import PB.AST.Ident       (Ident, mkIdent, identOrig, identCanon)
+import PB.AST.Ident       (Ident, mkIdent, identCanon)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import qualified Data.Map.Strict as Map
@@ -105,17 +105,17 @@ type ControlIndex = Map.Map (Ident, Ident, Ident) ControlDecl
 -- stable order.
 buildControlIndex :: [SrFile] -> ControlIndex
 buildControlIndex sfs = Map.fromList
-  [ ((mkIdent root, mkIdent owner, mkIdent name), decl)
+  [ ((rootIdent, ownerIdent, nameIdent), decl)
   | sf <- sfs
-  , let root = identOrig (fst (srPrimaryObject sf))
+  , let rootIdent = fst (srPrimaryObject sf)
   , tb <- srTypeBlocks sf
   , let td = tbDecl tb
-        (owner, name) = case tdWithin td of
-          Just parent -> (parent, identOrig (tdName td))
-          Nothing     -> (identOrig (tdName td), "this")
+        (ownerIdent, nameIdent) = case tdWithin td of
+          Just parent -> (mkIdent parent, tdName td)
+          Nothing     -> (tdName td, "this")
         decl = ControlDecl
-          { cdOwner         = mkIdent owner
-          , cdName          = mkIdent name
+          { cdOwner         = ownerIdent
+          , cdName          = nameIdent
           , cdAncestorType  = tdAncestorClass td
           , cdOverridesName = tdAncestorOverride td
           , cdDwBinding     = findLiteralDataObject (tbBody tb)
