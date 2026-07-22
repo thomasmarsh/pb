@@ -21,6 +21,8 @@ module PB.Analysis.CallClassify
   , segName
   , lvHead
   , collectBodyLocals
+  , ProcUnit (..)
+  , forProcedures
   ) where
 
 import PB.Prelude
@@ -28,9 +30,13 @@ import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Ident      (Ident, identCanon, identOrig)
 import PB.AST.Located    (Located (..))
+import PB.AST.SourceFile (SrFile (..), FnSig (..), SubSig (..), EventSig (..), FunctionBlock (..),
+                           SubroutineBlock (..), EventBlock (..), OnBlock (..), Param)
 import PB.AST.Type       (PbType, renderPbType)
-import PB.Analysis.ControlHierarchy (resolveMemberChainType)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, lookupScopedVarOrSelf, isDescendantOf)
+import PB.Lexing.Token   (SourceSpan)
+import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainType)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), WorkspaceEnv, lookupScopedVar, lookupScopedVarOrSelf,
+                             isDescendantOf, procEnv)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -262,3 +268,50 @@ collectBodyLocals stmts =
     [ (varName, varType)
     | Located _ (BsLocalVar _ varType varName _) <- stmts
     ]
+
+-- ---------------------------------------------------------------------------
+-- Per-procedure env construction (Plan 197 Finding 7)
+
+-- | One procedure's static shape plus the fully-scoped 'ScopedTypeEnv' built
+-- for it -- 'procEnv' seeded from this procedure's own params, with
+-- 'collectBodyLocals' folded into 'steLocal' on top. 'forProcedures' builds
+-- this once per procedure so callers needing this same env (call-site/
+-- var-ref extraction, runtime DataWindow-alias scanning, type checking)
+-- don't each rebuild it from scratch.
+data ProcUnit = ProcUnit
+  { puKind        :: Text          -- ^ "function" | "subroutine" | "event" | "on"
+  , puName        :: Text
+  , puParams      :: [Param]
+  , puRetType     :: Text          -- ^ "" for subroutine\/event\/on-block (no return type)
+  , puRetTypeSpan :: Maybe SourceSpan
+  , puBody        :: [Located BodyStmt]
+  , puEnv         :: ScopedTypeEnv
+  } deriving (Eq, Show)
+
+-- | Every procedure in a file, in @functions ++ subroutines ++ events ++
+-- on-blocks@ order -- the same order 'PB.Pipeline.Runner.compileOne' zips
+-- its own per-block-type 'SourceSpans' against -- each paired with the
+-- 'ScopedTypeEnv' 'procEnv'\/'collectBodyLocals' together produce for it.
+forProcedures :: WorkspaceEnv -> ControlIndex -> Text -> SrFile -> [ProcUnit]
+forProcedures wsEnv controlIdx obj sf = concat
+  [ [ mkUnit "function" (identOrig (fnsName (fbSig fb))) (fnsParams (fbSig fb))
+        (fnsReturnType (fbSig fb)) (Just (fnsReturnTypeSpan (fbSig fb))) (fbBody fb)
+    | fb <- srFunctions sf ]
+  , [ mkUnit "subroutine" (identOrig (ssName (sbSig sb))) (ssParams (sbSig sb)) "" Nothing (sbBody sb)
+    | sb <- srSubroutines sf ]
+  , [ mkUnit "event" (identOrig (esName (evSig ev))) (esParams (evSig ev)) "" Nothing (evBody ev)
+    | ev <- srEvents sf ]
+  , [ mkUnit "on" (identOrig (obEvent ob)) [] "" Nothing (obBody ob)
+    | ob <- srOnBlocks sf ]
+  ]
+  where
+    mkUnit kind name params retType retTypeSpan body = ProcUnit
+      { puKind        = kind
+      , puName        = name
+      , puParams      = params
+      , puRetType     = retType
+      , puRetTypeSpan = retTypeSpan
+      , puBody        = body
+      , puEnv         = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
+      }
+      where baseEnv = procEnv wsEnv controlIdx obj params

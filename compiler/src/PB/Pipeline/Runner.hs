@@ -31,10 +31,10 @@ import PB.Compile.Flatten
   ( compileProcedureToEff
   , buildEffGraphNamed, buildEffGraphWiring )
 import PB.Compile.InstrTypes (linearize)
-import PB.Analysis.CallClassify (collectBodyLocals)
+import PB.Analysis.CallClassify (ProcUnit (..), forProcedures)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
-import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv, withDwTables,
+import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, withDwTables,
                                  withDwParamBindings, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
@@ -256,37 +256,27 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         vrs  = extractVarRefs    wsEnv controlIdx fp obj sf
         gvs  = extractGlobalVars fp obj sf
         controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
-        -- Shared by both 'aliasBindings' and 'procs' below, so the
-        -- (sLine, eLine)/(pName, pType, params, retType, retTypeSpan, body)
-        -- zip logic exists exactly once. retTypeSpan is 'Nothing' for a
-        -- subroutine/event/on-block (retType is "" there too -- genuinely no
-        -- return type, not an unresolved lookup). Every branch (including
-        -- event) now supplies its own real 'Param' list -- previously events
-        -- were seeded with an empty params here, so an event body's own
-        -- declared parameter was never in its 'ScopedTypeEnv' at all.
-        procSpecs =
-              zip (spFunctions   sp) [ (identOrig (fnsName (fbSig fb)), "function",   fnsParams (fbSig fb), fnsReturnType (fbSig fb), Just (fnsReturnTypeSpan (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
-              <>
-              zip (spSubroutines sp) [ (identOrig (ssName  (sbSig sb)), "subroutine", ssParams  (sbSig sb), "",                       Nothing,                              sbBody sb) | sb <- srSubroutines sf ]
-              <>
-              zip (spEvents      sp) [ (identOrig (esName  (evSig ev)), "event",      esParams  (evSig ev), "",                       Nothing,                              evBody ev) | ev <- srEvents      sf ]
-              <>
-              zip (spOnBlocks    sp) [ (identOrig (obEvent ob), "on",     [],                   "",                      Nothing,                              obBody ob) | ob <- srOnBlocks    sf ]
+        -- Shared by both 'aliasBindings' and 'procs' below: one
+        -- 'ScopedTypeEnv' per procedure (params + its own body locals),
+        -- built once by 'forProcedures' (Plan 197 Finding 7) rather than
+        -- reconstructed independently in each. Order is
+        -- functions++subroutines++events++on-blocks, matching
+        -- 'spFunctions'/'spSubroutines'/'spEvents'/'spOnBlocks' below.
+        procUnits = forProcedures wsEnv controlIdx obj sf
+        -- retTypeSpan is 'Nothing' for a subroutine/event/on-block (retType
+        -- is "" there too -- genuinely no return type, not an unresolved
+        -- lookup).
+        procSpecs = zip (spFunctions sp <> spSubroutines sp <> spEvents sp <> spOnBlocks sp) procUnits
         -- Plan 164 Phase C / D3: runtime DataWindow-alias assignments
         -- (e.g. idw_epidom = tab1.page1.uo_epidom.dw), scanned across every
         -- procedure body in this file and merged into the static bindings.
-        -- steLocal is seeded with the procedure's own body locals
-        -- (collectBodyLocals), mirroring GraphBuilder's own seeding, so an
-        -- alias assigned to a local (not just an instance) variable still
-        -- resolves. On an (object, control) key collision between two
-        -- procedures' alias assignments, Map.unions keeps the first result
-        -- (procSpecs order) -- an accepted simplification, since a real
-        -- alias var is assigned once (constructor/open event) in practice.
+        -- On an (object, control) key collision between two procedures'
+        -- alias assignments, Map.unions keeps the first result (procUnits
+        -- order) -- an accepted simplification, since a real alias var is
+        -- assigned once (constructor/open event) in practice.
         aliasBindings = Map.unions
-          [ runtimeDwAliasBindings controlIdx (weHierarchy wsEnv) obj procEnvWithLocals body
-          | (_, (_, _, params, _, _, body)) <- procSpecs
-          , let baseEnv = mkProcEnv params
-                procEnvWithLocals = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
+          [ runtimeDwAliasBindings controlIdx (weHierarchy wsEnv) obj (puEnv pu) (puBody pu)
+          | pu <- procUnits
           ]
         -- Static literal bindings win on key collision -- a directly
         -- declared dataobject= is more trustworthy than an inferred alias.
@@ -345,13 +335,12 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- Plan 177 follow-up (TypeCheckCtx/ScopedTypeEnv
                 -- unification): tcEnv reuses the same ScopedTypeEnv shape
                 -- CallClassify/the SSA pipeline already build for this
-                -- procedure (mkProcEnv params -- global > instance >
-                -- local var typing, workspace hierarchy/control index),
-                -- with body locals folded into steLocal the same way
-                -- 'aliasBindings' above already does (collectBodyLocals body
-                -- <> steLocal baseEnv -- body locals win on a name
-                -- collision with a param, matching that established
-                -- precedent). This replaces a hand-rolled
+                -- procedure (global > instance > local var typing,
+                -- workspace hierarchy/control index, body locals folded into
+                -- steLocal on top of params -- body locals win on a name
+                -- collision with a param). 'puEnv' (Plan 197 Finding 7) is
+                -- that same env, built once by 'forProcedures' rather than
+                -- reconstructed here. This replaces a hand-rolled
                 -- params-and-body-locals-only 'Map Text TypeFamily' that
                 -- never covered instance/global vars at all -- a bare
                 -- instance/global variable reference is now visible to
@@ -359,9 +348,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- global/instance/local lookup, the same way it already is
                 -- for call classification. Same "speculative confidence ->
                 -- skip" gate as deadVars, for the same stdlib-stub reason.
-                typeCheckBaseEnv = mkProcEnv params
-                typeCheckEnv = typeCheckBaseEnv
-                  { steLocal = collectBodyLocals body <> steLocal typeCheckBaseEnv }
+                typeCheckEnv = puEnv pu
                 -- The enclosing procedure's own declared return type comes
                 -- straight from this comprehension's own 'retType' text
                 -- (empty for a subroutine/event/on-block), never from a
@@ -391,7 +378,9 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                , typeMismatches
                , taintEdgeRows
                , taintReturnRows )
-          | ((sLine, eLine), (pName, pType, params, retType, retTypeSpan, body)) <- procSpecs
+          | ((sLine, eLine), pu) <- procSpecs
+          , let pName = puName pu; pType = puKind pu; params = puParams pu
+                retType = puRetType pu; retTypeSpan = puRetTypeSpan pu; body = puBody pu
           ]
         procBodies =
              [ (identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]

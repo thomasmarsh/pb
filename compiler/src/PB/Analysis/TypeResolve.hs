@@ -71,7 +71,7 @@ import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeTextAt, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
-import PB.Analysis.CallClassify   (collectBodyLocals)
+import PB.Analysis.CallClassify   (ProcUnit (..), forProcedures)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
                                       resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
@@ -533,36 +533,17 @@ extractLocalVars file obj sf = concat
 
 -- | Extract call sites from all procedure bodies. Each procedure's
 -- 'ScopedTypeEnv' (params + its own body locals, matching
--- 'PB.Pipeline.Runner.compileOne''s @procEnvWithLocals@) is built fresh here
--- so 'callSitesExpr' can resolve an 'ExMethodCall' receiver's declared type
--- via 'PB.Analysis.CallClassify.resolveReceiverType' -- see this module's
--- header comment for why that resolution happens at extraction time rather
--- than in Pass 5.
+-- 'PB.Pipeline.Runner.compileOne''s @procEnvWithLocals@) comes from
+-- 'forProcedures' (Plan 197 Finding 7 -- built once per procedure, not
+-- reconstructed here) so 'callSitesExpr' can resolve an 'ExMethodCall'
+-- receiver's declared type via 'PB.Analysis.CallClassify.resolveReceiverType'
+-- -- see this module's header comment for why that resolution happens at
+-- extraction time rather than in Pass 5.
 extractCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [CallSite]
-extractCallSites wsEnv controlIdx file obj sf = concat
-  [ concatMap (\fb ->
-      let body = fbBody fb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (fnsParams (fbSig fb)))
-      in walkBodyCallSites wsEnv env file obj (identOrig (fnsName (fbSig fb))) body
-    ) (srFunctions sf)
-  , concatMap (\sb ->
-      let body = sbBody sb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (ssParams (sbSig sb)))
-      in walkBodyCallSites wsEnv env file obj (identOrig (ssName (sbSig sb))) body
-    ) (srSubroutines sf)
-  , concatMap (\ev ->
-      let body = evBody ev
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (esParams (evSig ev)))
-      in walkBodyCallSites wsEnv env file obj (identOrig (esName (evSig ev))) body
-    ) (srEvents sf)
-  , concatMap (\ob ->
-      let body = obBody ob
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj [])
-      in walkBodyCallSites wsEnv env file obj (identOrig (obEvent ob)) body
-    ) (srOnBlocks sf)
-  ]
-  where
-    withBodyLocals body baseEnv = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
+extractCallSites wsEnv controlIdx file obj sf =
+  concatMap
+    (\pu -> walkBodyCallSites wsEnv (puEnv pu) file obj (puName pu) (puBody pu))
+    (forProcedures wsEnv controlIdx obj sf)
 
 -- | Extract call sites from DataWindow control expressions and format strings.
 -- Uses fromProc = "" (no containing procedure) and no line information; the
@@ -859,30 +840,10 @@ walkBodyVarRefs wsEnv env file obj proc_ = foldStmts classify
 -- different consumers and this keeps 'extractCallSites''s own shape and
 -- tests untouched.
 extractVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [ResolvedVarRef]
-extractVarRefs wsEnv controlIdx file obj sf = concat
-  [ concatMap (\fb ->
-      let body = fbBody fb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (fnsParams (fbSig fb)))
-      in walkBodyVarRefs wsEnv env file obj (identOrig (fnsName (fbSig fb))) body
-    ) (srFunctions sf)
-  , concatMap (\sb ->
-      let body = sbBody sb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (ssParams (sbSig sb)))
-      in walkBodyVarRefs wsEnv env file obj (identOrig (ssName (sbSig sb))) body
-    ) (srSubroutines sf)
-  , concatMap (\ev ->
-      let body = evBody ev
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (esParams (evSig ev)))
-      in walkBodyVarRefs wsEnv env file obj (identOrig (esName (evSig ev))) body
-    ) (srEvents sf)
-  , concatMap (\ob ->
-      let body = obBody ob
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj [])
-      in walkBodyVarRefs wsEnv env file obj (identOrig (obEvent ob)) body
-    ) (srOnBlocks sf)
-  ]
-  where
-    withBodyLocals body baseEnv = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
+extractVarRefs wsEnv controlIdx file obj sf =
+  concatMap
+    (\pu -> walkBodyVarRefs wsEnv (puEnv pu) file obj (puName pu) (puBody pu))
+    (forProcedures wsEnv controlIdx obj sf)
 
 -- | Extract variable\/property references from DataWindow control
 -- expressions and format strings, mirroring 'extractDwCallSites'.

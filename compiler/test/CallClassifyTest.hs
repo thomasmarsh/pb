@@ -1,14 +1,17 @@
 module CallClassifyTest (tests) where
 
 import PB.Prelude
+import PB.AST.BodyStmt         (BodyStmt (..))
 import PB.AST.Expr             (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Ident            (mkIdent)
-import PB.AST.SourceFile       (SrFile (..), TypeBlock (..), mkTypeDecl)
+import PB.AST.Located          (Located (..))
+import PB.AST.SourceFile
 import PB.AST.Type              (PbType (..))
-import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), classifyExpr,
-                                  classifyEffects, resolveReceiverType)
+import PB.Lexing.Token          (SourceSpan (..))
+import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), ProcUnit (..), classifyExpr,
+                                  classifyEffects, forProcedures, resolveReceiverType)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
-import PB.Analysis.TypeEnv      (ScopedTypeEnv (..))
+import PB.Analysis.TypeEnv      (ScopedTypeEnv (..), buildWorkspaceEnv)
 import ControlHierarchyTest     (withFyloFixture)
 
 import qualified Data.Map.Strict as Map
@@ -16,7 +19,7 @@ import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 import Test.Tasty           (TestTree, testGroup)
-import Test.Tasty.HUnit     (testCase, (@?=))
+import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
 
 emptyFile :: SrFile
 emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
@@ -32,6 +35,43 @@ emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv
   { steGlobal = Map.empty, steInstance = Map.empty, steLocal = Map.empty
   , steHierarchy = Map.empty, steObject = "", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
+  }
+
+-- | Fixture helpers for 'forProcedures' -- one param, one body-local, so a
+-- unit's 'puEnv' can be checked for both the params 'procEnv' seeds and the
+-- 'collectBodyLocals' fold on top.
+mkParam :: Text -> Param
+mkParam nm = Param [] "integer" (SourceSpan 1 1 1 1) (mkIdent nm)
+
+localVarStmt :: Text -> Located BodyStmt
+localVarStmt nm = Located 1 (BsLocalVar [] (PtPrimitive "string") (mkIdent nm) Nothing)
+
+fnUnit :: Text -> FunctionBlock
+fnUnit nm = FunctionBlock
+  { fbSig = FnSig { fnsMods = [], fnsReturnType = "integer", fnsReturnTypeSpan = SourceSpan 1 1 1 1
+                  , fnsName = mkIdent nm, fnsParams = [mkParam "ai_p"], fnsThrows = Nothing }
+  , fbBody = [localVarStmt "ls_local"]
+  }
+
+subUnit :: Text -> SubroutineBlock
+subUnit nm = SubroutineBlock
+  { sbSig = SubSig { ssMods = [], ssName = mkIdent nm, ssParams = [], ssThrows = Nothing }
+  , sbBody = []
+  }
+
+evUnit :: Text -> EventBlock
+evUnit nm = EventBlock
+  { evSig = EventSig { esName = mkIdent nm, esParams = [] }
+  , evOwner = Nothing
+  , evBody = []
+  }
+
+onUnit :: Text -> Text -> OnBlock
+onUnit owner ev = OnBlock
+  { obQualName = mkIdent (owner <> "`" <> ev)
+  , obOwner = mkIdent owner
+  , obEvent = mkIdent ev
+  , obBody = []
   }
 
 tests :: TestTree
@@ -146,8 +186,56 @@ tests = testGroup "CallClassify"
               expr = ExCall (lv ["nonexistent_ctrl", "sub_ctrl", "retrieve"]) []
           Set.member Suspends (classifyEffects env expr) @?= (classifyExpr env expr == SuspendCall)
     ]
+  , testGroup "forProcedures (Plan 197 Finding 7)"
+    [ testCase "empty SrFile yields no units" $
+        forProcedures emptyWsEnv emptyIdx "w_test" emptyFile @?= []
+
+    , testCase "preserves functions++subroutines++events++on-blocks order" $
+        let sf = emptyFile
+              { srFunctions   = [fnUnit "of_a"]
+              , srSubroutines = [subUnit "us_b"]
+              , srEvents      = [evUnit "ue_c"]
+              , srOnBlocks    = [onUnit "w_test" "open"]
+              }
+        in map puName (forProcedures emptyWsEnv emptyIdx "w_test" sf)
+             @?= ["of_a", "us_b", "ue_c", "open"]
+
+    , testCase "each unit carries its own kind" $
+        let sf = emptyFile
+              { srFunctions   = [fnUnit "of_a"]
+              , srSubroutines = [subUnit "us_b"]
+              , srEvents      = [evUnit "ue_c"]
+              , srOnBlocks    = [onUnit "w_test" "open"]
+              }
+        in map puKind (forProcedures emptyWsEnv emptyIdx "w_test" sf)
+             @?= ["function", "subroutine", "event", "on"]
+
+    , testCase "on-block unit has empty params" $
+        let sf = emptyFile { srOnBlocks = [onUnit "w_test" "open"] }
+        in map puParams (forProcedures emptyWsEnv emptyIdx "w_test" sf) @?= [[]]
+
+    , testCase "function unit's puEnv folds body locals over procEnv's param seeding" $
+        let sf = emptyFile { srFunctions = [fnUnit "of_a"] }
+        in case forProcedures emptyWsEnv emptyIdx "w_test" sf of
+             [pu] -> do
+               Map.lookup "ai_p" (steLocal (puEnv pu)) @?= Just (PtPrimitive "integer")
+               Map.lookup "ls_local" (steLocal (puEnv pu)) @?= Just (PtPrimitive "string")
+               steParams (puEnv pu) @?= Set.singleton "ai_p"
+             other -> assertFailure ("expected exactly one unit, got " <> show (length other))
+
+    , testCase "function unit carries its declared return type/span" $
+        let sf = emptyFile { srFunctions = [fnUnit "of_a"] }
+        in case forProcedures emptyWsEnv emptyIdx "w_test" sf of
+             [pu] -> do
+               puRetType pu @?= "integer"
+               puRetTypeSpan pu @?= Just (SourceSpan 1 1 1 1)
+             other -> assertFailure ("expected exactly one unit, got " <> show (length other))
+    ]
   ]
   where
+    emptyWsEnv = buildWorkspaceEnv []
+    emptyIdx   = buildControlIndex []
+
     dwEnv    = emptyEnv { steInstance = Map.singleton "dw_1" (PtPrimitive "datawindow") }
     transEnv = emptyEnv { steInstance = Map.singleton "tr_1" (PtPrimitive "transaction") }
 
