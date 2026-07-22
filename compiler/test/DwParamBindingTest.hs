@@ -47,16 +47,30 @@ dwControlTB nm within dwName = TypeBlock
       Nothing -> []
   }
 
+-- | Test-only fixture helper: parses a simple comma-separated "[mods] type
+-- name" list into synthetic-span 'Param's -- mirrors TypeResolveTest.hs's
+-- own copy. Fixture construction only; the real token-level parser is
+-- tested directly in FileTest.hs.
+mkParams :: T.Text -> [Param]
+mkParams raw
+  | T.null (T.strip raw) = []
+  | otherwise            = map paramFor (T.splitOn "," raw)
+  where
+    mods = ["ref", "readonly", "constant", "static", "indirect"]
+    paramFor seg = case dropWhile (\w -> T.toLower w `elem` mods) (T.words (T.strip seg)) of
+      [ty, nm] -> Param [] ty (SourceSpan 1 1 1 1) (mkIdent nm)
+      ws       -> error ("mkParams: malformed test fixture segment " ++ show ws)
+
 mkFn :: T.Text -> T.Text -> [Located BodyStmt] -> FunctionBlock
 mkFn nm params body = FunctionBlock
   { fbSig = FnSig { fnsMods = [], fnsReturnType = "integer", fnsReturnTypeSpan = SourceSpan 1 1 1 1
-                  , fnsName = mkIdent nm, fnsParams = params, fnsThrows = Nothing }
+                  , fnsName = mkIdent nm, fnsParams = mkParams params, fnsThrows = Nothing }
   , fbBody = body
   }
 
 mkSub :: T.Text -> T.Text -> [Located BodyStmt] -> SubroutineBlock
 mkSub nm params body = SubroutineBlock
-  { sbSig = SubSig { ssMods = [], ssName = mkIdent nm, ssParams = params, ssThrows = Nothing }
+  { sbSig = SubSig { ssMods = [], ssName = mkIdent nm, ssParams = mkParams params, ssThrows = Nothing }
   , sbBody = body
   }
 

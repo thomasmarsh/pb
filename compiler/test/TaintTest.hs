@@ -31,7 +31,8 @@ mkSf fns subs evs obs = SrFile
 
 mkFn :: Text -> [Text] -> Text -> [Located BodyStmt] -> FunctionBlock
 mkFn name params ret body = FunctionBlock
-  { fbSig = FnSig [] ret (SourceSpan 1 1 1 1) (mkIdent name) (T.intercalate ", " params) Nothing
+  { fbSig = FnSig [] ret (SourceSpan 1 1 1 1) (mkIdent name)
+      [Param [] "any" (SourceSpan 1 1 1 1) (mkIdent p) | p <- params] Nothing
   , fbBody = body
   }
 
@@ -87,12 +88,12 @@ tests = testGroup "Taint"
         in classifySources sql [] @?= []
 
     , testCase "event handler param produces request_param source" $
-        let procs = [ProcMeta "w.srf" "oa" "pA" "event" "string as_arg" "" (Just 3)]
+        let procs = [ProcMeta "w.srf" "oa" "pA" "event" ["as_arg"] "" (Just 3)]
         in classifySources [] procs @?=
            [TaintSource "w.srf" "oa" "pA" "as_arg" "request_param" (Just 3)]
 
     , testCase "non-event proc produces no source" $
-        let procs = [ProcMeta "w.srf" "oa" "pA" "function" "string as_name" "string" Nothing]
+        let procs = [ProcMeta "w.srf" "oa" "pA" "function" ["as_name"] "string" Nothing]
         in classifySources [] procs @?= []
     ]
 
@@ -140,7 +141,7 @@ tests = testGroup "Taint"
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "of_calc" "virtual"
                     (Just 10) (Just "ob") (Just "pB") "virtual" "high" Nothing Nothing]
             uses = [useRow "w.srf" "oa" "pA" "ls_x" 10 "rhs"]
-            metas = [ProcMeta "w.srf" "ob" "pB" "function" "string as_arg" "" Nothing]
+            metas = [ProcMeta "w.srf" "ob" "pB" "function" ["as_arg"] "" Nothing]
             edges = buildInterprocEdges rc [] uses Set.empty metas
         in case edges of
              [e] -> do
@@ -170,7 +171,7 @@ tests = testGroup "Taint"
                     (Just 3) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing]
             uses = [ useRow "w.srf" "oa" "pA" "v1" 3 "rhs"
                    , useRow "w.srf" "oa" "pA" "v2" 3 "rhs" ]
-            metas = [ProcMeta "w.srf" "ob" "procB" "function" "integer a, string b" "" Nothing]
+            metas = [ProcMeta "w.srf" "ob" "procB" "function" ["a", "b"] "" Nothing]
             edges = buildInterprocEdges rc [] uses Set.empty metas
             argEdges = filter (\e -> ieEdgeKind e == "arg") edges
         in do
@@ -184,7 +185,7 @@ tests = testGroup "Taint"
             uses = [ useRow "w.srf" "oa" "pA" "a" 1 "rhs"
                    , useRow "w.srf" "oa" "pA" "b" 1 "rhs"
                    , useRow "w.srf" "oa" "pA" "c" 1 "rhs" ]
-            metas = [ProcMeta "w.srf" "ob" "procB" "function" "integer x" "" Nothing]
+            metas = [ProcMeta "w.srf" "ob" "procB" "function" ["x"] "" Nothing]
             edges = buildInterprocEdges rc [] uses Set.empty metas
             extras = filter (\e -> ieCalleeContext e == "*extra") edges
         in length extras @?= 2
@@ -193,7 +194,7 @@ tests = testGroup "Taint"
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
                     (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing]
             defs = [defRow "w.srf" "oa" "pA" "result" 5 0]
-            metas = [ProcMeta "w.srf" "ob" "procB" "subroutine" "" "none" Nothing]
+            metas = [ProcMeta "w.srf" "ob" "procB" "subroutine" [] "none" Nothing]
             edges = buildInterprocEdges rc defs [] Set.empty metas
             retEdges = filter (\e -> ieEdgeKind e == "return") edges
         in retEdges @?= []
@@ -203,7 +204,7 @@ tests = testGroup "Taint"
                     (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing Nothing]
             -- def is on a different line than the call
             defs = [defRow "w.srf" "oa" "pA" "result" 99 0]
-            metas = [ProcMeta "w.srf" "ob" "procB" "function" "" "integer" Nothing]
+            metas = [ProcMeta "w.srf" "ob" "procB" "function" [] "integer" Nothing]
             edges = buildInterprocEdges rc defs [] Set.empty metas
             retEdges = filter (\e -> ieEdgeKind e == "return") edges
         in retEdges @?= []
@@ -213,7 +214,7 @@ tests = testGroup "Taint"
                     (Just 7) (Just "ob") (Just "myfunc") "virtual" "high" Nothing Nothing]
             uses = [ useRow "w.srf" "oa" "pA" "myfunc" 7 "rhs"  -- callee name
                    , useRow "w.srf" "oa" "pA" "argVar" 7 "rhs" ]
-            metas = [ProcMeta "w.srf" "ob" "myfunc" "function" "string s" "" Nothing]
+            metas = [ProcMeta "w.srf" "ob" "myfunc" "function" ["s"] "" Nothing]
             edges = buildInterprocEdges rc [] uses Set.empty metas
             argEdges = filter (\e -> ieEdgeKind e == "arg") edges
         in case argEdges of
@@ -309,8 +310,8 @@ tests = testGroup "Taint"
                      (Just 2) (Just "oa") (Just "procA") "virtual" "high" Nothing Nothing ]
             uses = [ useRow "w.srf" "oa" "procA" "x" 1 "rhs"
                    , useRow "w.srf" "ob" "procB" "y" 2 "rhs" ]
-            metas = [ ProcMeta "w.srf" "oa" "procA" "function" "integer p" "" Nothing
-                    , ProcMeta "w.srf" "ob" "procB" "function" "integer q" "" Nothing ]
+            metas = [ ProcMeta "w.srf" "oa" "procA" "function" ["p"] "" Nothing
+                    , ProcMeta "w.srf" "ob" "procB" "function" ["q"] "" Nothing ]
             argEdges = filter (\e -> ieEdgeKind e == "arg")
                          (buildInterprocEdges rc [] uses Set.empty metas)
         in length argEdges @?= 2
@@ -318,7 +319,7 @@ tests = testGroup "Taint"
 
   , testGroup "buildProcedureSummaries"
     [ testCase "params_in extracted from ProcMeta params text" $
-        let metas = [ProcMeta "w.srf" "obj" "proc1" "function" "integer x, string y" "" Nothing]
+        let metas = [ProcMeta "w.srf" "obj" "proc1" "function" ["x", "y"] "" Nothing]
             summaries = buildProcedureSummaries [] [] [] Set.empty metas
         in case summaries of
              [s] -> psProcName s @?= "proc1"
@@ -328,7 +329,7 @@ tests = testGroup "Taint"
         let globalVars = Set.fromList ["g_a", "g_b"]
             defs = [defRow "w.srf" "obj" "proc1" "g_a" 1 0]
             uses = [useRow "w.srf" "obj" "proc1" "g_b" 2 "rhs"]
-            metas = [ProcMeta "w.srf" "obj" "proc1" "function" "" "" Nothing]
+            metas = [ProcMeta "w.srf" "obj" "proc1" "function" [] "" Nothing]
             summaries = buildProcedureSummaries [] defs uses globalVars metas
         in case summaries of
              [s] -> do
@@ -340,7 +341,7 @@ tests = testGroup "Taint"
         let globalVars = Set.fromList ["g_a", "g_b"]  -- canonical set
             defs = [defRow "w.srf" "obj" "proc1" "G_A" 1 0]
             uses = [useRow "w.srf" "obj" "proc1" "G_B" 2 "rhs"]
-            metas = [ProcMeta "w.srf" "obj" "proc1" "function" "" "" Nothing]
+            metas = [ProcMeta "w.srf" "obj" "proc1" "function" [] "" Nothing]
             summaries = buildProcedureSummaries [] defs uses globalVars metas
         in case summaries of
              [s] -> do
@@ -349,7 +350,7 @@ tests = testGroup "Taint"
              _ -> error "expected 1 summary"
 
     , testCase "return_flows_to populated from return edges" $
-        let metas = [ProcMeta "w.srf" "ob" "procB" "function" "" "integer" Nothing]
+        let metas = [ProcMeta "w.srf" "ob" "procB" "function" [] "integer" Nothing]
             retEdge = edge "oa" "procA" (Just 5) "ob" "procB" "return" "res" "res" "return"
             summaries = buildProcedureSummaries [retEdge] [] [] Set.empty metas
         in case summaries of

@@ -193,10 +193,10 @@ data SqlRow5 = SqlRow5 !Text !Text !Text !Int !Text
 instance FromRow SqlRow5 where
   fromRow = SqlRow5 <$> field <*> field <*> field <*> field <*> field
 
-data MetaRow6 = MetaRow6 !Text !Text !Text !Text !Text !Text
+data MetaRow6 = MetaRow6 !Text !Text !Text !Text !Text !Text !Text
 
 instance FromRow MetaRow6 where
-  fromRow = MetaRow6 <$> field <*> field <*> field <*> field <*> field <*> field
+  fromRow = MetaRow6 <$> field <*> field <*> field <*> field <*> field <*> field <*> field
 
 newtype OneText = OneText Text
 
@@ -307,7 +307,7 @@ queryTaintInputs conn = do
   sqlRows  <- queryHandle conn
     "SELECT file, object, proc_name, line, raw_sql FROM sql_statements"
   metaRows <- queryHandle conn
-    "SELECT file, object, proc_name, proc_type, params, return_type FROM procedures"
+    "SELECT file, object, proc_name, proc_type, params, return_type, param_names FROM procedures"
   objRows  <- queryHandle conn
     "SELECT file, object FROM objects WHERE kind='powerscript'" :: IO [TwoText]
   let stmts   = mapMaybe rowToStmt  (sqlRows  :: [SqlRow5])
@@ -334,8 +334,8 @@ queryTaintInputs conn = do
       in if T.null op || Set.member op skipped
          then Nothing
          else Just (Taint.SqlStmt f o p (Just l) op raw (Taint.hasIntoClause raw))
-    rowToMeta (MetaRow6 f o p pt par rt) =
-      Taint.ProcMeta f o p pt par rt Nothing
+    rowToMeta (MetaRow6 f o p pt _par rt paramNames) =
+      Taint.ProcMeta f o p pt (if T.null paramNames then [] else T.splitOn "|" paramNames) rt Nothing
 
 -- | Plan 148 Phase 1b: SchemaCategory read-side queries.
 queryDwRetrieveColumns :: Handle -> IO [DwRetrieveColRow]

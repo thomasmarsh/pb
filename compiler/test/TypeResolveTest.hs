@@ -60,6 +60,20 @@ mkDwTable cols = DwTable
   , dtUpdateWhere = Nothing, dtArguments = []
   }
 
+-- | Test-only fixture helper: parses a simple comma-separated "[mods] type
+-- name" list into synthetic-span 'Param's. Fixture construction only -- the
+-- real token-level parser ('PB.Grammar.File.parseParamsAndThrows', which
+-- mints real spans) is tested directly in FileTest.hs.
+mkParams :: T.Text -> [Param]
+mkParams raw
+  | T.null (T.strip raw) = []
+  | otherwise            = map paramFor (T.splitOn "," raw)
+  where
+    mods = ["ref", "readonly", "constant", "static", "indirect"]
+    paramFor seg = case dropWhile (\w -> T.toLower w `elem` mods) (T.words (T.strip seg)) of
+      [ty, nm] -> Param [] ty (SourceSpan 1 1 1 1) (mkIdent nm)
+      ws       -> error ("mkParams: malformed test fixture segment " ++ show ws)
+
 mkFn :: T.Text -> T.Text -> [Located BodyStmt] -> FunctionBlock
 mkFn nm params body = FunctionBlock
   { fbSig = FnSig
@@ -67,10 +81,17 @@ mkFn nm params body = FunctionBlock
       , fnsReturnType     = "integer"
       , fnsReturnTypeSpan = SourceSpan 1 1 1 1
       , fnsName           = mkIdent nm
-      , fnsParams         = params
+      , fnsParams         = mkParams params
       , fnsThrows         = Nothing
       }
   , fbBody = body
+  }
+
+mkEv :: T.Text -> T.Text -> [Located BodyStmt] -> EventBlock
+mkEv nm params body = EventBlock
+  { evSig   = EventSig { esName = mkIdent nm, esParams = mkParams params }
+  , evOwner = Nothing
+  , evBody  = body
   }
 
 localVarStmt :: T.Text -> PbType -> Int -> Located BodyStmt
@@ -162,41 +183,6 @@ tests = testGroup "TypeResolve"
           t @?= Just "transaction"
       ]
 
-  , testGroup "parseParams"
-      [ testCase "empty string → []" $
-          parseParams "" @?= []
-
-      , testCase "whitespace only → []" $
-          parseParams "   " @?= []
-
-      , testCase "single param: long al_row" $
-          parseParams "long al_row"
-            @?= [("al_row", PtPrimitive "long")]
-
-      , testCase "ref param stripped: ref datawindow adw" $
-          parseParams "ref datawindow adw"
-            @?= [("adw", PtUserDefined "datawindow")]
-
-      , testCase "two params" $
-          parseParams "long al_row, string as_name"
-            @?= [("al_row", PtPrimitive "long"), ("as_name", PtPrimitive "string")]
-
-      , testCase "readonly modifier stripped" $
-          parseParams "readonly string as_x"
-            @?= [("as_x", PtPrimitive "string")]
-
-      , testCase "array-bracket param name: readonly string aarray[]" $
-          -- Reproduces the exact reconstructed-text shape parseParamsAndThrows
-          -- produces (File.hs:184 joins tokens with " ", and '[' / ']' are
-          -- separate tokens), not a hand-written unbracketed string.
-          parseParams "readonly string aarray [ ]"
-            @?= [("aarray", PtPrimitive "string")]
-
-      , testCase "array-bracket param alongside a normal param" $
-          parseParams "readonly string aarray [ ] , string astr"
-            @?= [("aarray", PtPrimitive "string"), ("astr", PtPrimitive "string")]
-      ]
-
   , testGroup "extractLocalVars"
       [ testCase "empty SrFile → []" $
           extractLocalVars "test.srw" "w_test" emptySrFile @?= []
@@ -234,6 +220,15 @@ tests = testGroup "TypeResolve"
               lvIsParam b @?= True
               lvVarName b @?= "as_x"
             other -> assertFailure ("expected 2 vars, got " ++ show (length other))
+
+      , testCase "event params from EventSig (Plan 196 Phase 3: events previously never got their own params here)" $ do
+          let sf = emptySrFile { srEvents = [ mkEv "ue_scroll" "integer ai_scroll" [] ] }
+          case extractLocalVars "test.srw" "w_test" sf of
+            [v] -> do
+              lvIsParam v @?= True
+              lvVarName v @?= "ai_scroll"
+              lvRawType v @?= "integer"
+            other -> assertFailure ("expected 1 var, got " ++ show (length other))
 
       , testCase "params before body vars" $ do
           let body = [ localVarStmt "ls_x" (PtPrimitive "string") 5 ]

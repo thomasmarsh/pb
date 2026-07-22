@@ -50,7 +50,7 @@ import PB.Analysis.ControlHierarchy (resolveMemberChainType)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
 import PB.Analysis.TypeFamily
 import PB.Analysis.TypeResolve
-  ( resolveVirtual, parseParams, srFileObject
+  ( resolveVirtual, srFileObject
   , buildProcMap, buildInheritsMap
   )
 import qualified Data.Map.Strict as Map
@@ -122,17 +122,18 @@ buildParamsMap = foldl' addFile Map.empty
   where
     addFile acc sf =
       let obj = srFileObject sf
+          paramPairs = map (\p -> (identOrig (paramName p), parseTypeTextAt (paramTypeSpan p) (paramType p)))
           fnEntries =
             [ ( (obj, identOrig (fnsName (fbSig fb)))
               , [ProcSignature
-                  (parseParams (fnsParams (fbSig fb)))
+                  (paramPairs (fnsParams (fbSig fb)))
                   (Just (parseTypeTextAt (fnsReturnTypeSpan (fbSig fb)) (fnsReturnType (fbSig fb))))]
               )
             | fb <- srFunctions sf
             ]
           subEntries =
             [ ( (obj, identOrig (ssName (sbSig sb)))
-              , [ProcSignature (parseParams (ssParams (sbSig sb))) Nothing]
+              , [ProcSignature (paramPairs (ssParams (sbSig sb))) Nothing]
               )
             | sb <- srSubroutines sf
             ]

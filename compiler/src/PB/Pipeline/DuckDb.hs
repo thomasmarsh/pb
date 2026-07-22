@@ -124,12 +124,19 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       [ "CREATE TABLE IF NOT EXISTS objects \
         \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT, \
         \type_blocks_json TEXT, confidence TEXT NOT NULL DEFAULT 'confirmed')"
+      -- param_names is a '|'-delimited ordered list of just the declared
+      -- parameter names (mirrors global_vars.mods's convention) -- PB
+      -- taint\/interproc analysis (Phase B, DB round-trip) only ever needs
+      -- positional param names, never their declared types, and this is
+      -- losslessly reversible unlike 'params' (a joined display string with
+      -- mods/type/name intermixed, re-parsing which is exactly the anti-
+      -- pattern Plan 196 Phase 3 removed from every in-memory consumer).
       , "CREATE TABLE IF NOT EXISTS procedures \
         \(file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, \
         \start_line INTEGER, end_line INTEGER, \
         \cfg_json TEXT, instr_graph_json TEXT, wiring_json TEXT, \
         \params TEXT, return_type TEXT, cyclomatic INTEGER, \
-        \confidence TEXT NOT NULL DEFAULT 'confirmed')"
+        \confidence TEXT NOT NULL DEFAULT 'confirmed', param_names TEXT)"
       -- type_start_line/col, type_end_line/col carry the declared type
       -- name's own token span (additive, nullable -- NULL for a primitive/
       -- any/decimal type, which is a keyword, not an identifier reference).

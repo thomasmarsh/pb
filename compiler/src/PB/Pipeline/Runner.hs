@@ -55,7 +55,7 @@ import PB.Analysis.TypeResolve
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
   , extractVarRefs, extractDwVarRefs
   , extractDwControlBindings
-  , parseParams, paramsToVars
+  , paramsToVars
   )
 import PB.Analysis.DeadVars (DeadVarFinding, findDeadVars)
 import PB.Analysis.DwParamBinding (buildDwParamBindings)
@@ -250,25 +250,28 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         userFns = Set.fromList
           $  map (identCanon . fnsName . fbSig) (srFunctions  sf)
           <> map (identCanon . ssName  . sbSig) (srSubroutines sf)
-        mkProcEnv params = procEnv wsEnv controlIdx obj (parseParams params)
+        mkProcEnv params = procEnv wsEnv controlIdx obj params
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  wsEnv controlIdx fp obj sf
         vrs  = extractVarRefs    wsEnv controlIdx fp obj sf
         gvs  = extractGlobalVars fp obj sf
         controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
         -- Shared by both 'aliasBindings' and 'procs' below, so the
-        -- (sLine, eLine)/(pName, pType, instrParams, taintParams, retType,
-        -- retTypeSpan, body) zip logic exists exactly once. retTypeSpan is
-        -- 'Nothing' for a subroutine/event/on-block (retType is "" there
-        -- too -- genuinely no return type, not an unresolved lookup).
+        -- (sLine, eLine)/(pName, pType, params, retType, retTypeSpan, body)
+        -- zip logic exists exactly once. retTypeSpan is 'Nothing' for a
+        -- subroutine/event/on-block (retType is "" there too -- genuinely no
+        -- return type, not an unresolved lookup). Every branch (including
+        -- event) now supplies its own real 'Param' list -- previously events
+        -- were seeded with an empty params here, so an event body's own
+        -- declared parameter was never in its 'ScopedTypeEnv' at all.
         procSpecs =
-              zip (spFunctions   sp) [ (identOrig (fnsName (fbSig fb)), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), Just (fnsReturnTypeSpan (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
+              zip (spFunctions   sp) [ (identOrig (fnsName (fbSig fb)), "function",   fnsParams (fbSig fb), fnsReturnType (fbSig fb), Just (fnsReturnTypeSpan (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
               <>
-              zip (spSubroutines sp) [ (identOrig (ssName  (sbSig sb)), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       Nothing,                              sbBody sb) | sb <- srSubroutines sf ]
+              zip (spSubroutines sp) [ (identOrig (ssName  (sbSig sb)), "subroutine", ssParams  (sbSig sb), "",                       Nothing,                              sbBody sb) | sb <- srSubroutines sf ]
               <>
-              zip (spEvents      sp) [ (identOrig (esName  (evSig ev)), "event",      "",                   esRawSig     (evSig ev), "",                       Nothing,                              evBody ev) | ev <- srEvents      sf ]
+              zip (spEvents      sp) [ (identOrig (esName  (evSig ev)), "event",      esParams  (evSig ev), "",                       Nothing,                              evBody ev) | ev <- srEvents      sf ]
               <>
-              zip (spOnBlocks    sp) [ (identOrig (obEvent ob), "on",     "",                   "",                      "",                       Nothing,                              obBody ob) | ob <- srOnBlocks    sf ]
+              zip (spOnBlocks    sp) [ (identOrig (obEvent ob), "on",     [],                   "",                      Nothing,                              obBody ob) | ob <- srOnBlocks    sf ]
         -- Plan 164 Phase C / D3: runtime DataWindow-alias assignments
         -- (e.g. idw_epidom = tab1.page1.uo_epidom.dw), scanned across every
         -- procedure body in this file and merged into the static bindings.
@@ -281,8 +284,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         -- alias var is assigned once (constructor/open event) in practice.
         aliasBindings = Map.unions
           [ runtimeDwAliasBindings controlIdx (weHierarchy wsEnv) obj procEnvWithLocals body
-          | (_, (_, _, instrParams, _, _, _, body)) <- procSpecs
-          , let baseEnv = mkProcEnv instrParams
+          | (_, (_, _, params, _, _, body)) <- procSpecs
+          , let baseEnv = mkProcEnv params
                 procEnvWithLocals = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
           ]
         -- Static literal bindings win on key collision -- a directly
@@ -291,7 +294,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
-                effTerm  = compileProcedureToEff (mkProcEnv instrParams) userFns body
+                effTerm  = compileProcedureToEff (mkProcEnv params) userFns body
                 instrJs    = jsonText (toJSON (linearize (buildEffGraphNamed effTerm)))
                 wiringJs = jsonText (toJSON (buildEffGraphWiring effTerm))
                 pflow    = Dataflow.analyzeProcedure obj pName cfg
@@ -299,7 +302,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 cyclo    = cyclomaticComplexity cfg
                 footprintCtx = FunctorCtx
                   { fcStmtObj         = SqlStmtId fp obj pName sLine
-                  , fcTypeEnv         = mkProcEnv instrParams
+                  , fcTypeEnv         = mkProcEnv params
                   , fcDwColumns       = globalDwColumns
                   , fcControlBindings = controlBindings'
                   }
@@ -324,9 +327,9 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- info to give a param its own line), which would collapse
                 -- every overload of a same-named procedure onto one param
                 -- list. Re-deriving params from this comprehension's own
-                -- instrParams/sLine sidesteps that; body locals are
+                -- params/sLine sidesteps that; body locals are
                 -- span-filtered against this procedure's own (sLine, eLine).
-                scopedParams  = paramsToVars fp obj pName instrParams sLine
+                scopedParams  = paramsToVars fp obj pName params sLine
                 scopedBodyLvs =
                   [ lv | lv <- lvs, lvProcName lv == pName, not (lvIsParam lv)
                        , sLine <= lvScopeLine lv, lvScopeLine lv <= eLine ]
@@ -342,7 +345,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- Plan 177 follow-up (TypeCheckCtx/ScopedTypeEnv
                 -- unification): tcEnv reuses the same ScopedTypeEnv shape
                 -- CallClassify/the SSA pipeline already build for this
-                -- procedure (mkProcEnv instrParams -- global > instance >
+                -- procedure (mkProcEnv params -- global > instance >
                 -- local var typing, workspace hierarchy/control index),
                 -- with body locals folded into steLocal the same way
                 -- 'aliasBindings' above already does (collectBodyLocals body
@@ -356,7 +359,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- global/instance/local lookup, the same way it already is
                 -- for call classification. Same "speculative confidence ->
                 -- skip" gate as deadVars, for the same stdlib-stub reason.
-                typeCheckBaseEnv = mkProcEnv instrParams
+                typeCheckBaseEnv = mkProcEnv params
                 typeCheckEnv = typeCheckBaseEnv
                   { steLocal = collectBodyLocals body <> steLocal typeCheckBaseEnv }
                 -- The enclosing procedure's own declared return type comes
@@ -380,14 +383,15 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                   | confidence == "speculative" = []
                   | otherwise = checkBody typeCheckCtx pName body
             in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs wiringJs
-                   taintParams retType (Just cyclo) confidence
+                   (renderParams params) retType (Just cyclo) confidence
+                   (map (identOrig . paramName) params)
                , flow
                , catFpRows
                , deadVars
                , typeMismatches
                , taintEdgeRows
                , taintReturnRows )
-          | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, retTypeSpan, body)) <- procSpecs
+          | ((sLine, eLine), (pName, pType, params, retType, retTypeSpan, body)) <- procSpecs
           ]
         procBodies =
              [ (identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]

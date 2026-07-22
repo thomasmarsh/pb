@@ -52,7 +52,6 @@ module PB.Analysis.TypeResolve
   , isDwFamilyType
   , classifyPbType
   , classifyControlType
-  , parseParams
   , paramsToVars
   , callSitesExpr
   , walkBodyCallSites
@@ -74,7 +73,7 @@ import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapEmpty,
                            provenanceSpan)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
-import PB.AST.Type        (PbType (..), parseTypeText, parseTypeTextAt, renderPbType)
+import PB.AST.Type        (PbType (..), parseTypeTextAt, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
 import PB.Analysis.CallClassify   (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
@@ -381,27 +380,6 @@ classifyPbType (PtUserDefined n) objs userTypes
 -- ---------------------------------------------------------------------------
 -- Parameter parsing
 
--- | Parse a comma-separated parameter declaration string into (name, PbType) pairs.
--- Input: "ref datawindow adw, long al_row"
--- Output: [("adw", PtUserDefined "datawindow"), ("al_row", PtPrimitive "long")]
-parseParams :: Text -> [(Text, PbType)]
-parseParams raw
-  | T.null (T.strip raw) = []
-  | otherwise            = mapMaybe parseSegment (T.splitOn "," raw)
-  where
-    paramMods = ["ref", "readonly", "const", "constant", "value"]
-
-    parseSegment seg =
-      let ws = dropWhile (\w -> T.toLower w `elem` paramMods) (T.words (T.strip seg))
-          -- Array params render as "type name [ ]" (parseParamsAndThrows joins
-          -- tokens with spaces, and '[' / ']' are separate tokens) -- the
-          -- brackets always trail the name with no dimension expression in a
-          -- signature, so everything from the first '[' on is discarded.
-          nonMods = takeWhile (/= "[") ws
-      in case reverse nonMods of
-           (nm : ty : _) -> Just (nm, parseTypeText ty)
-           _             -> Nothing
-
 -- ---------------------------------------------------------------------------
 -- Internal helpers for body walking
 
@@ -437,19 +415,20 @@ walkBodyLocalVars file obj proc_ = foldStmts classify
             } ]
       _ -> []
 
-paramsToVars :: Text -> Text -> Text -> Text -> Int -> [LocalVar]
-paramsToVars file obj procN paramsText scopeLine =
+paramsToVars :: Text -> Text -> Text -> [Param] -> Int -> [LocalVar]
+paramsToVars file obj procN params scopeLine =
   [ LocalVar
       { lvFile      = file
       , lvObject    = obj
       , lvProcName  = procN
-      , lvVarName   = n
+      , lvVarName   = identOrig (paramName p)
       , lvRawType   = renderPbType ty
       , lvIsParam   = True
       , lvScopeLine = scopeLine
       , lvPbType    = ty
       }
-  | (n, ty) <- parseParams paramsText
+  | p <- params
+  , let ty = parseTypeTextAt (paramTypeSpan p) (paramType p)
   ]
 
 -- ---------------------------------------------------------------------------
@@ -551,7 +530,8 @@ extractLocalVars file obj sf = concat
       <> walkBodyLocalVars file obj (identOrig (ssName (sbSig sb))) (sbBody sb)
     ) (srSubroutines sf)
   , concatMap (\ev ->
-      walkBodyLocalVars file obj (identOrig (esName (evSig ev))) (evBody ev)
+      paramsToVars file obj (identOrig (esName (evSig ev))) (esParams (evSig ev)) 0
+      <> walkBodyLocalVars file obj (identOrig (esName (evSig ev))) (evBody ev)
     ) (srEvents sf)
   , concatMap (\ob ->
       walkBodyLocalVars file obj (identOrig (obEvent ob)) (obBody ob)
@@ -569,17 +549,17 @@ extractCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [C
 extractCallSites wsEnv controlIdx file obj sf = concat
   [ concatMap (\fb ->
       let body = fbBody fb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (fnsParams (fbSig fb))))
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (fnsParams (fbSig fb)))
       in walkBodyCallSites wsEnv env file obj (identOrig (fnsName (fbSig fb))) body
     ) (srFunctions sf)
   , concatMap (\sb ->
       let body = sbBody sb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (ssParams (sbSig sb))))
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (ssParams (sbSig sb)))
       in walkBodyCallSites wsEnv env file obj (identOrig (ssName (sbSig sb))) body
     ) (srSubroutines sf)
   , concatMap (\ev ->
       let body = evBody ev
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (esRawSig (evSig ev))))
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (esParams (evSig ev)))
       in walkBodyCallSites wsEnv env file obj (identOrig (esName (evSig ev))) body
     ) (srEvents sf)
   , concatMap (\ob ->
@@ -890,17 +870,17 @@ extractVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [Res
 extractVarRefs wsEnv controlIdx file obj sf = concat
   [ concatMap (\fb ->
       let body = fbBody fb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (fnsParams (fbSig fb))))
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (fnsParams (fbSig fb)))
       in walkBodyVarRefs wsEnv env file obj (identOrig (fnsName (fbSig fb))) body
     ) (srFunctions sf)
   , concatMap (\sb ->
       let body = sbBody sb
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (ssParams (sbSig sb))))
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (ssParams (sbSig sb)))
       in walkBodyVarRefs wsEnv env file obj (identOrig (ssName (sbSig sb))) body
     ) (srSubroutines sf)
   , concatMap (\ev ->
       let body = evBody ev
-          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (parseParams (esRawSig (evSig ev))))
+          env  = withBodyLocals body (procEnv wsEnv controlIdx obj (esParams (evSig ev)))
       in walkBodyVarRefs wsEnv env file obj (identOrig (esName (evSig ev))) body
     ) (srEvents sf)
   , concatMap (\ob ->

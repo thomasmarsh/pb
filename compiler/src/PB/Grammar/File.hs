@@ -13,6 +13,7 @@ module PB.Grammar.File
   , pEventBlock
   , pFunctionBlock
   , pSubroutineBlock
+  , parseParamsAndThrows
   ) where
 
 import PB.Prelude
@@ -26,6 +27,7 @@ import PB.AST.SourceFile
   , TypeDecl (..), TypeBlock (..), mkTypeDeclAt
   , VariablesBlock (..), VarScope (..), VarDecl (..)
   , GlobalInstance (..)
+  , Param (..)
   , FnSig (..), SubSig (..), EventSig (..)
   , FunctionBlock (..), SubroutineBlock (..), EventBlock (..), OnBlock (..)
   , SrFile (..)
@@ -190,15 +192,32 @@ isEvDecl s =
     (t:_) -> T.toLower (tkText t) == "event"
     _     -> False
 
-parseParamsAndThrows :: [Token] -> (Text, Maybe Text)
+-- | Split a token span between a signature's '(' and ')' into typed
+-- 'Param's -- 'splitArgs' (bracket-depth aware, already used by
+-- 'buildVarDecls' for a declarator list) handles the top-level comma split,
+-- so an array param's '[' ']' never misfires the split.  Each segment is
+-- @mods* type name (array-brackets)?@; leftover tokens after the last
+-- recognized (mods, type, name) triple -- i.e. dimension brackets -- carry
+-- no further dimension expression in a signature, so they are discarded.
+parseParamsAndThrows :: [Token] -> ([Param], Maybe Text)
 parseParamsAndThrows more =
   let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
-      params = T.intercalate " " (map tkText paramToks)
+      params = mapMaybe paramFor (splitArgs paramToks)
       throws = case afterParams of
         (_rparen : throwsKw : exName : _)
           | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
         _ -> Nothing
   in (params, throws)
+  where
+    paramFor toks = case span isModifierToken toks of
+      (mods, typeT : nameT : _) | tkKind nameT == TkIdent ->
+        Just Param
+          { paramMods     = map tkText mods
+          , paramType     = tkText typeT
+          , paramTypeSpan = tkSpan typeT
+          , paramName     = mkIdentAt (tkSpan nameT) (tkText nameT)
+          }
+      _ -> Nothing
 
 extractFnSig :: Statement -> Maybe FnSig
 extractFnSig s =
@@ -230,13 +249,18 @@ extractSubSig s =
       , tkKind lparen == TkLParen -> finish name more
     _ -> Nothing
 
+-- | An event's declared param list is optionally parenthesized -- a system
+-- event (e.g. @event ue_keypress pbm_char@) names a Windows message ID
+-- instead, which is not a param list at all and yields no 'Param's.
 extractEvSig :: Statement -> Maybe EventSig
 extractEvSig s =
   let rest = dropWhile isModifierToken (stmtTokens s)
   in case rest of
     (_kw : name : remainder) ->
-        let rawSig = T.intercalate " " (map tkText remainder)
-        in Just (EventSig (mkIdentAt (tkSpan name) (tkText name)) rawSig)
+        let params = case remainder of
+              (lp : more) | tkKind lp == TkLParen -> fst (parseParamsAndThrows more)
+              _ -> []
+        in Just (EventSig (mkIdentAt (tkSpan name) (tkText name)) params)
     _ -> Nothing
 
 pFnProto :: FileParser ProtoDecl

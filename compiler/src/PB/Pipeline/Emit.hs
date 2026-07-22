@@ -32,7 +32,6 @@ import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.Cfg    (buildCfg)
 import PB.Compile.Flatten
   ( compileProcedureViaEffTerm, compileProcedureToWiring )
-import PB.Analysis.TypeResolve (parseParams)
 import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (ToJSON (..), Value (..), object, toJSON, (.=))
@@ -135,8 +134,8 @@ wrapSrFile withInstr path sf spans ws =
         controlIdx = buildControlIndex [sf]
 
         -- Per-procedure env: params + object instance vars from workspace.
-        procEnvFor :: Text -> ScopedTypeEnv
-        procEnvFor paramsText = procEnv ws controlIdx objName (parseParams paramsText)
+        procEnvFor :: [Param] -> ScopedTypeEnv
+        procEnvFor params = procEnv ws controlIdx objName params
 
         emptyProcEnv :: ScopedTypeEnv
         emptyProcEnv = procEnv ws controlIdx objName []
@@ -183,7 +182,7 @@ wrapSrFile withInstr path sf spans ws =
         , "typeBlocks"      .= srTypeBlocks sf
         , "onBlocks"    .= [ injectAll emptyProcEnv                           (obBody ob) sp (toJSON ob)
                            | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
-        , "events"      .= [ injectAll emptyProcEnv                           (evBody ev) sp (toJSON ev)
+        , "events"      .= [ injectAll (procEnvFor (esParams (evSig ev)))     (evBody ev) sp (toJSON ev)
                            | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
         , "functions"   .= [ injectAll (procEnvFor (fnsParams (fbSig fn))) (fbBody fn) sp (toJSON fn)
                            | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]

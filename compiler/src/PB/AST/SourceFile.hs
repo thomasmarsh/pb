@@ -10,6 +10,8 @@ module PB.AST.SourceFile
   , TypeBlock (..)
   , VarDecl (..)
   , GlobalInstance (..)
+  , Param (..)
+  , renderParams
   , FnSig (..)
   , SubSig (..)
   , EventSig (..)
@@ -26,7 +28,7 @@ module PB.AST.SourceFile
 
 import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
-import PB.AST.Ident       (Ident, mkIdent, mkIdentAt)
+import PB.AST.Ident       (Ident, identOrig, mkIdent, mkIdentAt)
 import PB.AST.Located     (Located)
 import PB.Lexing.Token    (SourceSpan)
 import Control.DeepSeq    (NFData)
@@ -120,25 +122,46 @@ data GlobalInstance = GlobalInstance
   , giName     :: Ident
   } deriving (Eq, Show, Generic)
 
+-- | One declared function\/subroutine\/event parameter. 'paramType'\/
+-- 'paramTypeSpan' mirror 'VarDecl''s 'vdType'\/'vdTypeSpan' pair (deferring
+-- 'PbType' parsing to the consumer via 'PB.AST.Type.parseTypeTextAt');
+-- 'paramName' carries the parameter name's own real token span, the thing
+-- a joined-string parameter list could never give it.
+data Param = Param
+  { paramMods     :: [Text]
+  , paramType     :: Text
+  , paramTypeSpan :: SourceSpan
+  , paramName     :: Ident
+  } deriving (Eq, Show, Generic)
+
+-- | Reconstruct a display-only parameter-list string (e.g. for the
+-- @procedures.params@ DB column) -- never re-parsed, so its exact
+-- punctuation is not load-bearing.
+renderParams :: [Param] -> Text
+renderParams ps = T.intercalate ", "
+  [ T.unwords (paramMods p <> [paramType p, identOrig (paramName p)])
+  | p <- ps
+  ]
+
 data FnSig = FnSig
   { fnsMods           :: [Text]
   , fnsReturnType     :: Text
   , fnsReturnTypeSpan :: SourceSpan  -- ^ real span of the 'fnsReturnType' token
   , fnsName           :: Ident
-  , fnsParams         :: Text
+  , fnsParams         :: [Param]
   , fnsThrows         :: Maybe Text
   } deriving (Eq, Show, Generic)
 
 data SubSig = SubSig
   { ssMods   :: [Text]
   , ssName   :: Ident
-  , ssParams :: Text
+  , ssParams :: [Param]
   , ssThrows :: Maybe Text
   } deriving (Eq, Show, Generic)
 
 data EventSig = EventSig
   { esName   :: Ident
-  , esRawSig :: Text
+  , esParams :: [Param]
   } deriving (Eq, Show, Generic)
 
 data FunctionBlock = FunctionBlock
@@ -174,6 +197,7 @@ instance NFData TypeDecl
 instance NFData TypeBlock
 instance NFData VarDecl
 instance NFData GlobalInstance
+instance NFData Param
 instance NFData FnSig
 instance NFData SubSig
 instance NFData EventSig

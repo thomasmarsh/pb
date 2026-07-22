@@ -67,6 +67,7 @@ instance ToJSON VarScope         where toJSON = genericToJSON customOptions
 instance ToJSON TypeDecl         where toJSON = genericToJSON customOptions
 instance ToJSON GlobalInstance   where toJSON = genericToJSON customOptions
 instance ToJSON VarDecl          where toJSON = genericToJSON customOptions
+instance ToJSON Param            where toJSON = genericToJSON customOptions
 instance ToJSON FnSig            where toJSON = genericToJSON customOptions
 instance ToJSON SubSig           where toJSON = genericToJSON customOptions
 instance ToJSON EventSig         where toJSON = genericToJSON customOptions

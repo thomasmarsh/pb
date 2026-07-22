@@ -92,6 +92,7 @@ data ProcRow = ProcRow
   , prReturnType :: Text
   , prCyclomatic :: Maybe Int
   , prConfidence :: Text
+  , prParamNames :: [Text]  -- ^ ordered declared parameter names, see 'procedures.param_names'
   }
 
 data DwObjectRow = DwObjectRow
@@ -266,6 +267,7 @@ appendProcedures pool rows = appendRow pool "procedures" $ \app ->
     aText     app (prReturnType r)
     aMaybeInt app (prCyclomatic r)
     aText     app (prConfidence r)
+    aText     app (T.intercalate "|" (prParamNames r))
 
 appendDwObjects :: AppenderPool -> [DwObjectRow] -> IO ()
 appendDwObjects _    [] = pure ()

@@ -216,16 +216,16 @@ extractInstanceVars sf = Map.fromList
 -- ancestor class was previously invisible to any procedure of a descendant
 -- object, since the pre-Plan-195-Phase-E version looked up 'weInstanceVars'
 -- for 'objName' alone with no chain walk.
-procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTypeEnv
+procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [Param] -> ScopedTypeEnv
 procEnv ws idx objName params = ScopedTypeEnv
   { steGlobal       = weGlobals ws
   , steInstance     = Map.unions
                          [ fromMaybe Map.empty (Map.lookup anc (weInstanceVars ws))
                          | anc <- ancestorChain (mkIdent objName) (weHierarchy ws)
                          ]
-  , steLocal        = Map.fromList [(mkIdent n, ty) | (n, ty) <- params]
-  , steParams       = Set.fromList [mkIdent n | (n, _) <- params]
-  , steParamIndex   = Map.fromList [(mkIdent n, i) | ((n, _), i) <- zip params [0 ..]]
+  , steLocal        = Map.fromList [(paramName p, parseTypeTextAt (paramTypeSpan p) (paramType p)) | p <- params]
+  , steParams       = Set.fromList [paramName p | p <- params]
+  , steParamIndex   = Map.fromList [(paramName p, i) | (p, i) <- zip params [0 ..]]
   , steHierarchy    = weHierarchy ws
   , steObject       = objName
   , steControlIndex = idx

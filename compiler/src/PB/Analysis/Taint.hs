@@ -42,7 +42,6 @@ import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.Lexing.Token     (SourceSpan)
 import PB.Analysis.Dataflow (extractSqlHostVars)
-import PB.Analysis.TypeResolve (parseParams)
 
 import Data.Aeson
   ( FromJSON (..), ToJSON (..), (.:)
@@ -126,7 +125,10 @@ data ProcMeta = ProcMeta
   , pmObject   :: Text
   , pmName     :: Text
   , pmProcType :: Text
-  , pmParams   :: Text
+  , pmParams   :: [Text]  -- ^ ordered declared parameter names only -- every
+                          -- consumer (taint source classification,
+                          -- positional arg\/param matching) only ever needs
+                          -- the name, never the declared type
   , pmReturnType :: Text
   , pmStartLine :: Maybe Int
   } deriving (Eq, Show)
@@ -310,25 +312,25 @@ extractProcMeta file sf =
     fnMeta fb = ProcMeta
       { pmFile = file, pmObject = objName
       , pmName = identOrig (fnsName (fbSig fb)), pmProcType = "function"
-      , pmParams = fnsParams (fbSig fb)
+      , pmParams = map (identOrig . paramName) (fnsParams (fbSig fb))
       , pmReturnType = fnsReturnType (fbSig fb)
       , pmStartLine = Nothing }
     subMeta sb = ProcMeta
       { pmFile = file, pmObject = objName
       , pmName = identOrig (ssName (sbSig sb)), pmProcType = "subroutine"
-      , pmParams = ssParams (sbSig sb)
+      , pmParams = map (identOrig . paramName) (ssParams (sbSig sb))
       , pmReturnType = ""
       , pmStartLine = Nothing }
     evMeta ev = ProcMeta
       { pmFile = file, pmObject = objName
       , pmName = identOrig (esName (evSig ev)), pmProcType = "event"
-      , pmParams = esRawSig (evSig ev)
+      , pmParams = map (identOrig . paramName) (esParams (evSig ev))
       , pmReturnType = ""
       , pmStartLine = Nothing }
     obMeta ob = ProcMeta
       { pmFile = file, pmObject = objName
       , pmName = identOrig (obEvent ob), pmProcType = "on"
-      , pmParams = ""
+      , pmParams = []
       , pmReturnType = ""
       , pmStartLine = Nothing }
 
@@ -365,12 +367,11 @@ classifySources sqlStmts procs =
 
     procSources p
       | pmProcType p `Set.notMember` eventProcTypes = []
-      | T.null (T.strip (pmParams p)) = []
+      | null (pmParams p) = []
       | otherwise =
           [ TaintSource (pmFile p) (pmObject p) (pmName p)
-              paramName "request_param" (pmStartLine p)
-          | (paramName, _) <- parseParams (pmParams p)
-          , not (T.null paramName)
+              paramN "request_param" (pmStartLine p)
+          | paramN <- pmParams p
           ]
 
 -- ---------------------------------------------------------------------------
@@ -427,7 +428,7 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
 
     paramsByProc :: HM.HashMap (Text, Text) [Text]
     paramsByProc = HM.fromList
-      [ ((pmObject p, pmName p), map fst (parseParams (pmParams p)))
+      [ ((pmObject p, pmName p), pmParams p)
       | p <- procMetas
       ]
 
@@ -585,7 +586,7 @@ buildProcedureSummaries edges defs uses globalVarNames procMetas =
     mkSummary :: ProcMeta -> ProcedureSummary
     mkSummary pm =
       let key = (pmObject pm, pmName pm)
-          paramsIn = map fst (parseParams (pmParams pm))
+          paramsIn = pmParams pm
           -- Membership probed via a freshly-minted Ident against
           -- globalVarNames (already Ident-typed); the reported value keeps
           -- this occurrence's own casing, same display/identity split as

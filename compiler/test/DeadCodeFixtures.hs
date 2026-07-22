@@ -75,7 +75,7 @@ seedDeadCodeFixture
 seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs = do
   appendProcedures pool
     [ ProcRow "f.srf" (piObject p) (piName p) (piProcType p)
-              1 1 "" "" "" "" "" (piCyclomatic p) "confirmed"
+              1 1 "" "" "" "" "" (piCyclomatic p) "confirmed" []
     | p <- procs
     ]
   appendDwObjects pool

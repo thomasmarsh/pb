@@ -5,19 +5,21 @@ import PB.Grammar.File        ( pForwardBlock, pPrototypesBlock, pVariablesBlock
                               , pGlobalInstance
                               , pTypeBlock, pOnBlock, pEventBlock, pFunctionBlock, pSubroutineBlock
                               , parseSrFile
+                              , parseParamsAndThrows
                               )
 import PB.Grammar.Stream      (FileParser, StmtStream (..))
 import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
                               , TypeDecl (..), TypeBlock (..), mkTypeDecl
                               , VariablesBlock (..), VarScope (..), VarDecl (..)
                               , GlobalInstance (..)
+                              , Param (..)
                               , FnSig (..), SubSig (..), EventSig (..)
                               , FunctionBlock (..), SubroutineBlock (..), EventBlock (..), OnBlock (..)
                               , SrFile (..)
                               )
 import PB.AST.BodyStmt        (BodyStmt (..))
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
-import PB.AST.Ident           (identOrig)
+import PB.AST.Ident           (identOrig, identSpan, IdentProvenance (..))
 import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
 import PB.Lexing.Splitter     (Statement (..))
@@ -365,7 +367,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "getCount" "" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "getCount" [] Nothing)])
 
     , testCase "positive: subroutine prototype" $ do
         let stmts =
@@ -376,7 +378,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoSub (SubSig [] "doSomething" "" Nothing)])
+          Right (PrototypesBlock [ProtoSub (SubSig [] "doSomething" [] Nothing)])
 
     , testCase "positive: forward prototypes opener" $ do
         let stmts =
@@ -406,7 +408,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig ["external"] "integer" (SourceSpan 1 1 1 1) "getCount" "" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig ["external"] "integer" (SourceSpan 1 1 1 1) "getCount" [] Nothing)])
 
     , testCase "positive: rpcfunc subroutine prototype" $ do
         let stmts =
@@ -418,7 +420,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoSub (SubSig ["rpcfunc"] "doRemote" "" Nothing)])
+          Right (PrototypesBlock [ProtoSub (SubSig ["rpcfunc"] "doRemote" [] Nothing)])
 
     , testCase "positive: intrinsic function prototype" $ do
         let stmts =
@@ -430,7 +432,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig ["intrinsic"] "string" (SourceSpan 1 1 1 1) "getName" "" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig ["intrinsic"] "string" (SourceSpan 1 1 1 1) "getName" [] Nothing)])
 
     , testCase "positive: public: header before function is skipped (.srx pattern)" $ do
         let stmts =
@@ -442,7 +444,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?=
-          Right (PrototypesBlock [ProtoFn (FnSig [] "long" (SourceSpan 1 1 1 1) "SetConnect" "connection theConn" Nothing)])
+          Right (PrototypesBlock [ProtoFn (FnSig [] "long" (SourceSpan 1 1 1 1) "SetConnect" [Param [] "connection" (SourceSpan 1 1 1 1) "theConn"] Nothing)])
 
     , testCase "positive: interleaved public: protected: headers all skipped" $ do
         let stmts =
@@ -459,8 +461,8 @@ tests = testGroup "Grammar.File"
               ]
         runSection pPrototypesBlock stmts @?=
           Right (PrototypesBlock
-            [ ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "f1" "" Nothing)
-            , ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "f2" "" Nothing)
+            [ ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "f1" [] Nothing)
+            , ProtoFn (FnSig [] "integer" (SourceSpan 1 1 1 1) "f2" [] Nothing)
             ])
 
     , testCase "positive: only access-modifier headers yields empty decl list" $ do
@@ -471,6 +473,66 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end prototypes")]
               ]
         runSection pPrototypesBlock stmts @?= Right (PrototypesBlock [])
+    ]
+
+  , testGroup "parseParamsAndThrows"
+    [ testCase "empty parens: no params, no throws" $
+        parseParamsAndThrows [mkTok TkRParen ")"] @?= ([], Nothing)
+
+    , testCase "single param: long al_row" $
+        parseParamsAndThrows [mkTok TkDatatype "long", mkTok TkIdent "al_row", mkTok TkRParen ")"]
+          @?= ([Param [] "long" (SourceSpan 1 1 1 1) "al_row"], Nothing)
+
+    , testCase "ref modifier stripped: ref datawindow adw" $
+        parseParamsAndThrows
+          [ mkTok TkStorageModifier "ref", mkTok TkDatatype "datawindow", mkTok TkIdent "adw"
+          , mkTok TkRParen ")"
+          ]
+          @?= ([Param ["ref"] "datawindow" (SourceSpan 1 1 1 1) "adw"], Nothing)
+
+    , testCase "two params split on top-level comma" $
+        parseParamsAndThrows
+          [ mkTok TkDatatype "long", mkTok TkIdent "al_row", mkTok TkComma ","
+          , mkTok TkDatatype "string", mkTok TkIdent "as_name", mkTok TkRParen ")"
+          ]
+          @?= ( [ Param [] "long" (SourceSpan 1 1 1 1) "al_row"
+                , Param [] "string" (SourceSpan 1 1 1 1) "as_name"
+                ]
+              , Nothing )
+
+    , testCase "readonly modifier stripped" $
+        parseParamsAndThrows
+          [mkTok TkStorageModifier "readonly", mkTok TkDatatype "string", mkTok TkIdent "as_x", mkTok TkRParen ")"]
+          @?= ([Param ["readonly"] "string" (SourceSpan 1 1 1 1) "as_x"], Nothing)
+
+    , testCase "array-bracket param name: readonly string aarray[] -- real token split, no string-hack needed" $
+        parseParamsAndThrows
+          [ mkTok TkStorageModifier "readonly", mkTok TkDatatype "string", mkTok TkIdent "aarray"
+          , mkTok TkLBracket "[", mkTok TkRBracket "]", mkTok TkRParen ")"
+          ]
+          @?= ([Param ["readonly"] "string" (SourceSpan 1 1 1 1) "aarray"], Nothing)
+
+    , testCase "array-bracket param alongside a normal param" $
+        parseParamsAndThrows
+          [ mkTok TkStorageModifier "readonly", mkTok TkDatatype "string", mkTok TkIdent "aarray"
+          , mkTok TkLBracket "[", mkTok TkRBracket "]", mkTok TkComma ","
+          , mkTok TkDatatype "string", mkTok TkIdent "astr", mkTok TkRParen ")"
+          ]
+          @?= ( [ Param ["readonly"] "string" (SourceSpan 1 1 1 1) "aarray"
+                , Param [] "string" (SourceSpan 1 1 1 1) "astr"
+                ]
+              , Nothing )
+
+    , testCase "throws clause captured after the closing paren" $
+        parseParamsAndThrows [mkTok TkRParen ")", mkTok TkDeclKw "throws", mkTok TkIdent "SomeError"]
+          @?= ([], Just "SomeError")
+
+    , testCase "parameter name Ident carries a real FromSource span, not Synthetic" $
+        case parseParamsAndThrows [mkTok TkDatatype "long", mkTok TkIdent "al_row", mkTok TkRParen ")"] of
+          ([p], _) -> case identSpan (paramName p) of
+            FromSource _ -> pure ()
+            Synthetic _  -> assertFailure "expected a real FromSource span, got Synthetic"
+          (ps, _) -> assertFailure ("expected exactly 1 param, got " ++ show (length ps))
     ]
 
   , testGroup "pTypeDecl"
@@ -640,7 +702,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end event")]
               ]
         runSection pEventBlock stmts @?=
-          Right (EventBlock (EventSig "ue_custom" "") Nothing [])
+          Right (EventBlock (EventSig "ue_custom" []) Nothing [])
 
     , testCase "positive: event with params" $ do
         let stmts =
@@ -650,7 +712,19 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end event")]
               ]
         runSection pEventBlock stmts @?=
-          Right (EventBlock (EventSig "ue_custom" "( integer al_value )") Nothing [])
+          Right (EventBlock (EventSig "ue_custom" [Param [] "integer" (SourceSpan 1 1 1 1) "al_value"]) Nothing [])
+
+    , testCase "positive: system event with a message-ID name (no parens) has no params, not a garbage parse" $ do
+        -- Corpus shape: `event ue_keypress pbm_char` -- pbm_char is a Windows
+        -- message ID, not a parenthesized param list. Before this fix, a
+        -- non-parenthesized remainder was joined into one opaque rawSig text
+        -- and blindly re-parsed elsewhere as if it were always a param list.
+        let stmts =
+              [ mkStmt [(TkDeclKw, "event"), (TkIdent, "ue_keypress"), (TkOtherKw, "pbm_char")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        runSection pEventBlock stmts @?=
+          Right (EventBlock (EventSig "ue_keypress" []) Nothing [])
 
     , testCase "negative: missing end event" $ do
         let stmts = [mkStmt [(TkDeclKw, "event"), (TkIdent, "ue_custom")]]
@@ -766,7 +840,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end function")]
               ]
         runSection pFunctionBlock stmts @?=
-          Right (FunctionBlock (FnSig ["public"] "integer" (SourceSpan 1 1 1 1) "f_compute" "" Nothing) [])
+          Right (FunctionBlock (FnSig ["public"] "integer" (SourceSpan 1 1 1 1) "f_compute" [] Nothing) [])
 
     , testCase "positive: private function string f_name() throws SomeError" $ do
         let stmts =
@@ -778,7 +852,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end function")]
               ]
         runSection pFunctionBlock stmts @?=
-          Right (FunctionBlock (FnSig ["private"] "string" (SourceSpan 1 1 1 1) "f_name" "" (Just "SomeError")) [])
+          Right (FunctionBlock (FnSig ["private"] "string" (SourceSpan 1 1 1 1) "f_name" [] (Just "SomeError")) [])
 
     , testCase "positive: body with nested if statements" $ do
         let ifStmt    = mkStmt [(TkControlKw, "if")]
@@ -792,7 +866,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end function")]
               ]
         runSection pFunctionBlock stmts @?=
-          Right (FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_nested" "" Nothing)
+          Right (FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_nested" [] Nothing)
                    [loc1 (BsRaw ""), loc1 (BsRaw "")])
 
     , testCase "negative: missing end function" $ do
@@ -817,7 +891,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pFunctionBlock stmts @?=
           Right (FunctionBlock (FnSig ["public"] "boolean" (SourceSpan 1 1 1 1) "uf_zz_import_results"
-                                      "ref boolean results_imported" Nothing) [])
+                                      [Param ["ref"] "boolean" (SourceSpan 1 1 1 1) "results_imported"] Nothing) [])
 
     , testCase "negative: external function not parsed as body block" $ do
         let stmts =
@@ -857,7 +931,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end subroutine")]
               ]
         runSection pSubroutineBlock stmts @?=
-          Right (SubroutineBlock (SubSig [] "of_setup" "" Nothing) [])
+          Right (SubroutineBlock (SubSig [] "of_setup" [] Nothing) [])
 
     , testCase "negative: missing end subroutine" $ do
         let stmts =
@@ -905,7 +979,7 @@ tests = testGroup "Grammar.File"
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_foo" "nonvisualobject" Nothing) []]
             , srOnBlocks        = []
             , srEvents          = []
-            , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" "" Nothing) []]
+            , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" [] Nothing) []]
             , srSubroutines     = []
             }
       -- Note: TypeBlock [] means empty body (no statements between header and end type)
@@ -1016,7 +1090,7 @@ tests = testGroup "Grammar.File"
             , srTypeBlocks      = []
             , srOnBlocks        = []
             , srEvents          = []
-            , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" "" Nothing) []]
+            , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" [] Nothing) []]
             , srSubroutines     = []
             }
 
@@ -1042,8 +1116,8 @@ tests = testGroup "Grammar.File"
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       =
-                [ FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_one" "" Nothing) []
-                , FunctionBlock (FnSig [] "string" (SourceSpan 1 1 1 1) "f_two" "" Nothing) []
+                [ FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_one" [] Nothing) []
+                , FunctionBlock (FnSig [] "string" (SourceSpan 1 1 1 1) "f_two" [] Nothing) []
                 ]
             , srSubroutines     = []
             }
