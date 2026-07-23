@@ -30,6 +30,16 @@ jobs:
         with:
           ghc-version: "9.10.2"
           cabal-version: "3.12"
+          cabal-update: false
+
+      - name: cabal update (retry against dead Hackage DNS mirror)
+        run: |
+          for i in 1 2 3; do
+            cabal update && exit 0
+            echo "cabal update failed (attempt $i), retrying..."
+            sleep 5
+          done
+          exit 1
 
       - name: Cache cabal store
         uses: actions/cache@v4
