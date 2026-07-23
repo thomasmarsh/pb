@@ -40,6 +40,7 @@ module PB.Analysis.TypeResolve
   , resolveGlobalTypes
   , resolveCalls
   , resolveVirtual
+  , resolveAncestorChain
   , ancestorChain
   , buildProcMap
   , buildObjectSet
@@ -1022,6 +1023,32 @@ resolveGlobalTypes vars objs userTypes = map resolve vars
 -- result — not @anc@'s own casing, which is only however some file's
 -- 'inherits' entry happened to spell that ancestor and can genuinely differ
 -- from the ancestor's own declaration in its own file.
+-- | Ancestor-chain-only resolution: walk @objN@'s own ancestor chain and
+-- return the first entry (nearest first) whose procMap contains @toNameIdent@.
+-- Deliberately excludes 'resolveVirtual''s "global fallback" (searching
+-- every object in the corpus outside the chain) -- callers that need a
+-- receiver-precise match without that corpus-wide fallback's
+-- misattribution risk (e.g. 'resolveOne''s builtin-method dispatch) use
+-- this directly instead of 'resolveVirtual'.
+resolveAncestorChain
+  :: Ident
+  -> Ident
+  -> IdentMap IdentSet
+  -> Map.Map Ident Ident
+  -> Maybe (Text, Text, Text)
+resolveAncestorChain toNameIdent objN procMap inherits =
+  let chain = ancestorChain objN inherits
+      found = [ (anc, objIdent, orig)
+              | anc <- chain
+              , Just (objIdent, procs) <- [identMapLookup anc procMap]
+              , Just orig <- [identSetLookup toNameIdent procs]
+              ]
+  in case found of
+       ((anc, objIdent, orig):_) ->
+         let kind = if anc == objN then "virtual" else "inherited"
+         in Just (identOrig objIdent, identOrig orig, kind)
+       [] -> Nothing
+
 resolveVirtual
   :: Ident
   -> Ident
@@ -1029,28 +1056,21 @@ resolveVirtual
   -> Map.Map Ident Ident
   -> (Maybe Text, Maybe Text, Text, Text)
 resolveVirtual toNameIdent objN procMap inherits =
-  let chain  = ancestorChain objN inherits
-      found  = [ (anc, objIdent, orig)
-               | anc <- chain
-               , Just (objIdent, procs) <- [identMapLookup anc procMap]
-               , Just orig <- [identSetLookup toNameIdent procs]
-               ]
-  in case found of
-       ((anc, objIdent, orig):_) ->
-         let kind = if anc == objN then "virtual" else "inherited"
-         in (Just (identOrig objIdent), Just (identOrig orig), kind, "high")
-       [] ->
-         -- Global fallback: if this name exists in exactly one object outside the
-         -- caller's ancestor chain, resolve there (matches Python global_procs logic).
-         let chainSet    = Set.fromList chain
-             globalMatch = [ (objIdent, orig)
-                           | (objIdent, procs) <- identMapToList procMap
-                           , Just orig <- [identSetLookup toNameIdent procs]
-                           , objIdent `Set.notMember` chainSet
-                           ]
-         in case globalMatch of
-              [(objIdent, orig)] -> (Just (identOrig objIdent), Just (identOrig orig), "virtual", "high")
-              _                  -> (Nothing, Nothing, "unresolved", "low")
+  case resolveAncestorChain toNameIdent objN procMap inherits of
+    Just (tObj, tProc, kind) -> (Just tObj, Just tProc, kind, "high")
+    Nothing ->
+      -- Global fallback: if this name exists in exactly one object outside the
+      -- caller's ancestor chain, resolve there (matches Python global_procs logic).
+      let chain       = ancestorChain objN inherits
+          chainSet    = Set.fromList chain
+          globalMatch = [ (objIdent, orig)
+                        | (objIdent, procs) <- identMapToList procMap
+                        , Just orig <- [identSetLookup toNameIdent procs]
+                        , objIdent `Set.notMember` chainSet
+                        ]
+      in case globalMatch of
+           [(objIdent, orig)] -> (Just (identOrig objIdent), Just (identOrig orig), "virtual", "high")
+           _                  -> (Nothing, Nothing, "unresolved", "low")
 
 -- | Resolve all call sites to their targets using cross-file proc and inherits maps.
 resolveCalls
@@ -1098,10 +1118,18 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
              else resolveVirtual toNameIdent (mkIdent (csObject site)) procMap inherits
       "ExCallArg"    -> resolveVirtual (mkIdent (csToName cs)) (mkIdent (csObject cs)) procMap inherits
       "ExMethodCall" ->
-        if identCanon (mkIdent (csToName site)) `Set.member` builtinMethods
-          then (Nothing, Nothing, "builtin", "high")
-          else case csReceiverObject site of
-                 Just recvTy -> resolveVirtual (mkIdent (csToName site)) (mkIdent recvTy) procMap inherits
-                 Nothing     -> (Nothing, Nothing, "unresolved", "low")
+        case csReceiverObject site of
+          Just recvTy ->
+            case resolveAncestorChain (mkIdent (csToName site)) (mkIdent recvTy) procMap inherits of
+              Just (tObj, tProc, kind) -> (Just tObj, Just tProc, kind, "high")
+              Nothing
+                | identCanon (mkIdent (csToName site)) `Set.member` builtinMethods ->
+                    (Nothing, Nothing, "builtin", "high")
+                | otherwise ->
+                    resolveVirtual (mkIdent (csToName site)) (mkIdent recvTy) procMap inherits
+          Nothing ->
+            if identCanon (mkIdent (csToName site)) `Set.member` builtinMethods
+              then (Nothing, Nothing, "builtin", "high")
+              else (Nothing, Nothing, "unresolved", "low")
       "ExDispatch"   -> (Nothing, Nothing, "unresolved", "low")
       _              -> (Nothing, Nothing, "unresolved", "low")

@@ -1353,6 +1353,60 @@ tests = testGroup "TypeResolve"
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "virtual"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "ExMethodCall on a receiver whose type is a real runtime/*.sru stdlib class resolves via its own procMap, not the flat builtin short-circuit" $ do
+          -- window.sru declares "public subroutine SetFocus ()" for real --
+          -- a method call on a receiver typed "window" must resolve to that
+          -- real (object="window", proc="SetFocus") pair via the ancestor-
+          -- chain lookup, even though "setfocus" is ALSO a known builtin
+          -- method name -- the receiver's own procMap entry must win.
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "SetFocus"
+                , csCallType = "ExMethodCall"
+                , csLine     = Nothing
+                , csReceiverObject = Just "window"
+                , csToNameSpan     = Nothing
+                }
+              pm = identMapFromList [ ("window", identSetSingleton "SetFocus") ]
+          case resolveCalls [site] pm Map.empty Set.empty (Set.singleton "setfocus") of
+            [rc] -> do
+              rcKind rc         @?= "virtual"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Just "window"
+              rcTargetProc   rc @?= Just "SetFocus"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "ExMethodCall on a receiver with no matching method still falls back to kind=builtin, not the risky global-fallback match, when the name is a known builtin method" $ do
+          -- pm deliberately ALSO has an unrelated object "w_other" declaring
+          -- its own "Pos" method -- resolveVirtual's global fallback would
+          -- find and misattribute to it if this dispatch path fell through
+          -- to full resolveVirtual. The fix must stop at kind=builtin
+          -- instead, since "pos" is a known builtin method name and
+          -- "string" (the real receiver) doesn't declare it itself.
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "Pos"
+                , csCallType = "ExMethodCall"
+                , csLine     = Nothing
+                , csReceiverObject = Just "string"
+                , csToNameSpan     = Nothing
+                }
+              pm = identMapFromList
+                     [ ("string",  identSetEmpty)
+                     , ("w_other", identSetSingleton "Pos")
+                     ]
+          case resolveCalls [site] pm Map.empty Set.empty (Set.singleton "pos") of
+            [rc] -> do
+              rcKind rc         @?= "builtin"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Nothing
+              rcTargetProc   rc @?= Nothing
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
       ]
   , testGroup "extractDwCallSites"
     [ testCase "empty DW yields no call sites" $ do
