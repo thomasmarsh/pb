@@ -665,6 +665,56 @@ tests = testGroup "TypeResolve"
               (rvrKind tail_, rvrDeclaredType tail_) @?= ("builtin_property", Nothing)
             other -> assertFailure ("expected 2 refs (one per segment), got " ++ show (length other))
 
+      , testCase "instance var declared via a standalone top-level 'type variables' block resolves (the real corpus + runtime/*.sru convention, distinct from the nested-TypeBlock-body layout-property convention)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srVariables  = [ VariablesBlock TypeVars
+                                     [ VarDecl [] "long" (SourceSpan 1 1 1 1) "il_row" ] ]
+                , srFunctions  = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "this" Nothing, LvSegment "il_row" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [_receiver, tail_] ->
+              (rvrKind tail_, rvrTargetObject tail_, rvrDeclaredType tail_)
+                @?= ("instance", Just "w_test", Just "long")
+            other -> assertFailure ("expected 2 refs, got " ++ show (length other))
+
+      , testCase "TypeVars-scoped instance var of one class does not leak into another class's global scope (collision regression)" $ do
+          let sfA = emptySrFile
+                { srTypeBlocks = [ mkTB "w_a" "window" ]
+                , srVariables  = [ VariablesBlock TypeVars
+                                     [ VarDecl [] "long" (SourceSpan 1 1 1 1) "il_count" ] ]
+                }
+              sfB = emptySrFile
+                { srTypeBlocks = [ mkTB "w_b" "window" ]
+                , srFunctions  = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "il_count" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sfA, sfB]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_b" sfB of
+            [r] -> rvrKind r @?= "builtin_property"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "layout-property tbBody var and top-level 'type variables' var coexist on the same class, both resolve" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
+                        [ Located 1 (BsLocalVar [] (PtPrimitive "integer") "width" Nothing) ] ]
+                , srVariables  = [ VariablesBlock TypeVars
+                                     [ VarDecl [] "long" (SourceSpan 1 1 1 1) "il_row" ] ]
+                , srFunctions  = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "this" Nothing, LvSegment "width" Nothing]))))
+                    , Located 6 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "this" Nothing, LvSegment "il_row" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [_r1, tWidth, _r2, tRow] -> do
+              rvrDeclaredType tWidth @?= Just "integer"
+              rvrDeclaredType tRow   @?= Just "long"
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
+
       , testCase "dotted: inherited builtin property resolves via ancestor chain, not just a direct name match" $ do
           -- w_printer's own name is not "window", but it descends from it
           -- (Plan 196 Phase 4, item 3 -- real corpus: afxlib.pbl/w_printer.srw:97,

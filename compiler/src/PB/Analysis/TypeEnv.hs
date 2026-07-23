@@ -130,7 +130,9 @@ withDwParamBindings binds ws = ws { weDwParamBindings = binds }
 withDwTables :: Map.Map Text DwTable -> WorkspaceEnv -> WorkspaceEnv
 withDwTables tbls ws = ws { weDwTables = tbls }
 
--- Globals: srGlobalInstances + forward instances + srVariables (NOT TypeBlock body vars).
+-- Globals: srGlobalInstances + forward instances + GlobalVars-scoped
+-- srVariables (NOT TypeVars-scoped srVariables, which are a class's own
+-- instance vars -- see extractInstanceVars).
 extractWsGlobals :: SrFile -> Map.Map Ident PbType
 extractWsGlobals sf =
   Map.fromList [ (giName gi, parseTypeTextAt (giTypeSpan gi) (giType gi))
@@ -142,22 +144,36 @@ extractWsGlobals sf =
                       | gi <- gis ]
   <> Map.fromList
        [ (vdName d, parseTypeTextAt (vdTypeSpan d) (vdType d))
-       | VariablesBlock { varDecls = decls } <- srVariables sf
+       | VariablesBlock { varScope = GlobalVars, varDecls = decls } <- srVariables sf
        , d <- decls
        ]
 
--- Instance vars: BsLocalVar nodes in non-within TypeBlock bodies, keyed by object name.
+-- Instance vars: BsLocalVar nodes in non-within TypeBlock bodies (the
+-- layout-property convention, e.g. "integer width = 1792" nested directly
+-- in "global type X from Y ... end type"), unioned with any TypeVars-scoped
+-- srVariables block (the standalone "type variables ... end variables"
+-- convention real corpus .sru/.srw files and runtime/*.sru stdlib stubs use
+-- for named instance vars) -- both attach to the file's own primary object.
 extractInstanceVars :: SrFile -> Map.Map Ident (Map.Map Ident PbType)
-extractInstanceVars sf = Map.fromList
-  [ ( tdName (tbDecl tb)
-    , Map.fromList
-        [ (vn, vt)
-        | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
-        ]
-    )
-  | tb <- srTypeBlocks sf
-  , tdWithin (tbDecl tb) == Nothing
-  ]
+extractInstanceVars sf = Map.unionWith (<>) fromTypeBlocks fromTypeVarsBlock
+  where
+    fromTypeBlocks = Map.fromList
+      [ ( tdName (tbDecl tb)
+        , Map.fromList
+            [ (vn, vt)
+            | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
+            ]
+        )
+      | tb <- srTypeBlocks sf
+      , tdWithin (tbDecl tb) == Nothing
+      ]
+    fromTypeVarsBlock =
+      let vars = Map.fromList
+            [ (vdName d, parseTypeTextAt (vdTypeSpan d) (vdType d))
+            | VariablesBlock { varScope = TypeVars, varDecls = decls } <- srVariables sf
+            , d <- decls
+            ]
+      in if Map.null vars then Map.empty else Map.singleton (fst (srPrimaryObject sf)) vars
 
 -- | Build a ScopedTypeEnv for one (object, params) pair from a WorkspaceEnv.
 -- 'steInstance' merges every ancestor's own instance vars, nearest first
