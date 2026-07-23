@@ -129,7 +129,7 @@ function linkSpan(cls: string, linkType: string, name: string, line: number, col
 // a name-based object-link lookup for class/window/DataWindow names that
 // resolved_var_refs doesn't cover (any reference not shaped as this/super --
 // see PB.Analysis.TypeResolve.classifyLvalueRef's "class" kind).
-function linkWord(word: string, lower: string, col: number, lineNum: number, link: IdentifierLinkContext): string {
+function linkWord(word: string, lower: string, col: number, lineNum: number, link: IdentifierLinkContext): string | null {
   const escaped = escapeHtml(word);
   const key = `${lineNum}:${col + 1}`;
   const call = link.callSpans.get(key);
@@ -144,7 +144,7 @@ function linkWord(word: string, lower: string, col: number, lineNum: number, lin
   if (lower !== link.selfName.toLowerCase() && link.objectMap.has(lower)) {
     return linkSpan("src-link-obj", "object", word, lineNum, col + 1, escaped);
   }
-  return escaped;
+  return null;
 }
 
 export function highlightLine(
@@ -246,15 +246,20 @@ export function highlightLine(
         i = j + 1;
         continue;
       }
+      if (PS_PRONOUNS.has(lower)) {
+        const linked = link && lineNum != null ? linkWord(word, lower, i, lineNum, link) : null;
+        result += linked ?? `<span style="color:${COLORS.pronoun}">${escapeHtml(word)}</span>`;
+        i = j;
+        continue;
+      }
       let color: string | null = null;
       if (PS_KEYWORDS.has(lower)) color = COLORS.keyword;
       else if (PS_TYPES.has(lower)) color = COLORS.type;
       else if (PS_BUILTINS.has(lower)) color = COLORS.builtin;
-      else if (PS_PRONOUNS.has(lower)) color = COLORS.pronoun;
       if (color) {
         result += `<span style="color:${color}">${escapeHtml(word)}</span>`;
       } else if (link && lineNum != null && !PB_KEYWORDS.has(lower)) {
-        result += linkWord(word, lower, i, lineNum, link);
+        result += linkWord(word, lower, i, lineNum, link) ?? escapeHtml(word);
       } else {
         result += escapeHtml(word);
       }

@@ -697,9 +697,6 @@ body {
 }
 .src-link {
     cursor: pointer;
-    text-decoration: underline;
-    text-decoration-style: dotted;
-    text-underline-offset: 2px;
 }
 .src-link-proc  { color: #a78bfa; }
 .src-link-proc:hover  { color: #c4b5fd; }

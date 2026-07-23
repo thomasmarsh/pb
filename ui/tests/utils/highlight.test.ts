@@ -151,6 +151,21 @@ describe("highlightPowerScript — identifier linking", () => {
     expect(html).not.toContain("data-link-type");
   });
 
+  it("does not link a true keyword even when a var span collides with its position", () => {
+    const ref = makeVarRef({ kind: "local", name: "if" });
+    const link = linkCtx({ varSpans: new Map([["1:1", ref]]) });
+    const html = highlightPowerScript("if true then", link);
+    expect(html).not.toContain("data-link-type");
+  });
+
+  it("links a pronoun (this) when a var span is present at its position", () => {
+    const ref = makeVarRef({ kind: "class", name: "this" });
+    const link = linkCtx({ varSpans: new Map([["1:1", ref]]) });
+    const html = highlightPowerScript("this.foo", link);
+    expect(html).toContain('data-link-type="var"');
+    expect(html).toContain("src-link-obj");
+  });
+
   it("does not link words inside comments", () => {
     const call = makeCall();
     const link = linkCtx({ callSpans: new Map([["1:9", call]]) });
