@@ -577,10 +577,52 @@ tests = testGroup "TypeResolve"
               idx   = buildControlIndex [sf]
           case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
             [r1, r2, r3] -> do
-              (rvrKind r1, rvrTargetObject r1) @?= ("class",   Just "w_test")
-              (rvrKind r2, rvrTargetObject r2) @?= ("class",   Just "window")
-              (rvrKind r3, rvrTargetObject r3) @?= ("control", Just "datawindow")
+              (rvrKind r1, rvrTargetObject r1) @?= ("class",        Just "w_test")
+              (rvrKind r2, rvrTargetObject r2) @?= ("class_static", Just "window")
+              (rvrKind r3, rvrTargetObject r3) @?= ("control",      Just "datawindow")
             other -> assertFailure ("expected 3 refs, got " ++ show (length other))
+
+      , testCase "bare class-qualified receiver resolves via a workspace-wide declared TypeDecl name, kind=class_static (w_main::event shape)" $ do
+          let body = [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "w_main" Nothing])))) ]
+              sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , mkTB "w_main" "window"
+                    ]
+                , srFunctions = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [r1] -> (rvrKind r1, rvrTargetObject r1) @?= ("class_static", Just "w_main")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "same-named in-scope instance var wins over class_static (precedence)" $ do
+          let body = [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "w_main" Nothing])))) ]
+              sf = emptySrFile
+                { srTypeBlocks =
+                    [ TypeBlock (mkTypeDecl "w_test" "window" Nothing)
+                        [ Located 1 (BsLocalVar [] (PtPrimitive "integer") "w_main" Nothing) ]
+                    , mkTB "w_main" "window"
+                    ]
+                , srFunctions = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [r1] -> (rvrKind r1, rvrTargetObject r1) @?= ("instance", Just "w_test")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "identifier matching no TypeDecl and no scope entry stays unresolved" $ do
+          -- No 'srTypeBlocks' for "w_test" (matching the existing "single
+          -- segment matching nothing in scope" fixture) -- declaring one
+          -- with ancestor "window" would make 'isBuiltinFamily' true and
+          -- mask the fallback this test targets.
+          let body = [ Located 5 (BsReturn (Just (ExLvalue (Lvalue [LvSegment "zzz_unknown" Nothing])))) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r1] -> rvrKind r1 @?= "unresolved"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
 
       , testCase "dotted: every segment of uo_1.ai_count resolves independently, not just the tail" $ do
           let sf = emptySrFile

@@ -113,6 +113,7 @@ const VAR_LINK_CLASS: Record<ResolvedVarRefInfo["kind"], string | null> = {
   global: "src-link-global",
   control: "src-link-control",
   class: "src-link-obj",
+  class_static: "src-link-obj",
   builtin_property: "src-link-builtin",
   dw_column: "src-link-dwcolumn",
   unresolved: null,

@@ -292,7 +292,7 @@ data ResolvedVarRef = ResolvedVarRef
   , rvrName         :: Text
   , rvrAccess       :: Text          -- "read" | "write"
   , rvrTargetObject :: Maybe Text
-  , rvrKind         :: Text   -- "local" | "param" | "instance" | "global" | "control" | "class" | "builtin_property" | "unresolved"
+  , rvrKind         :: Text   -- "local" | "param" | "instance" | "global" | "control" | "class" | "class_static" | "builtin_property" | "unresolved"
   , rvrConfidence   :: Text   -- "high" | "unresolved"
   , rvrSpan         :: Maybe SourceSpan
     -- ^ The real source span of this occurrence's own identifier segment
@@ -650,7 +650,7 @@ classifyChainHops wsEnv env obj proc_ lv =
       | identCanon n == "super" =
           case Map.lookup (mkIdent obj) (steHierarchy env) of
             Just anc -> let ancTy = T.toLower (identOrig anc)
-                        in ("class", Just (identOrig anc), "high", Just ancTy, Just (mkOrdinary ancTy Nothing literalAnchor))
+                        in ("class_static", Just (identOrig anc), "high", Just ancTy, Just (mkOrdinary ancTy Nothing literalAnchor))
             Nothing  -> ("unresolved", Nothing, "unresolved", Nothing, Nothing)
       | Just ty <- Map.lookup n (steLocal env) =
           let tyTxt   = T.toLower (renderPbType ty)
@@ -676,6 +676,13 @@ classifyChainHops wsEnv env obj proc_ lv =
       | Just ctrlTy <- literalCtrl =
           ("control", Just ctrlTy, "high", Just ctrlTy,
            Just (mkOrdinary ctrlTy (dwBindingFor obj [nSeg]) literalAnchor))
+      | Map.member n (steHierarchy env) =
+          -- A bare segment naming its own declared class/window/UDT rather
+          -- than an in-scope variable holding one -- e.g. @w_main::event()@.
+          -- Ordered after every real in-scope check above so an actual
+          -- local\/instance\/global\/control wins over a same-named type.
+          let tyTxt = identCanon n
+          in ("class_static", Just (identOrig n), "high", Just tyTxt, Just (mkOrdinary tyTxt Nothing literalAnchor))
       | isBuiltinFamily obj =
           -- A bare, unqualified name inside the enclosing object's own
           -- script is an implicit @this.@ access -- if 'obj' itself is (or
