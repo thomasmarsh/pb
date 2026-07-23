@@ -22,10 +22,11 @@ parseStdlibFiles = mapM parseOne stdlibBytes
       let virtualPath = "__stdlib__/" <> takeFileName path
           src         = stripBom (TE.decodeUtf8 bytes)
       in case parsePowerScriptFile src of
-           Left  err      -> error ("stdlib: " <> virtualPath <> ": " <> T.unpack err)
-           Right (sf, sp) -> pure ParsedFile
+           Left  err           -> error ("stdlib: " <> virtualPath <> ": " <> T.unpack err)
+           Right (sf, sp, tks) -> pure ParsedFile
              { pfPath     = virtualPath
              , pfSrFile   = sf
              , pfSpans    = sp
              , pfContents = src
+             , pfTokens   = tks
              }

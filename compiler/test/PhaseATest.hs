@@ -6,6 +6,7 @@ import PB.Pipeline.DuckDb.Appender (AppenderPool, withAppenderPool)
 import PB.Pipeline.DuckDb.PhaseA
 import PB.Analysis.DeadVars
   ( DeadVarFinding (..), DeadVarKind (..) )
+import PB.Lexing.Token (Token (..), TokenKind (..), SourceSpan (..))
 import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
 import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (testCase, assertEqual)
@@ -15,13 +16,16 @@ phaseATables =
   [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
   , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
   , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
-  , "source_files", "parse_errors"
+  , "source_files", "parse_errors", "identifier_tokens"
   , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
   , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
   , "dw_arguments"
   , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
   , "dead_vars"
   ]
+
+mkTok :: TokenKind -> Text -> (Int, Int, Int, Int) -> Token
+mkTok kind txt (sl, sc, el, ec) = Token kind txt (SourceSpan sl sc el ec)
 
 withTestPool :: Handle -> (AppenderPool -> IO a) -> IO a
 withTestPool conn = withAppenderPool conn phaseATables
@@ -37,6 +41,9 @@ tests = testGroup "PhaseA"
   , testCase "appendDwRetrieveWhere accepts rows"    testAppendDwRetrieveWhere
   , testCase "appendDwArguments accepts rows"        testAppendDwArguments
   , testCase "appendDeadVars round-trip"             testAppendDeadVars
+  , testCase "identifierTokenRows keeps only identifier-shaped tokens" testIdentifierTokenRowsFilter
+  , testCase "identifierTokenRows counts duplicate-text occurrences independently" testIdentifierTokenRowsDuplicates
+  , testCase "appendIdentifierTokens round-trip"     testAppendIdentifierTokens
   ]
 
 testInitSchema :: IO ()
@@ -178,5 +185,72 @@ testAppendDeadVars = withHandle inMemory $ \conn -> do
   assertEqual "dead_vars round-trips DeadVarFinding rows"
     [ DeadVarRow "w_test" "of_save" "as_param"  Nothing   "unused-param"
     , DeadVarRow "w_test" "of_save" "li_unused" (Just 12) "never-read"
+    ]
+    rows
+
+-- | Mixed token kinds: identifier-shaped ('TkIdent'/'TkOtherKw'/'TkSqlKw'/
+--   'TkDatatype') kept, structural/operator kinds ('TkDot'/'TkLParen') and a
+--   real control keyword excluded from the file's coverage denominator.
+testIdentifierTokenRowsFilter :: IO ()
+testIdentifierTokenRowsFilter =
+  let toks =
+        [ mkTok TkIdent     "super"  (1, 1, 1, 6)
+        , mkTok TkDoubleColon "::"   (1, 6, 1, 8)
+        , mkTok TkOtherKw   "create" (1, 8, 1, 14)
+        , mkTok TkDot       "."      (2, 5, 2, 6)
+        , mkTok TkLParen    "("      (2, 10, 2, 11)
+        , mkTok TkControlKw "if"     (3, 1, 3, 3)
+        , mkTok TkDatatype  "string" (4, 1, 4, 7)
+        , mkTok TkSqlKw     "select" (5, 1, 5, 7)
+        ]
+      rows = identifierTokenRows "w_test.srw" toks
+  in assertEqual "only identifier-shaped tokens survive, spans preserved"
+       [ IdentifierTokenRow "w_test.srw" "super"  "TkIdent"    (SourceSpan 1 1 1 6)
+       , IdentifierTokenRow "w_test.srw" "create" "TkOtherKw"  (SourceSpan 1 8 1 14)
+       , IdentifierTokenRow "w_test.srw" "string" "TkDatatype" (SourceSpan 4 1 4 7)
+       , IdentifierTokenRow "w_test.srw" "select" "TkSqlKw"    (SourceSpan 5 1 5 7)
+       ]
+       rows
+
+-- | Two occurrences of the same identifier text at different spans must
+--   both survive as distinct rows -- coverage is per-occurrence, not
+--   per-distinct-name.
+testIdentifierTokenRowsDuplicates :: IO ()
+testIdentifierTokenRowsDuplicates =
+  let toks =
+        [ mkTok TkIdent "li_count" (1, 1, 1, 9)
+        , mkTok TkIdent "li_count" (2, 1, 2, 9)
+        ]
+      rows = identifierTokenRows "w_test.srw" toks
+  in assertEqual "duplicate-text tokens counted independently by span"
+       [ IdentifierTokenRow "w_test.srw" "li_count" "TkIdent" (SourceSpan 1 1 1 9)
+       , IdentifierTokenRow "w_test.srw" "li_count" "TkIdent" (SourceSpan 2 1 2 9)
+       ]
+       rows
+
+data IdentifierTokenReadback = IdentifierTokenReadback Text Text Text Int Int Int Int
+  deriving (Eq, Show)
+
+instance FromRow IdentifierTokenReadback where
+  fromRow = IdentifierTokenReadback
+    <$> field <*> field <*> field <*> field <*> field <*> field <*> field
+
+testAppendIdentifierTokens :: IO ()
+testAppendIdentifierTokens = do
+  rows <- withHandle inMemory $ \conn -> do
+    initSchema conn
+    withTestPool conn $ \pool -> do
+      appendIdentifierTokens pool
+        [ IdentifierTokenRow "w_test.srw" "super"  "TkIdent"   (SourceSpan 1 1 1 6)
+        , IdentifierTokenRow "w_test.srw" "create" "TkOtherKw" (SourceSpan 1 8 1 14)
+        ]
+      -- Appending an empty list after a real batch must not throw
+      appendIdentifierTokens pool []
+    queryHandle conn
+      "SELECT file, text, kind, start_line, start_col, end_line, end_col \
+      \FROM identifier_tokens ORDER BY start_col"
+  assertEqual "identifier_tokens round-trips IdentifierTokenRow rows"
+    [ IdentifierTokenReadback "w_test.srw" "super"  "TkIdent"   1 1 1 6
+    , IdentifierTokenReadback "w_test.srw" "create" "TkOtherKw" 1 8 1 14
     ]
     rows

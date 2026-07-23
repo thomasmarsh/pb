@@ -93,6 +93,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , SourceFileRow (..)
+  , IdentifierTokenRow (..), identifierTokenRows
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
   , appendDwWriteColumns, appendDwWhereColumns, appendDwJoins
@@ -106,6 +107,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , appendTaintReturnRows
   , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
   , appendParseErrors, appendSourceFiles
+  , appendIdentifierTokens
   )
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
@@ -169,6 +171,7 @@ data CompiledPs = CompiledPs
   , cpsTaintIntraEdges :: [TaintIntraEdgeRow]
   , cpsTaintReturnRows :: [TaintReturnRow]
   , cpsSourceContent :: Maybe SourceFileRow
+  , cpsIdentifierTokens :: [IdentifierTokenRow]
   }
 
 data CompiledDw = CompiledDw
@@ -189,6 +192,7 @@ data CompiledDw = CompiledDw
   , cdCallSites        :: [CallSite]
   , cdVarRefs          :: [ResolvedVarRef]
   , cdSourceContent    :: Maybe SourceFileRow
+  , cdIdentifierTokens :: [IdentifierTokenRow]
   }
 
 data CompiledFile
@@ -422,6 +426,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
       , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes, _) <- procs ]
       , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs) <- procs ]
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
+      , cpsIdentifierTokens = identifierTokenRows fp (pfTokens pf)
       }
 
   PsDw fp contents dw -> do
@@ -501,6 +506,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
       , cdCallSites        = css
       , cdVarRefs          = vrs
       , cdSourceContent    = Just (SourceFileRow fpT contents)
+      , cdIdentifierTokens = identifierTokenRows fpT
+          (concatMap (\c -> dwcExpressionTokens c <> dwcFormatTokens c) (dwControls dw))
       }
 
   PsFailed fp err -> pure $ CFError fp err
@@ -670,6 +677,7 @@ appendToDb pool (CFPs r) = do
   appendTaintIntraEdges pool (cpsTaintIntraEdges r)
   appendTaintReturnRows pool (cpsTaintReturnRows r)
   appendSourceFiles pool (catMaybes [cpsSourceContent r])
+  appendIdentifierTokens pool (cpsIdentifierTokens r)
 appendToDb pool (CFDw r) = do
   let dw = cdDwObjectRow r
   appendObjects           pool [ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"]
@@ -685,6 +693,7 @@ appendToDb pool (CFDw r) = do
   appendCallSites        pool (cdCallSites r)
   appendVarRefs          pool (cdVarRefs r)
   appendSourceFiles      pool (catMaybes [cdSourceContent r])
+  appendIdentifierTokens pool (cdIdentifierTokens r)
 appendToDb pool (CFError fp err) =
   appendParseErrors pool [(fp, err)]
 appendToDb _    CFSkip = pure ()
@@ -881,7 +890,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
           , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
           , "taint_intra_edges", "taint_return_rows"
-          , "source_files", "parse_errors"
+          , "source_files", "parse_errors", "identifier_tokens"
           , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
           , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
           , "dw_arguments"

@@ -5,7 +5,7 @@ import PB.AST.DataWindow
 import PB.AST.Expr           (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Ident          (identSpan, provenanceSpan)
 import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
-import PB.Lexing.Token       (SourceSpan (..))
+import PB.Lexing.Token       (SourceSpan (..), tkText)
 import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parsePbSelect,
                                parseColumn, parseDwBand, parseDwGroup, parseGroupBy,
                                parseDwObjectAttrs)
@@ -222,6 +222,38 @@ tests = testGroup "DataWindow"
                 Just (ExLvalue (Lvalue [LvSegment ident Nothing])) ->
                   provenanceSpan (identSpan ident) @?= Just (SourceSpan 5 40 5 49)
                 other -> assertFailure ("expected simple lvalue expression, got " <> show other)
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "dwcExpressionTokens/dwcFormatTokens carry the raw lexed tokens dwcParsedExpression/Format were parsed from (Plan 201 Phase 5a)" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "compute(band=detail expression=\"ii_amount\" format=\"[GENERAL]~tii_fmt\" )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case dwControls dw of
+              [c] -> do
+                map tkText (dwcExpressionTokens c) @?= ["ii_amount"]
+                map tkText (dwcFormatTokens c)     @?= ["ii_fmt"]
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "dwcExpressionTokens/dwcFormatTokens are empty when no expression/format is present" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "compute(band=detail )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case dwControls dw of
+              [c] -> do
+                dwcExpressionTokens c @?= []
+                dwcFormatTokens     c @?= []
               cs -> assertFailure ("expected 1 control, got " <> show (length cs))
       ]
 

@@ -415,6 +415,14 @@ resolved_calls   (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_typ
                    to_name_start_line INT, to_name_start_col INT,
                    to_name_end_line INT, to_name_end_col INT)
 
+-- One row per lexed token whose kind is identifier-shaped (mirrors
+-- PB.Grammar.Body.isSegmentName), the raw token-level denominator for
+-- type-resolution coverage measurement -- a token position here with no
+-- matching resolved_var_refs/resolved_calls span is an identifier that
+-- never became a row at all.
+identifier_tokens (file TEXT, text TEXT, kind TEXT,
+                    start_line INT, start_col INT, end_line INT, end_col INT)
+
 -- Inter-procedural taint analysis
 interproc_edges     (caller_object TEXT, caller_proc TEXT, caller_line INT,
                       callee_object TEXT, callee_proc TEXT, edge_kind TEXT, var_name TEXT,

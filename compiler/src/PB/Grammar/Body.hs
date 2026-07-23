@@ -5,6 +5,7 @@ module PB.Grammar.Body
   , parseExpr
   , pBodyStmt
   , splitArgs
+  , isSegmentName
   ) where
 
 import PB.Prelude

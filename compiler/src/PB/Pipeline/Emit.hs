@@ -25,6 +25,7 @@ import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
+import PB.Lexing.Token      (Token (..))
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv,
                                 procEnv, ScopedTypeEnv)
@@ -110,18 +111,23 @@ runProject path _src = Right $ object
 
 runPowerScript :: FilePath -> Text -> Either Text Value
 runPowerScript path src = do
-  (srFile, spans) <- parsePowerScriptFile src
+  (srFile, spans, _toks) <- parsePowerScriptFile src
   let ws = buildWorkspaceEnv [srFile]
   Right (wrapSrFile False path srFile spans ws)
 
--- | Parse PowerScript source text to (SrFile, SrSpans).
-parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans)
+-- | Parse PowerScript source text to (SrFile, SrSpans, flat per-file token
+--   stream). The token stream is the same '[Statement]'/'stmtTokens' output
+--   'parseSrFileWithSpans' already consumes -- returned here (not re-lexed)
+--   so callers needing raw lexical coverage (e.g. 'PB.Pipeline.DuckDb.PhaseA.identifierTokenRows')
+--   don't duplicate the lex/split pipeline.
+parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans, [Token])
 parsePowerScriptFile src = do
   let logicalLines         = normalizeText src
       (headers, bodyLines) = stripHeaders logicalLines
       lexLines             = tokenize bodyLines
   stmts <- collectStatements lexLines
-  parseSrFileWithSpans headers stmts
+  (sf, spans) <- parseSrFileWithSpans headers stmts
+  pure (sf, spans, concatMap stmtTokens stmts)
 
 wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> WorkspaceEnv -> Value
 wrapSrFile withInstr path sf spans ws =
@@ -270,6 +276,7 @@ data ParsedFile = ParsedFile
   , pfSrFile   :: SrFile
   , pfSpans    :: SrSpans
   , pfContents :: Text
+  , pfTokens   :: [Token]
   }
 
 data ParseOutcome
@@ -291,8 +298,8 @@ parseOutcome root src = case fileKind src of
       Left  ex -> PsFailed rel (T.pack (show ex))
       Right contents ->
         case parsePowerScriptFile (stripBom contents) of
-          Left  err      -> PsFailed rel err
-          Right (sf, sp) -> PsParsed (ParsedFile rel sf sp contents)
+          Left  err           -> PsFailed rel err
+          Right (sf, sp, tks) -> PsParsed (ParsedFile rel sf sp contents tks)
   DataWindow -> do
     readResult <- try (readFile src) :: IO (Either SomeException Text)
     pure $ case readResult of

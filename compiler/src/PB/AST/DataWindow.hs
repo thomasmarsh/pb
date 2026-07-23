@@ -18,6 +18,7 @@ module PB.AST.DataWindow
 
 import PB.Prelude
 import PB.AST.Expr     (Expr)
+import PB.Lexing.Token (Token)
 import Control.DeepSeq (NFData)
 import Data.Map.Strict (Map)
 import GHC.Generics    (Generic)
@@ -132,8 +133,15 @@ data DwControl = DwControl
   , dwcVisible          :: Maybe Bool
   , dwcExpression       :: Maybe Text
   , dwcParsedExpression :: Maybe Expr
+  , dwcExpressionTokens :: [Token]
+    -- ^ Plan 201 Phase 5a: the raw lexed tokens 'dwcParsedExpression' was
+    -- parsed from, kept alongside (not just inside) the parsed 'Expr' --
+    -- the token-level type-resolution coverage denominator
+    -- ('PB.Pipeline.DuckDb.PhaseA.identifierTokenRows') needs the full
+    -- token stream, not just what survived into the AST.
   , dwcFormat           :: Maybe Text
   , dwcParsedFormat     :: Maybe Expr
+  , dwcFormatTokens     :: [Token]
   , dwcTabSeq           :: Maybe Int
   , dwcAttrs            :: Map Text Text
   } deriving (Eq, Show, Generic)

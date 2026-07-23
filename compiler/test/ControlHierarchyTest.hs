@@ -339,8 +339,8 @@ withFyloFixture check = do
       parsed <- traverse (\p -> parsePowerScriptFile <$> readFile p) paths
       case sequence parsed of
         Left e     -> assertFailure ("failed to parse fylo fixture: " <> T.unpack e)
-        Right pairs ->
-          let sfs = map fst pairs
+        Right triples ->
+          let sfs = [ sf | (sf, _, _) <- triples ]
               idx = buildControlIndex sfs
               inh = weHierarchy (buildWorkspaceEnv sfs)
           in check idx inh

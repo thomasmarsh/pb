@@ -262,6 +262,15 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \(file TEXT, error TEXT)"
       , "CREATE TABLE IF NOT EXISTS source_files \
         \(file TEXT PRIMARY KEY, lines TEXT)"
+      -- Plan 201 Phase 5a: one row per lexed token whose kind is
+      -- identifier-shaped (mirrors PB.Grammar.Body.isSegmentName), the raw
+      -- token-level denominator for type-resolution coverage measurement --
+      -- a token position here with no matching resolved_var_refs/
+      -- resolved_calls span is an identifier that never became a row at all
+      -- (invisible to a row-based coverage percentage).
+      , "CREATE TABLE IF NOT EXISTS identifier_tokens \
+        \(file TEXT, text TEXT, kind TEXT, \
+        \start_line INTEGER, start_col INTEGER, end_line INTEGER, end_col INTEGER)"
       -- Phase B tables
       , "CREATE TABLE IF NOT EXISTS resolved_types \
         \(file TEXT, object TEXT, proc_name TEXT, var_name TEXT, \

@@ -19,6 +19,8 @@ module PB.Pipeline.DuckDb.Relations
   , SchemaInputRows (..)
   , LegSourceFanout (..)
   , legSourceFanout
+  , TypeCoverageStats (..)
+  , typeCoverageStats
   , legSourceRows
   , stmtRows
   , seedRows
@@ -183,6 +185,57 @@ legSourceFanout conn = do
   pure $ case rows of
     [FanoutRow f] -> f
     _             -> LegSourceFanout 0 0 0
+
+-- ---------------------------------------------------------------------------
+-- Type-resolution coverage diagnostic
+
+-- | Plan 201 Phase 5a: type-resolution coverage, corrected to use the raw
+--   lexed token stream ('identifier_tokens') as the denominator rather than
+--   rows already present in 'resolved_var_refs'\/'resolved_calls' -- a chain
+--   that never became a row (e.g. an unparsed @::@ scope-resolution chain)
+--   is invisible to a row-based percentage, which over-reports coverage.
+--   Excludes the embedded stdlib's synthetic @__stdlib__\/@-prefixed rows,
+--   appended to every @--db@ run regardless of the target corpus.
+data TypeCoverageStats = TypeCoverageStats
+  { tcsTotalIdentifierTokens    :: !Int
+  , tcsResolvedIdentifierTokens :: !Int
+  , tcsVarRefTotal              :: !Int
+  , tcsVarRefResolved           :: !Int
+  , tcsCallTotal                :: !Int
+  , tcsCallResolved             :: !Int
+  } deriving (Eq, Show)
+
+newtype CoverageRow = CoverageRow TypeCoverageStats
+
+instance FromRow CoverageRow where
+  fromRow = (\a b c d e f -> CoverageRow (TypeCoverageStats a b c d e f))
+    <$> field <*> field <*> field <*> field <*> field <*> field
+
+typeCoverageStats :: Handle -> IO TypeCoverageStats
+typeCoverageStats conn = do
+  rows <- queryHandle conn
+    "WITH resolved_positions AS ( \
+    \  SELECT file, name_start_line AS l, name_start_col AS c \
+    \  FROM resolved_var_refs \
+    \  WHERE name_start_line IS NOT NULL AND file NOT LIKE '__stdlib__/%' \
+    \  UNION \
+    \  SELECT file, to_name_start_line AS l, to_name_start_col AS c \
+    \  FROM resolved_calls \
+    \  WHERE to_name_start_line IS NOT NULL AND file NOT LIKE '__stdlib__/%' \
+    \) \
+    \SELECT \
+    \  (SELECT COUNT(*) FROM identifier_tokens WHERE file NOT LIKE '__stdlib__/%'), \
+    \  (SELECT COUNT(*) FROM identifier_tokens it \
+    \     WHERE it.file NOT LIKE '__stdlib__/%' \
+    \     AND EXISTS (SELECT 1 FROM resolved_positions rp \
+    \                 WHERE rp.file = it.file AND rp.l = it.start_line AND rp.c = it.start_col)), \
+    \  (SELECT COUNT(*) FROM resolved_var_refs WHERE file NOT LIKE '__stdlib__/%'), \
+    \  (SELECT COUNT(*) FROM resolved_var_refs WHERE file NOT LIKE '__stdlib__/%' AND kind != 'unresolved'), \
+    \  (SELECT COUNT(*) FROM resolved_calls WHERE file NOT LIKE '__stdlib__/%'), \
+    \  (SELECT COUNT(*) FROM resolved_calls WHERE file NOT LIKE '__stdlib__/%' AND kind != 'unresolved')"
+  pure $ case rows of
+    [CoverageRow s] -> s
+    _               -> TypeCoverageStats 0 0 0 0 0 0
 
 -- ---------------------------------------------------------------------------
 -- Dead-code input relations

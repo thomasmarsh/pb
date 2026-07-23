@@ -18,6 +18,8 @@ module PB.Pipeline.DuckDb.PhaseA
   , CatalogFkRow (..)
   , CatalogCheckRow (..)
   , SourceFileRow (..)
+  , IdentifierTokenRow (..)
+  , identifierTokenRows
   -- Phase A appenders
   , appendObjects
   , appendProcedures
@@ -51,11 +53,14 @@ module PB.Pipeline.DuckDb.PhaseA
   , appendCatalogChecks
   , appendParseErrors
   , appendSourceFiles
+  , appendIdentifierTokens
   ) where
 
 import PB.Prelude
 import PB.AST.Ident             (identOrig, identSpan, provenanceSpan)
 import PB.AST.Type              (pbTypeSpan)
+import PB.Grammar.Body          (isSegmentName)
+import PB.Lexing.Token          (Token (..), SourceSpan (..))
 import PB.Analysis.TypeResolve  (LocalVar (..), CallSite (..), GlobalVar (..), ResolvedVarRef (..))
 import PB.Analysis.Dataflow     qualified as Dataflow
 import PB.Analysis.TaintEdges   qualified as TaintEdges
@@ -244,6 +249,16 @@ data SourceFileRow = SourceFileRow
   { sfrFile :: Text
   , sfrLines :: Text
   }
+
+-- | One lexed token whose kind is identifier-shaped ('isSegmentName'),
+--   the raw denominator for Plan 201 Phase 5a's type-resolution coverage
+--   metric.
+data IdentifierTokenRow = IdentifierTokenRow
+  { itrFile :: Text
+  , itrText :: Text
+  , itrKind :: Text
+  , itrSpan :: SourceSpan
+  } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- Phase A appenders
@@ -633,3 +648,25 @@ appendSourceFiles pool rows = appendRow pool "source_files" $ \app ->
   forEachRow app rows $ \_ r -> do
     aText app (sfrFile r)
     aText app (sfrLines r)
+
+-- | Filter a file's raw lexed token stream down to identifier-shaped rows
+--   ('isSegmentName', "PB.Grammar.Body") -- the token-level denominator for
+--   Plan 201 Phase 5a's coverage metric. A straight cast/filter over an
+--   already-computed token list, no decision logic.
+identifierTokenRows :: Text -> [Token] -> [IdentifierTokenRow]
+identifierTokenRows file toks =
+  [ IdentifierTokenRow file (tkText t) (T.pack (show (tkKind t))) (tkSpan t)
+  | t <- toks, isSegmentName t
+  ]
+
+appendIdentifierTokens :: AppenderPool -> [IdentifierTokenRow] -> IO ()
+appendIdentifierTokens _    [] = pure ()
+appendIdentifierTokens pool rows = appendRow pool "identifier_tokens" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (itrFile r)
+    aText app (itrText r)
+    aText app (itrKind r)
+    aInt  app (ssStartLine (itrSpan r))
+    aInt  app (ssStartCol  (itrSpan r))
+    aInt  app (ssEndLine   (itrSpan r))
+    aInt  app (ssEndCol    (itrSpan r))

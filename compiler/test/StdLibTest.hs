@@ -55,7 +55,7 @@ withStdlibDb act = withHandle inMemory $ \conn -> do
       [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
-      , "source_files", "parse_errors"
+      , "source_files", "parse_errors", "identifier_tokens"
       , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
       , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
       , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
@@ -111,10 +111,10 @@ testUserConfirmed = withHandle inMemory $ \conn -> do
   initSchema conn
   let src = "HA$PBExportHeader$w_test.srw\n\nglobal type w_test from window\nend type\n"
   case parsePowerScriptFile (stripBom src) of
-    Left  err      -> error ("parse: " <> T.unpack err)
-    Right (sf, sp) -> do
+    Left  err           -> error ("parse: " <> T.unpack err)
+    Right (sf, sp, tks) -> do
       let wsEnv = buildWorkspaceEnv [sf]
-          pf    = ParsedFile "w_test.srw" sf sp src
+          pf    = ParsedFile "w_test.srw" sf sp src tks
       withAppenderPool conn phaseATables $ \pool -> do
         cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsParsed pf)
         appendToDb pool cf
@@ -125,7 +125,7 @@ testUserConfirmed = withHandle inMemory $ \conn -> do
       [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
-      , "source_files", "parse_errors"
+      , "source_files", "parse_errors", "identifier_tokens"
       , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
       , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
       , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"

@@ -311,6 +311,8 @@ parseDwControl DwBlock { dwbKeyword = kw, dwbContent = content, dwbLine = blkLin
             raw         <- rawFmt
             (prefix, _) <- extractFormatExpr raw
             pure (advanceThroughText (line, col) prefix)
+        exprToks   = tokenizeExprAt <$> exprPos    <*> lookupQuoted "expression" attrs
+        fmtToks    = tokenizeExprAt <$> fmtExprPos <*> (snd <$> (rawFmt >>= extractFormatExpr))
     in DwControl
         { dwcType             = kw
         , dwcName             = lookupUnquoted "name" attrs
@@ -322,9 +324,11 @@ parseDwControl DwBlock { dwbKeyword = kw, dwbContent = content, dwbLine = blkLin
         , dwcHeight           = parseIntAttr  "height"      attrs
         , dwcVisible          = parseBoolAttr "visible"     attrs
         , dwcExpression       = lookupQuoted  "expression"  attrs
-        , dwcParsedExpression = parseExpr <$> (tokenizeExprAt <$> exprPos <*> lookupQuoted "expression" attrs)
+        , dwcParsedExpression = parseExpr <$> exprToks
+        , dwcExpressionTokens = fromMaybe [] exprToks
         , dwcFormat           = rawFmt
-        , dwcParsedFormat     = parseExpr <$> (tokenizeExprAt <$> fmtExprPos <*> (snd <$> (rawFmt >>= extractFormatExpr)))
+        , dwcParsedFormat     = parseExpr <$> fmtToks
+        , dwcFormatTokens     = fromMaybe [] fmtToks
         , dwcTabSeq           = parseIntAttr  "tabsequence" attrs
         , dwcAttrs            = collectResidualAttrs knownKeys attrs
         }

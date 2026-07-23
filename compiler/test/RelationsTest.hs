@@ -17,6 +17,7 @@ import PB.Pipeline.DuckDb.Relations
   , procRows, procMetaRows, inheritsRows, callRefRows, resolvedCallEdgeRows
   , entryRows, callsRows, CallRef (..), ResolvedCallEdge (..), CallEdge (..)
   )
+import PB.Pipeline.DuckDb.Relations (TypeCoverageStats (..), typeCoverageStats)
 import PB.Analysis.DeadCodeReachability (materializeDeadCodeClosure)
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Pipeline.DuckDb
@@ -24,13 +25,19 @@ import PB.Pipeline.DuckDb
   , queryHandle, executeHandle, inMemory
   )
 import PB.Pipeline.DuckDb.Appender (withAppenderPool)
-import PB.Pipeline.DuckDb.PhaseA (appendProcedures, ProcRow (..))
+import PB.Pipeline.DuckDb.PhaseA
+  ( appendProcedures, ProcRow (..)
+  , appendIdentifierTokens, IdentifierTokenRow (..)
+  , appendVarRefs
+  )
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( SchMorphismRow (..), ProcSummaryRow (..), queryCatFks
   , queryProcedures, queryResolvedCalls, queryObjectAncestors, queryDwObjects
   , querySchemaMorphismRows, querySchemaObjects
   )
-import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphisms)
+import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphisms, appendResolvedCalls)
+import PB.Analysis.TypeResolve (ResolvedVarRef (..), ResolvedCall (..))
+import PB.Lexing.Token (SourceSpan (..))
 import PB.Pipeline.DuckDb.Materialize
   ( materializeDeadCode
   , materializeImpliedFkPairs, materializeRiskCount
@@ -585,6 +592,95 @@ tests = testGroup "Relations"
               @?= [CallEdge "obj" "ev" "obj" "fn_a"]
         ]
       ]
+    ]
+
+  , -- Plan 201 Phase 5a: 'typeCoverageStats' is the token-level coverage
+    -- diagnostic, corrected to use 'identifier_tokens' (the raw lexed
+    -- token stream) as the denominator instead of rows already present in
+    -- 'resolved_var_refs'/'resolved_calls' -- an identifier that never
+    -- became a row (e.g. an unparsed @::@ chain) is invisible to a
+    -- row-based percentage, which over-reports coverage.
+    testGroup "TypeCoverageStats"
+    [ testCase "zero identifier_tokens rows: totals are 0, no crash" $
+        withHandle inMemory $ \conn -> do
+          initSchema conn
+          stats <- typeCoverageStats conn
+          stats @?= TypeCoverageStats 0 0 0 0 0 0
+
+    , testCase "a token with a matching resolved_var_refs span counts as resolved" $
+        withHandle inMemory $ \conn -> do
+          initSchema conn
+          withAppenderPool conn phaseATables $ \pool -> do
+            appendIdentifierTokens pool
+              [IdentifierTokenRow "f.srw" "li_count" "TkIdent" (SourceSpan 5 3 5 11)]
+            appendVarRefs pool
+              [ResolvedVarRef "f.srw" "w_test" "of_save" (Just 5) "li_count" "read"
+                              Nothing "local" "high" (Just (SourceSpan 5 3 5 11)) (Just "integer")]
+          stats <- typeCoverageStats conn
+          tcsTotalIdentifierTokens stats @?= 1
+          tcsResolvedIdentifierTokens stats @?= 1
+
+    , testCase "a token with a matching resolved_calls span counts as resolved" $
+        withHandle inMemory $ \conn -> do
+          initSchema conn
+          withAppenderPool conn phaseATables $ \pool ->
+            appendIdentifierTokens pool
+              [IdentifierTokenRow "f.srw" "Reset" "TkIdent" (SourceSpan 8 10 8 15)]
+          appendResolvedCalls conn
+            [ResolvedCall "f.srw" "dw_1" "of_save" "Reset" "method" (Just 8)
+                          Nothing Nothing "builtin" "high" (Just (SourceSpan 8 10 8 15))]
+          stats <- typeCoverageStats conn
+          tcsTotalIdentifierTokens stats @?= 1
+          tcsResolvedIdentifierTokens stats @?= 1
+
+    , testCase "a token that never became a row (Issue-1-shaped gap) is unresolved" $
+        withHandle inMemory $ \conn -> do
+          initSchema conn
+          withAppenderPool conn phaseATables $ \pool ->
+            appendIdentifierTokens pool
+              [ IdentifierTokenRow "f.srw" "super"  "TkIdent"   (SourceSpan 1 1 1 6)
+              , IdentifierTokenRow "f.srw" "create" "TkOtherKw" (SourceSpan 1 8 1 14)
+              ]
+          -- No resolved_var_refs/resolved_calls rows seeded: both tokens
+          -- fell into BsRaw before Phase 1 lands, exactly Issue 1's gap.
+          stats <- typeCoverageStats conn
+          tcsTotalIdentifierTokens stats @?= 2
+          tcsResolvedIdentifierTokens stats @?= 0
+
+    , testCase "duplicate-span identifier_tokens rows each count toward the denominator" $
+        withHandle inMemory $ \conn -> do
+          initSchema conn
+          withAppenderPool conn phaseATables $ \pool -> do
+            appendIdentifierTokens pool
+              [ IdentifierTokenRow "f.srw" "li_x" "TkIdent" (SourceSpan 2 1 2 5)
+              , IdentifierTokenRow "f.srw" "li_x" "TkIdent" (SourceSpan 2 1 2 5)
+              ]
+            appendVarRefs pool
+              [ResolvedVarRef "f.srw" "w_test" "of_save" (Just 2) "li_x" "read"
+                              Nothing "local" "high" (Just (SourceSpan 2 1 2 5)) Nothing]
+          stats <- typeCoverageStats conn
+          tcsTotalIdentifierTokens stats @?= 2
+          tcsResolvedIdentifierTokens stats @?= 2
+
+    , testCase "__stdlib__-prefixed rows are excluded from every count" $
+        withHandle inMemory $ \conn -> do
+          initSchema conn
+          withAppenderPool conn phaseATables $ \pool -> do
+            appendIdentifierTokens pool
+              [ IdentifierTokenRow "__stdlib__/base.sru" "li_x" "TkIdent" (SourceSpan 1 1 1 5)
+              , IdentifierTokenRow "corpus/f.srw"        "li_y" "TkIdent" (SourceSpan 1 1 1 5)
+              ]
+            appendVarRefs pool
+              [ ResolvedVarRef "__stdlib__/base.sru" "w_base" "of_x" (Just 1) "li_x" "read"
+                               Nothing "local" "high" (Just (SourceSpan 1 1 1 5)) Nothing
+              , ResolvedVarRef "corpus/f.srw" "w_test" "of_save" (Just 1) "li_y" "read"
+                               Nothing "local" "high" (Just (SourceSpan 1 1 1 5)) Nothing
+              ]
+          stats <- typeCoverageStats conn
+          tcsTotalIdentifierTokens stats @?= 1
+          tcsResolvedIdentifierTokens stats @?= 1
+          tcsVarRefTotal stats @?= 1
+          tcsVarRefResolved stats @?= 1
     ]
   ]
 

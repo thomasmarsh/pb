@@ -301,7 +301,7 @@ tests = testGroup "SchFootprint"
             case (parsePowerScriptFile srwSrc, parseDataWindow srdSrc) of
               (Left e, _) -> assertFailure ("failed to parse w_dw_copy.srw: " <> T.unpack e)
               (_, Left e) -> assertFailure ("failed to parse d_items.srd: " <> T.unpack e)
-              (Right (sf, _spans), Right dwFile) ->
+              (Right (sf, _spans, _toks), Right dwFile) ->
                 case [ ev | ev <- srEvents sf, esName (evSig ev) == "clicked", evOwner ev == Just "cb_getitem" ] of
                   [ev] -> do
                     let ws       = buildWorkspaceEnv [sf]
@@ -367,8 +367,8 @@ tests = testGroup "SchFootprint"
             case (sequence parsed, parseDataWindow srdSrc) of
               (Left e, _)  -> assertFailure ("failed to parse fylo fixture: " <> T.unpack e)
               (_, Left e)  -> assertFailure ("failed to parse dw_misth_fylo_epidom_list.srd: " <> T.unpack e)
-              (Right pairs, Right dwFile) ->
-                case map fst pairs of
+              (Right triples, Right dwFile) ->
+                case [ sf | (sf, _, _) <- triples ] of
                   [sf, sf2, sf3, sf4] -> do
                     let sfs = [sf, sf2, sf3, sf4]
                         ws  = buildWorkspaceEnv sfs

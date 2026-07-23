@@ -41,7 +41,7 @@ phaseATables =
   [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
   , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
   , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
-  , "source_files", "parse_errors"
+  , "source_files", "parse_errors", "identifier_tokens", "resolved_var_refs"
   , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
   , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
   , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"

@@ -3,6 +3,7 @@ module RunnerTest (tests) where
 import PB.Prelude
 import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, runModeDb, CompiledFile (..), CompiledPs (..), CompiledDw (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
+import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Pipeline.DuckDb.PhaseA
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
@@ -105,7 +106,7 @@ dwFixturePhaseATables :: [Text]
 dwFixturePhaseATables =
   [ "objects", "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
   , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
-  , "source_files"
+  , "source_files", "identifier_tokens", "resolved_var_refs", "call_sites"
   ]
 
 -- ---------------------------------------------------------------------------
@@ -371,7 +372,7 @@ tests = testGroup "Pipeline.Runner"
             ]
       in case parsePowerScriptFile src of
         Left err -> testCase "fixture parses" (assertFailure ("fixture failed to parse: " <> T.unpack err))
-        Right (sf, spans) ->
+        Right (sf, spans, _) ->
           let ws           = buildWorkspaceEnv [sf]
               (objNameIdent, _) = srPrimaryObject sf
               objName       = identOrig objNameIdent
@@ -387,7 +388,7 @@ tests = testGroup "Pipeline.Runner"
                 in instrVal @?= newJson
 
             , testCase "compileOne's ProcRow.prInstrJson matches compileProcedureViaEffTerm" $ do
-                let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
                 cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsParsed pf)
                 case cf of
                   CFPs cps -> case cpsProcRows cps of
@@ -661,9 +662,9 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "w_dw_copy.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "w_dw_copy.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
                 globalDwColumns = Map.fromList [("d_items", [(TableRef Nothing "sales_order_items", "id")])]
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) globalDwColumns Nothing "confirmed" (PsParsed pf)
             case cf of
@@ -695,9 +696,9 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
                 globalDwColumns = Map.fromList [("d_items", [(TableRef Nothing "sales_order_items", "id")])]
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) globalDwColumns Nothing "confirmed" (PsParsed pf)
             case cf of
@@ -718,9 +719,9 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
@@ -753,9 +754,9 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
@@ -777,9 +778,9 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "speculative" (PsParsed pf)
             case cf of
               CFPs cps -> assertBool "no dead-var findings for speculative confidence" (null (cpsDeadVars cps))
@@ -804,9 +805,9 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
@@ -830,10 +831,10 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
-                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty tcw Map.empty Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
@@ -861,10 +862,10 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
-                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty tcw Map.empty Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
@@ -888,10 +889,10 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
-                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty tcw Map.empty Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
@@ -912,10 +913,10 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
-                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty tcw Map.empty Nothing "speculative" (PsParsed pf)
             case cf of
               CFPs cps -> assertBool "no type-mismatch findings for speculative confidence" (null (cpsTypeMismatches cps))
@@ -946,10 +947,10 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
-                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty tcw Map.empty Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
@@ -968,11 +969,11 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             script <- installMockSqlWorkerWithRefs
             pool   <- startSqlBridgePool 1 script [] "oracle"
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
             shutdownSqlBridgePool pool
             case cf of
@@ -992,11 +993,11 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             script <- installMockSqlWorkerWithRefs
             pool   <- startSqlBridgePool 1 script [] "oracle"
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
                 catTables = Set.fromList [("openpay", "usrgroupperm")]
             cf <- compileOne catTables (Just "openpay") (mkDwFootprintCtx [] (Just "openpay")) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
             shutdownSqlBridgePool pool
@@ -1020,11 +1021,11 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, spans) -> do
+          Right (sf, spans, _) -> do
             script <- installMockSqlWorkerWithTableRefs
             pool   <- startSqlBridgePool 1 script [] "oracle"
             let ws = buildWorkspaceEnv [sf]
-                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
                 catTables = Set.fromList [("openpay", "usrgroupperm")]
             cf <- compileOne catTables (Just "openpay") (mkDwFootprintCtx [] (Just "openpay")) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
             shutdownSqlBridgePool pool
@@ -1318,7 +1319,7 @@ tests = testGroup "Pipeline.Runner"
               ]
         case parsePowerScriptFile src of
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
-          Right (sf, _) -> force sf @?= sf
+          Right (sf, _, _) -> force sf @?= sf
     ]
 
   , testGroup "appendToDb writes a kind='datawindow' objects row for DW files (Plan 198 Phase B)"
@@ -1355,6 +1356,28 @@ tests = testGroup "Pipeline.Runner"
               orqConfidence     r @?= "confirmed"
             _ -> assertFailure
                    ("expected exactly one objects row for d_test, got " <> show (length objRows))
+
+    , testCase "a DW compute control's expression identifier reaches identifier_tokens (Plan 201 Phase 5a)" $ do
+        let src = T.intercalate "\n"
+              [ "HA$PBExportHeader$d_test.srd"
+              , "$PBExportComments$"
+              , "release 9;"
+              , "datawindow(units=0 )"
+              , "compute(band=detail expression=\"ii_amount\" )"
+              ]
+        case parseDataWindow src of
+          Left err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+          Right dwFile -> do
+            let ws = buildWorkspaceEnv []
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty
+                    (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed"
+                    (PsDw "d_test.srd" src dwFile)
+            rows <- withHandle inMemory $ \conn -> do
+              initSchema conn
+              withAppenderPool conn dwFixturePhaseATables $ \pool -> appendToDb pool cf
+              queryHandle conn
+                "SELECT file, text, kind FROM identifier_tokens ORDER BY start_col" :: IO [(Text, Text, Text)]
+            rows @?= [("d_test.srd", "ii_amount", "TkIdent")]
     ]
 
   , testGroup "runModeDb against a stale DB file (source_files double-append regression)"

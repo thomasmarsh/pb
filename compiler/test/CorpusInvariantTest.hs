@@ -358,8 +358,8 @@ loadTypedCorpus = do
     loadTypedFile path = do
         src <- readFile path
         pure $ case parsePowerScriptFile src of
-            Left _        -> Nothing
-            Right (sf, _) -> Just (path, src, sf)
+            Left _           -> Nothing
+            Right (sf, _, _) -> Just (path, src, sf)
 
 -- | Sum of 'declaredNamesInSegment' over every top-level (depth-0)
 -- ';'-separated statement segment in the line -- PowerScript routinely
