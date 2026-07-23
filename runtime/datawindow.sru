@@ -13,6 +13,30 @@ boolean enabled
 integer hscrollposition
 integer vscrollposition
 boolean hsplitscroll
+string AccessibleDescription
+string AccessibleName
+accessiblerole AccessibleRole
+boolean Border
+borderstyle BorderStyle
+boolean BringToTop
+powerobject ClassDefinition
+boolean ControlMenu
+string DataObject
+boolean DragAuto
+string DragIcon
+boolean HScrollBar
+string Icon
+boolean LiveScroll
+boolean MaxBox
+boolean MinBox
+dwobject Object
+boolean Resizable
+boolean RightToLeft
+integer TabOrder
+string Tag
+string Title
+boolean TitleBar
+boolean VScrollBar
 end variables
 
 public function integer SetBorderStyle (integer ai_style)

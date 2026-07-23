@@ -21,7 +21,7 @@ import Test.Tasty.HUnit (testCase, assertEqual, assertBool)
 
 tests :: TestTree
 tests = testGroup "StdLib"
-  [ testCase "parseStdlibFiles produces all 11 classes"        testParsed
+  [ testCase "parseStdlibFiles produces all 52 classes"        testParsed
   , testCase "loadStdlib: objects table populated"             testObjectsTable
   , testCase "loadStdlib: procedures for powerobject present"  testProcedures
   , testCase "loadStdlib: all rows are __stdlib__ files"       testFilePrefix
@@ -38,6 +38,17 @@ expectedClasses =
   [ "powerobject", "nonvisualobject", "dragobject", "drawobject"
   , "graphicobject", "windowobject", "window", "userobject"
   , "dwobject", "datastore", "datawindow"
+  , "animation", "application", "checkbox", "commandbutton"
+  , "datawindowchild", "datepicker", "dropdownlistbox"
+  , "dropdownpicturelistbox", "editmask", "groupbox"
+  , "hprogressbar", "hscrollbar", "htrackbar", "inkedit"
+  , "inkpicture", "line", "listbox", "listview", "menu"
+  , "monthcalendar", "multilineedit", "oval", "picture"
+  , "picturebutton", "picturehyperlink", "picturelistbox"
+  , "radiobutton", "rectangle", "ribbonbar", "richtextedit"
+  , "roundrectangle", "singlelineedit", "statichyperlink"
+  , "statictext", "tab", "transaction", "treeview"
+  , "vprogressbar", "vscrollbar", "vtrackbar", "webbrowser"
   ]
 
 withStdlibDb :: (Handle -> IO a) -> IO a
@@ -67,7 +78,7 @@ queryOneTexts conn sql = map unOneText <$> queryHandle conn sql
 testParsed :: IO ()
 testParsed = do
   pfs <- parseStdlibFiles
-  assertEqual "file count" 11 (length pfs)
+  assertEqual "file count" 52 (length pfs)
   let paths = map (T.pack . pfPath) pfs
   mapM_ (\cls ->
     assertBool ("missing __stdlib__/" <> T.unpack cls <> ".sru")
