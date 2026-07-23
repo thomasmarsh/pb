@@ -18,6 +18,7 @@ phaseATables =
   , "source_files", "parse_errors"
   , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
   , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+  , "dw_arguments"
   , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
   , "dead_vars"
   ]
@@ -34,6 +35,7 @@ tests = testGroup "PhaseA"
   , testCase "appendCatalogColumns/Pks/Fks accept rows" testAppendCatalogRows
   , testCase "appendDwRetrieveColumns accepts rows"  testAppendDwRetrieveColumns
   , testCase "appendDwRetrieveWhere accepts rows"    testAppendDwRetrieveWhere
+  , testCase "appendDwArguments accepts rows"        testAppendDwArguments
   , testCase "appendDeadVars round-trip"             testAppendDeadVars
   ]
 
@@ -127,6 +129,30 @@ testAppendDwRetrieveWhere = withHandle inMemory $ \conn -> do
       ]
     -- Appending an empty list after a real batch must not throw
     appendDwRetrieveWhere pool []
+
+data DwArgumentReadback = DwArgumentReadback Text Text Text Text Int deriving (Eq, Show)
+
+instance FromRow DwArgumentReadback where
+  fromRow = DwArgumentReadback <$> field <*> field <*> field <*> field <*> field
+
+testAppendDwArguments :: IO ()
+testAppendDwArguments = do
+  rows <- withHandle inMemory $ \conn -> do
+    initSchema conn
+    withTestPool conn $ \pool -> do
+      appendDwArguments pool
+        [ DwArgumentRow "d_test.srd" "d_test" "customer_id" "number" 0
+        , DwArgumentRow "d_test.srd" "d_test" "as_of_date"  "date"   1
+        ]
+      -- Appending an empty list after a real batch must not throw
+      appendDwArguments pool []
+    queryHandle conn
+      "SELECT file, object, arg_name, arg_type, ordinal FROM dw_arguments ORDER BY ordinal"
+  assertEqual "dw_arguments round-trips DwArgumentRow rows in ordinal order"
+    [ DwArgumentReadback "d_test.srd" "d_test" "customer_id" "number" 0
+    , DwArgumentReadback "d_test.srd" "d_test" "as_of_date"  "date"   1
+    ]
+    rows
 
 -- | Local row shape for reading back @dead_vars@ -- no production query
 -- function exists (Python reads it directly via SQL), so this test query_s

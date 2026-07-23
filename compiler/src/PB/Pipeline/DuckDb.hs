@@ -244,6 +244,8 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \outer1 TEXT, outer2 TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_where \
         \(file TEXT, dw_name TEXT, idx INTEGER, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)"
+      , "CREATE TABLE IF NOT EXISTS dw_arguments \
+        \(file TEXT, object TEXT, arg_name TEXT, arg_type TEXT, ordinal INTEGER)"
       , "CREATE TABLE IF NOT EXISTS catalog_columns \
         \(namespace TEXT, table_name TEXT, column_name TEXT, ordinal INTEGER)"
       , "CREATE TABLE IF NOT EXISTS catalog_pks \

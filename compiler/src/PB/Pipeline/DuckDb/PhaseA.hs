@@ -8,6 +8,7 @@ module PB.Pipeline.DuckDb.PhaseA
   , DwRetrieveColumnRow (..)
   , DwJoinRow (..)
   , DwRetrieveWhereRow (..)
+  , DwArgumentRow (..)
   , SqlStmtRow (..)
   , SqlStmtColumnRow (..)
   , SqlStmtFilterRow (..)
@@ -28,6 +29,7 @@ module PB.Pipeline.DuckDb.PhaseA
   , appendDwWhereColumns
   , appendDwJoins
   , appendDwRetrieveWhere
+  , appendDwArguments
   , appendLocalVars
   , appendDeadVars
   , appendTypeMismatches
@@ -149,6 +151,14 @@ data DwRetrieveWhereRow = DwRetrieveWhereRow
   , drwrOp     :: Text
   , drwrExp2   :: Text
   , drwrLogic  :: Maybe Text
+  }
+
+data DwArgumentRow = DwArgumentRow
+  { darFile    :: Text
+  , darObject  :: Text
+  , darArgName :: Text
+  , darArgType :: Text
+  , darOrdinal :: Int
   }
 
 data SqlStmtRow = SqlStmtRow
@@ -364,6 +374,16 @@ appendDwRetrieveWhere pool rows = appendRow pool "dw_retrieve_where" $ \app ->
     aText      app (drwrOp r)
     aText      app (drwrExp2 r)
     aMaybeText app (drwrLogic r)
+
+appendDwArguments :: AppenderPool -> [DwArgumentRow] -> IO ()
+appendDwArguments _    [] = pure ()
+appendDwArguments pool rows = appendRow pool "dw_arguments" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (darFile r)
+    aText app (darObject r)
+    aText app (darArgName r)
+    aText app (darArgType r)
+    aInt  app (darOrdinal r)
 
 appendLocalVars :: AppenderPool -> [LocalVar] -> IO ()
 appendLocalVars _    [] = pure ()

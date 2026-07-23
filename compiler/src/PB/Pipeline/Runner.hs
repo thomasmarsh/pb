@@ -97,6 +97,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
   , appendDwWriteColumns, appendDwWhereColumns, appendDwJoins
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
+  , appendDwArguments, DwArgumentRow (..)
   , appendLocalVars, appendDeadVars, appendTypeMismatches, appendCallSites, appendVarRefs, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
@@ -183,6 +184,7 @@ data CompiledDw = CompiledDw
     -- gated WHERE-operand columns), persisted to @dw_where_columns@.
   , cdDwJoins          :: [DwJoinRow]
   , cdDwRetrieveWhere  :: [DwRetrieveWhereRow]
+  , cdDwArguments      :: [DwArgumentRow]
   , cdCallSites        :: [CallSite]
   , cdVarRefs          :: [ResolvedVarRef]
   , cdSourceContent    :: Maybe SourceFileRow
@@ -475,6 +477,16 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                  | SchMorphism (ColumnObj (TableRef ns tbl) col) (StmtObj _) LegReads SrcDwWhere
                      <- Set.toList dwFpMorphisms
                  ]
+        -- Plan 198 Phase E: 'dtArguments' already dedupes the table's
+        -- @arguments(...)@ block against the retrieve string's own ARG(...)
+        -- entries (see 'PB.Grammar.DataWindow.parseDwTable'), so it is the
+        -- authoritative declared-argument list -- unlike 'DwRetrieve''s own
+        -- 'drArguments', which only exists when the retrieve string's
+        -- PBSELECT sub-grammar fully parses.
+        argRows =
+          [ DwArgumentRow fpT obj (daName a) (daType a) idx
+          | (idx, a) <- zip [0..] (maybe [] dtArguments (dwTable dw))
+          ]
     pure $ CFDw $ CompiledDw
       { cdDwObjectRow      = DwObjectRow fpT obj style layoutJson retrieveSql
       , cdDwControls       = ctls
@@ -484,6 +496,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
       , cdDwWhereColumns   = whcols
       , cdDwJoins          = jrows
       , cdDwRetrieveWhere  = wrows
+      , cdDwArguments      = argRows
       , cdCallSites        = css
       , cdVarRefs          = vrs
       , cdSourceContent    = Just (SourceFileRow fpT contents)
@@ -667,6 +680,7 @@ appendToDb pool (CFDw r) = do
   appendDwWhereColumns   pool (cdDwWhereColumns r)
   appendDwJoins          pool (cdDwJoins r)
   appendDwRetrieveWhere  pool (cdDwRetrieveWhere r)
+  appendDwArguments      pool (cdDwArguments r)
   appendCallSites        pool (cdCallSites r)
   appendVarRefs          pool (cdVarRefs r)
   appendSourceFiles      pool (catMaybes [cdSourceContent r])
@@ -855,6 +869,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           , "source_files", "parse_errors"
           , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
           , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+          , "dw_arguments"
           , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
           ]
     withAppenderPoolTimed Progress.emitEvent conn phaseATables $ \appPool -> do

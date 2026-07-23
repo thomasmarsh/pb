@@ -44,12 +44,9 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
         )
     except Exception:
         where = []
-    try:
-        arguments = rows(
-            conn.execute("SELECT arg_name, arg_type FROM dw_arguments WHERE dw_name = ? ORDER BY arg_name", [name])
-        )
-    except Exception:
-        arguments = []
+    arguments = rows(
+        conn.execute("SELECT arg_name, arg_type FROM dw_arguments WHERE object = ? ORDER BY ordinal", [name])
+    )
     used_by_objects = rows(conn.execute(
         "SELECT DISTINCT object FROM call_sites WHERE to_name = ? ORDER BY object",
         [name],

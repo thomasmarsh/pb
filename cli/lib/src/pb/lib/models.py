@@ -81,9 +81,10 @@ class DwRetrieveWhereRow(NamedTuple):
 
 class DwArgumentRow(NamedTuple):
     file: str
-    dw_name: str
+    object: str
     arg_name: str
     arg_type: str | None
+    ordinal: int
 
 
 class InheritsRow(NamedTuple):

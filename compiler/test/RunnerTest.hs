@@ -9,6 +9,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , DwRetrieveColumnRow (..)
   , DwRetrieveTableRow (..)
   , DwRetrieveWhereRow (..)
+  , DwArgumentRow (..)
   , SqlStmtTableRow (..)
   )
 import PB.Pipeline.DuckDb          (inMemory, initSchema, queryHandle, withHandle)
@@ -16,7 +17,7 @@ import PB.Pipeline.DuckDb.Appender (withAppenderPool)
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow
   ( DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..)
-  , DataWindowFile (..), DwObjectAttrs (..), DwTable (..)
+  , DataWindowFile (..), DwObjectAttrs (..), DwTable (..), DwArgument (..)
   )
 import PB.AST.Expr         (Expr (..))
 import PB.AST.Ident        (identCanon, identOrig)
@@ -1172,6 +1173,49 @@ tests = testGroup "Pipeline.Runner"
                   , (1, "t.mycol", ">", "100", Nothing)
                   ]
           _ -> assertFailure "expected CFDw"
+    ]
+
+  , testGroup "dw_arguments construction (Plan 198 Phase E)"
+    [ testCase "compileOne carries DwTable's dtArguments into cdDwArguments, preserving order and ordinal" $ do
+        let dwFile = DataWindowFile
+              { dwRelease  = 400
+              , dwObject   = DwObjectAttrs mempty
+              , dwTable    = Just (DwTable [] Nothing Nothing Nothing
+                                     [ DwArgument "customer_id" "number"
+                                     , DwArgument "as_of_date" "date"
+                                     ])
+              , dwBands    = []
+              , dwGroups   = []
+              , dwControls = []
+              , dwUnknowns = []
+              , dwMeta     = mempty
+              }
+            ws = buildWorkspaceEnv []
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        case cf of
+          CFDw cd ->
+            map (\r -> (darOrdinal r, darArgName r, darArgType r)) (cdDwArguments cd)
+              @?= [ (0, "customer_id", "number")
+                  , (1, "as_of_date", "date")
+                  ]
+          _ -> assertFailure "expected CFDw"
+
+    , testCase "compileOne with no dwTable at all: cdDwArguments is empty, not an error" $ do
+        let dwFile = DataWindowFile
+              { dwRelease  = 400
+              , dwObject   = DwObjectAttrs mempty
+              , dwTable    = Nothing
+              , dwBands    = []
+              , dwGroups   = []
+              , dwControls = []
+              , dwUnknowns = []
+              , dwMeta     = mempty
+              }
+            ws = buildWorkspaceEnv []
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty (buildTypeCheckWorkspace (buildWorkspaceEnv []) []) Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        case cf of
+          CFDw cd -> map darArgName (cdDwArguments cd) @?= []
+          _       -> assertFailure "expected CFDw"
     ]
 
   , testGroup "validateDdlNamespaceConfig (Plan 157 Phase 6)"
