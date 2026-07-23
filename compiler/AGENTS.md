@@ -5,6 +5,14 @@ Loaded automatically by Claude Code whenever a session reads or edits files unde
 protocol, the staged verification loop, commit discipline, documentation
 style, and change-scope rules live in the root `AGENTS.md` and apply here too.
 
+**Run the `constraint-evasion` skill (`.claude/skills/constraint-evasion/SKILL.md`)
+on every diff under `compiler/`** — before `/finish`, before proposing a
+commit, and any other time a Haskell diff here is being reviewed. It checks
+for suppressed warnings/hlint ignores, string/field/sentinel stuffing into
+existing types, and type signatures weakened relative to plan or prior code
+— including in code the diff didn't touch but should have. This is mandatory,
+not optional, for this subsystem.
+
 ## Stage 0 — Compiler-Specific Diagnostics
 
 **Diagnosing corpus failures.** When the charter is to reduce corpus errors, sample raw error messages before touching code:
