@@ -376,12 +376,12 @@ def get_footprint(
     paths_by_target = _coslice_paths(conn, seed_keys)
     blast_radius = [
         {
-            "target": _parse_object_key(target),
+            "target": _object_ref(legs[0], "target_", target),
             "direction": legs[0]["direction"],
             "legs": [
                 {
-                    "from_object": _parse_object_key(leg["leg_from"]),
-                    "to_object": _parse_object_key(leg["leg_to"]),
+                    "from_object": _object_ref(leg, "leg_from_", leg["leg_from"]),
+                    "to_object": _object_ref(leg, "leg_to_", leg["leg_to"]),
                     "leg_kind": leg["leg_kind"],
                 }
                 for leg in legs
@@ -529,26 +529,34 @@ def _column_key(namespace: str | None, table: str, column: str) -> str:
     return f"col:{prefix}{table}.{column}"
 
 
-def _parse_object_key(key: str) -> dict[str, Any]:
-    """Structured `SchemaObjectRef` dict for a `schObjectKey` string,
-    recovering every field `PB.Analysis.SchemaCategory.schObjectKey` bakes
-    into the key -- file/object/proc_name/line for a `stmt:sql:` key,
-    file/dw_name for a `stmt:dw:` key, namespace/table/column for a `col:`
-    key -- so callers (the UI) can navigate to the real entity instead of
-    only displaying a formatted label.
+def _object_ref(row: dict[str, Any], prefix: str, fallback_key: str) -> dict[str, Any]:
+    """Structured `SchemaObjectRef` dict recovered from a `decomposition_coslice`
+    row's schema_objects join-back columns (`{prefix}kind`/`{prefix}namespace`/
+    `{prefix}table_name`/`{prefix}column_name`/`{prefix}stmt_file`/
+    `{prefix}stmt_object`/`{prefix}stmt_proc`/`{prefix}stmt_line`) -- so
+    callers (the UI) can navigate to the real entity instead of only
+    displaying a formatted label. `fallback_key` (the raw encoded key) is
+    used only when the join found no matching schema_objects row.
     """
-    if key.startswith("stmt:dw:"):
-        file, dw_name = key[len("stmt:dw:"):].rsplit(":", 1)
-        return {"kind": "dw_retrieve", "file": file, "dw_name": dw_name}
-    if key.startswith("stmt:sql:"):
-        file, obj, proc, line = key[len("stmt:sql:"):].rsplit(":", 3)
-        return {"kind": "sql", "file": file, "object": obj, "proc_name": proc, "line": int(line)}
-    if key.startswith("col:"):
-        body = key[len("col:"):]
-        rest, column = body.rsplit(".", 1)
-        namespace, table = rest.rsplit(".", 1) if "." in rest else (None, rest)
-        return {"kind": "column", "namespace": namespace, "table": table, "column": column}
-    return {"kind": "unknown", "file": key}
+    kind = row[f"{prefix}kind"]
+    if kind == "dw_retrieve":
+        return {"kind": "dw_retrieve", "file": row[f"{prefix}stmt_file"], "dw_name": row[f"{prefix}stmt_object"]}
+    if kind == "stmt":
+        return {
+            "kind": "sql",
+            "file": row[f"{prefix}stmt_file"],
+            "object": row[f"{prefix}stmt_object"],
+            "proc_name": row[f"{prefix}stmt_proc"],
+            "line": row[f"{prefix}stmt_line"],
+        }
+    if kind == "column":
+        return {
+            "kind": "column",
+            "namespace": row[f"{prefix}namespace"],
+            "table": row[f"{prefix}table_name"],
+            "column": row[f"{prefix}column_name"],
+        }
+    return {"kind": "unknown", "file": fallback_key}
 
 
 def _coslice_paths(conn: duckdb.DuckDBPyConnection, seed_keys: list[str]) -> dict[str, list[dict[str, Any]]]:
@@ -562,7 +570,13 @@ def _coslice_paths(conn: duckdb.DuckDBPyConnection, seed_keys: list[str]) -> dic
     placeholders = ",".join("?" for _ in seed_keys)
     leg_rows = rows(
         conn.execute(
-            f"SELECT seed_key, target_key, direction, leg_ordinal, leg_from, leg_to, leg_kind "
+            f"SELECT seed_key, target_key, direction, leg_ordinal, leg_from, leg_to, leg_kind, "
+            f"target_kind, target_namespace, target_table_name, target_column_name, "
+            f"target_stmt_file, target_stmt_object, target_stmt_proc, target_stmt_line, "
+            f"leg_from_kind, leg_from_namespace, leg_from_table_name, leg_from_column_name, "
+            f"leg_from_stmt_file, leg_from_stmt_object, leg_from_stmt_proc, leg_from_stmt_line, "
+            f"leg_to_kind, leg_to_namespace, leg_to_table_name, leg_to_column_name, "
+            f"leg_to_stmt_file, leg_to_stmt_object, leg_to_stmt_proc, leg_to_stmt_line "
             f"FROM decomposition_coslice WHERE seed_key IN ({placeholders}) "
             f"ORDER BY target_key, seed_key, leg_ordinal",
             seed_keys,
@@ -683,12 +697,12 @@ def get_decomposition_candidates(
                 "score": score,
                 "paths": [
                     {
-                        "target": _parse_object_key(target),
+                        "target": _object_ref(legs[0], "target_", target),
                         "direction": legs[0]["direction"],
                         "legs": [
                             {
-                                "from_object": _parse_object_key(leg["leg_from"]),
-                                "to_object": _parse_object_key(leg["leg_to"]),
+                                "from_object": _object_ref(leg, "leg_from_", leg["leg_from"]),
+                                "to_object": _object_ref(leg, "leg_to_", leg["leg_to"]),
                                 "leg_kind": leg["leg_kind"],
                             }
                             for leg in legs

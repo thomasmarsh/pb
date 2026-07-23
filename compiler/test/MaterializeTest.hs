@@ -14,11 +14,32 @@ import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
 import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (testCase, assertEqual)
 
+import qualified Data.Text as T
+
 -- | Local row shape for reading back (leg_kind, leg_source) pairs raw.
 data KindSourceRow = KindSourceRow Text Text deriving (Eq, Show)
 
 instance FromRow KindSourceRow where
   fromRow = KindSourceRow <$> field <*> field
+
+-- | Local row shape for reading back the Phase F schema_objects join-back
+-- columns: (seed_kind, seed_table_name, seed_column_name, target_kind,
+-- target_stmt_file, target_stmt_object, target_stmt_proc, target_stmt_line,
+-- leg_from_kind, leg_from_table_name, leg_from_column_name, leg_to_kind,
+-- leg_to_stmt_file, leg_to_stmt_object, leg_to_stmt_proc, leg_to_stmt_line).
+data DecomposedRow = DecomposedRow
+  Text Text Text
+  Text Text Text Text Int
+  Text Text Text
+  Text Text Text Text Int
+  deriving (Eq, Show)
+
+instance FromRow DecomposedRow where
+  fromRow = DecomposedRow
+    <$> field <*> field <*> field
+    <*> field <*> field <*> field <*> field <*> field
+    <*> field <*> field <*> field
+    <*> field <*> field <*> field <*> field <*> field
 
 tests :: TestTree
 tests = testGroup "Materialize"
@@ -53,6 +74,22 @@ testMaterializeDecompositionCoslice = withHandle inMemory $ \conn -> do
   assertEqual "leg_source recovered via schema_morphisms join (Plan 161 Phase 2c)"
     [KindSourceRow "reads" "sql_text"]
     rows
+
+  decomposed <- queryHandle conn
+    (Query (T.unlines
+      [ "SELECT seed_kind, seed_table_name, seed_column_name,"
+      , "       target_kind, target_stmt_file, target_stmt_object, target_stmt_proc, target_stmt_line,"
+      , "       leg_from_kind, leg_from_table_name, leg_from_column_name,"
+      , "       leg_to_kind, leg_to_stmt_file, leg_to_stmt_object, leg_to_stmt_proc, leg_to_stmt_line"
+      , "  FROM decomposition_coslice"
+      ]))
+  assertEqual "seed/target/leg_from/leg_to decoded via schema_objects join-back (Plan 198 Phase F)"
+    [ DecomposedRow "column" "a" "x"
+                    "stmt" "f.srf" "obj" "proc" 1
+                    "column" "a" "x"
+                    "stmt" "f.srf" "obj" "proc" 1
+    ]
+    decomposed
 
 -- | Local row shape for reading back (from_table, from_column, to_table,
 -- to_column) from @implied_fk@.

@@ -311,7 +311,15 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \(from_key TEXT, to_key TEXT, leg_kind TEXT, leg_source TEXT)"
       , "CREATE TABLE IF NOT EXISTS decomposition_coslice \
         \(seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INTEGER, \
-        \leg_from TEXT, leg_to TEXT, leg_kind TEXT, leg_source TEXT)"
+        \leg_from TEXT, leg_to TEXT, leg_kind TEXT, leg_source TEXT, \
+        \seed_kind TEXT, seed_namespace TEXT, seed_table_name TEXT, seed_column_name TEXT, \
+        \seed_stmt_file TEXT, seed_stmt_object TEXT, seed_stmt_proc TEXT, seed_stmt_line INTEGER, \
+        \target_kind TEXT, target_namespace TEXT, target_table_name TEXT, target_column_name TEXT, \
+        \target_stmt_file TEXT, target_stmt_object TEXT, target_stmt_proc TEXT, target_stmt_line INTEGER, \
+        \leg_from_kind TEXT, leg_from_namespace TEXT, leg_from_table_name TEXT, leg_from_column_name TEXT, \
+        \leg_from_stmt_file TEXT, leg_from_stmt_object TEXT, leg_from_stmt_proc TEXT, leg_from_stmt_line INTEGER, \
+        \leg_to_kind TEXT, leg_to_namespace TEXT, leg_to_table_name TEXT, leg_to_column_name TEXT, \
+        \leg_to_stmt_file TEXT, leg_to_stmt_object TEXT, leg_to_stmt_proc TEXT, leg_to_stmt_line INTEGER)"
       , "CREATE TABLE IF NOT EXISTS implied_fk \
         \(from_namespace TEXT, from_table TEXT, from_column TEXT, \
         \to_namespace TEXT, to_table TEXT, to_column TEXT)"

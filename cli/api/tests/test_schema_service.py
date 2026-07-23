@@ -407,12 +407,13 @@ def test_get_decomposition_candidates_misth_final_ypal_real_scores(schema_db_con
 def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_conn: duckdb.DuckDBPyConnection):
     # Cross-check anchor: paths are first-class, not just a count -- a
     # 2-hop FK-chained target must show both legs, in order. Targets/legs are
-    # structured `SchemaObjectRef` dicts (built by `_parse_object_key`), not
+    # structured `SchemaObjectRef` dicts (built by `_object_ref` from
+    # decomposition_coslice's schema_objects join-back columns), not
     # formatted strings -- every field needed to navigate to the real
     # table/procedure/DataWindow (namespace/table/column, or
-    # object/proc_name/line, or dw_name) is recovered from the raw
-    # `schObjectKey`, dropping only the absolute pb-extract file path from
-    # display concerns (it's still present under "file" for completeness).
+    # object/proc_name/line, or dw_name) is recovered, dropping only the
+    # absolute pb-extract file path from display concerns (it's still
+    # present under "file" for completeness).
     result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
     triple = next(c for c in result["candidates"] if set(c["columns"]) == {"kodfinal", "kodxrisi", "kodypal"})
 
@@ -438,32 +439,55 @@ def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_c
     assert leg1["leg_kind"] == "fk"
 
 
-def test_parse_object_key_recovers_structured_fields():
-    from pb.api.services.schema import _parse_object_key
+def test_object_ref_recovers_structured_fields():
+    """`_object_ref` reads the schema_objects join-back columns
+    `decomposition_coslice` carries (Plan 198 Phase F) instead of
+    string-parsing the encoded `schObjectKey` -- same output shapes
+    `_parse_object_key` used to produce."""
+    from pb.api.services.schema import _object_ref
 
-    assert _parse_object_key("stmt:dw:/tmp/pb-extract-abc123/final.pbl/dw_x.srd:dw_x") == {
+    dw_row = {"p_kind": "dw_retrieve", "p_stmt_file": "/tmp/pb-extract-abc123/final.pbl/dw_x.srd", "p_stmt_object": "dw_x"}
+    assert _object_ref(dw_row, "p_", "stmt:dw:...") == {
         "kind": "dw_retrieve",
         "file": "/tmp/pb-extract-abc123/final.pbl/dw_x.srd",
         "dw_name": "dw_x",
     }
-    assert _parse_object_key("stmt:sql:/tmp/pb-extract-abc123/final.pbl/n_svc.srw:n_svc:of_process:42") == {
+
+    sql_row = {
+        "p_kind": "stmt",
+        "p_stmt_file": "/tmp/pb-extract-abc123/final.pbl/n_svc.srw",
+        "p_stmt_object": "n_svc",
+        "p_stmt_proc": "of_process",
+        "p_stmt_line": 42,
+    }
+    assert _object_ref(sql_row, "p_", "stmt:sql:...") == {
         "kind": "sql",
         "file": "/tmp/pb-extract-abc123/final.pbl/n_svc.srw",
         "object": "n_svc",
         "proc_name": "of_process",
         "line": 42,
     }
-    assert _parse_object_key("col:misth_final.kodfinal") == {
+
+    unqual_col_row = {"p_kind": "column", "p_namespace": None, "p_table_name": "misth_final", "p_column_name": "kodfinal"}
+    assert _object_ref(unqual_col_row, "p_", "col:...") == {
         "kind": "column",
         "namespace": None,
         "table": "misth_final",
         "column": "kodfinal",
     }
-    assert _parse_object_key("col:myns.misth_final.kodfinal") == {
+
+    qual_col_row = {"p_kind": "column", "p_namespace": "myns", "p_table_name": "misth_final", "p_column_name": "kodfinal"}
+    assert _object_ref(qual_col_row, "p_", "col:...") == {
         "kind": "column",
         "namespace": "myns",
         "table": "misth_final",
         "column": "kodfinal",
+    }
+
+    no_match_row = {"p_kind": None}
+    assert _object_ref(no_match_row, "p_", "col:orphan.key") == {
+        "kind": "unknown",
+        "file": "col:orphan.key",
     }
 
 
