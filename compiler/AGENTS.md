@@ -272,6 +272,80 @@ is the enforceable summary and takes precedence if the two ever drift.
 
 ---
 
+## DuckDB Schema Standards
+
+Read this before renaming, adding, or restructuring any DuckDB column or
+table — whether in `initSchema` (`PB.Pipeline.DuckDb`), a `materialize*`
+(`PB.Pipeline.DuckDb.Materialize`), or a Phase A/B row/appender type.
+
+**Naming conventions.** The schema already converges on these; a new table
+follows them rather than inventing a local convention:
+
+- One identity concept, one column name, everywhere. The PB object/DataWindow
+  name is always `object`; a procedure name is always `proc_name`. No table
+  uses `dw_name`, `from_proc`, or any other synonym for either concept —
+  check `doc/architecture-pipeline.md`'s §5 schema listing for the current
+  canonical set before introducing a new identity column.
+- Asymmetric relationships get role-prefixed column groups, not a bare
+  generic pair. `taint_paths`' `file`/`target_file` (source vs. sink) and
+  `decomposition_coslice`'s `seed_`/`target_`/`leg_from_`/`leg_to_` (four
+  roles of the same underlying `(kind, namespace, table_name, column_name)`
+  shape) are the reference pattern — a `from`/`to` pair with no further
+  qualification is ambiguous the moment a third role shows up.
+- Don't leave a structured key string-encoded when the fields it encodes are
+  already available from another table. `schema_objects` is the physical
+  `(kind, namespace, table_name, column_name, stmt_*)` row behind every
+  `*_key` string in this schema; a consumer that needs those fields joins
+  back to `schema_objects` rather than parsing the key.
+  `decomposition_coslice`'s `seed_key`/`target_key`/`leg_from`/`leg_to`
+  decomposition is the reference pattern — do not write a new
+  `_parse_object_key`-style string-parsing helper anywhere in `cli/` or
+  `ui/`.
+- No `CREATE VIEW` for new derived data — this restates the Moat & Analysis
+  Placement rule above; `all_sql_tables` is the one grandfathered exception,
+  not a precedent.
+
+**A rename or new column is not done until it has landed in every layer that
+names it, in the same session:**
+
+1. `compiler/src/PB/Pipeline/DuckDb.hs` (`CREATE TABLE`) and any sibling
+   `DuckDb.*` module with a matching `SELECT`/row type (`PhaseA`,
+   `PhaseB/Query`, `PhaseB/Append`, `Materialize`, `Relations`)
+2. `cli/` row builders, pydantic models, and any hand-written SQL string that
+   names the column
+3. `queries/*.sql` (the saved-query catalogue — outside `cli/`, easy to miss
+   with a `cli/`-scoped grep)
+4. `ui/packages/platform/src/types/api.ts` and any component reading the
+   field, if the column reaches the JSON wire format
+5. `doc/architecture-pipeline.md`'s §5 schema listing — the compact
+   canonical reference every session should read instead of `initSchema`; a
+   rename that skips this line reintroduces the exact drift this section
+   exists to prevent
+
+Grep all five before proposing the change, not just the layer where the need
+was discovered — Plan 198's Phases C, D, and G each found real consumers
+outside the initial grep (a `queries/*.sql` file, a `ui/` type, a stale doc
+line) that would otherwise have shipped silently wrong or gone silently
+stale. State the full consumer list in the Stage 1 proposal per the root
+`AGENTS.md`'s "Confirm scope before multi-file changes" rule — a schema
+rename is definitionally a multi-file, multi-layer change.
+
+**Schema-shape lookups: read `doc/architecture-pipeline.md`'s §5, not
+`initSchema`.** It is a compact, accurate mirror of the real schema —
+reading it costs a fraction of reading `DuckDb.hs`'s `initSchema` plus every
+sibling module's row types, and is enough to write or review a query. Fall
+back to `initSchema` only when actually authoring a schema change (item 1
+above), or when a query against a documented table returns an unexpected
+column-not-found error — which means the doc has drifted and needs the same
+correction this section asks new schema changes to make in the first place.
+
+**Roadmap.** `doc/plan/198-duckdb-schema-consolidation.md` is the concrete
+precedent this section generalizes — read it for the specific renames
+(`dw_name`→`object`, `from_proc`→`proc_name`, `source_*`/`sink_*`→
+`file`/`target_*`) and the `schema_objects` join-back pattern in full detail.
+
+---
+
 ## Module Signature Lookup
 
 There is no hand-maintained module-signature index in this file — a prior

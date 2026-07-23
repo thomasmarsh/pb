@@ -122,7 +122,7 @@ val_procs AS (
        OR lower(p.name) LIKE '%verify%'
 ),
 val_dw AS (
-    SELECT dc.file, dc.dw_name, dc.control_name, dc.expression
+    SELECT dc.file, dc.object, dc.name AS control_name, dc.expression
     FROM dw_controls dc
     JOIN invoice_objects o ON dc.file LIKE '%' || lower(o.name) || '%'
     WHERE dc.expression IS NOT NULL
@@ -148,7 +148,7 @@ JOIN invoice_objects o ON p.object = o.name
 UNION ALL
 
 SELECT
-    dc.file, dc.dw_name, 'w_invoice_entry', 'dw_expression',
+    dc.file, dc.object, 'w_invoice_entry', 'dw_expression',
     dc.control_name, NULL, NULL,
     '[]'
 FROM val_dw dc;
@@ -320,6 +320,15 @@ This is the authoritative query contract. LLMs and scripts should target these t
 This mirrors `compiler/src/PB/Pipeline/DuckDb.hs`'s `initSchema` — the
 authoritative source if this list drifts.
 
+Every table below carries the identity columns `object` (PB object/DataWindow
+name) and, where the fact is procedure-scoped, `proc_name` — these are the
+two canonical identity columns for the whole schema; no table uses a
+differently-named column for either concept. Span-tracking column
+quadruplets (`*_start_line`, `*_start_col`, `*_end_line`, `*_end_col`) carry
+an identifier token's own position, additive alongside a `line` column that
+carries the enclosing statement's line — cross-reference/def-use matching
+joins on `line`, not on the span columns.
+
 ```sql
 -- One row per source file (or per global type declaration in multi-type files)
 objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT,
@@ -327,32 +336,30 @@ objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT,
 source_files (file TEXT PRIMARY KEY, lines TEXT)
 parse_errors (file TEXT, error TEXT)
 
--- Every callable unit: functions, subroutines, events, on-blocks
-procedures (
-    file TEXT, object TEXT, proc_name TEXT, proc_type TEXT,
-    start_line INT, end_line INT,
-    cfg_json TEXT,            -- PB.Analysis.Cfg
-    instr_graph_json TEXT,    -- PB.Analysis.GraphBuilder / InstrGraph (flat, PC-indexed)
-    wiring_json TEXT,         -- PB.Analysis.GraphBuilder's LowCat wiring diagram (Plan 149)
-    params TEXT, return_type TEXT,
-    cyclomatic INT,           -- McCabe complexity (branches + 1)
-    confidence TEXT
-    -- Body text lives inside instr_graph_json/wiring_json.
-)
+-- Every callable unit: functions, subroutines, events, on-blocks.
+-- param_names is a '|'-delimited ordered list of declared parameter names
+-- (positional; see `params` for the full type-annotated display string).
+-- Body text lives inside instr_graph_json/wiring_json, not a raw-text column.
+procedures (file TEXT, object TEXT, proc_name TEXT, proc_type TEXT,
+            start_line INT, end_line INT,
+            cfg_json TEXT, instr_graph_json TEXT, wiring_json TEXT,
+            params TEXT, param_names TEXT, return_type TEXT,
+            cyclomatic INT, confidence TEXT)
 
 -- DataWindow objects + visual controls
 dw_objects  (file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)
-dw_controls (
-    file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT,
-    x INT, y INT, width INT, height INT, expression TEXT
-)
+dw_controls (file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT,
+             x INT, y INT, width INT, height INT, expression TEXT)
 
--- PBSELECT retrieval decomposition (namespace-aware, Plan 157)
+-- PBSELECT retrieval decomposition (namespace-aware)
 dw_retrieve_tables  (file TEXT, object TEXT, namespace TEXT, table_name TEXT)
 dw_retrieve_columns (file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)
-dw_retrieve_where   (file TEXT, object TEXT, idx INT, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)
+dw_write_columns    (file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)
+dw_where_columns    (file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)
 dw_joins            (file TEXT, object TEXT, left_ref TEXT, op TEXT, right_ref TEXT,
                       outer1 TEXT, outer2 TEXT)
+dw_retrieve_where   (file TEXT, object TEXT, idx INT, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)
+dw_arguments        (file TEXT, object TEXT, arg_name TEXT, arg_type TEXT, ordinal INT)
 
 -- Embedded SQL per procedure, plus per-column/filter/table attribution
 sql_statements         (file TEXT, object TEXT, proc_name TEXT, line INT,
@@ -363,6 +370,12 @@ sql_statement_filters  (file TEXT, object TEXT, proc_name TEXT, line INT,
                          namespace TEXT, table_name TEXT, column_name TEXT, op TEXT, values_json TEXT)
 sql_statement_tables   (file TEXT, object TEXT, proc_name TEXT, line INT,
                          operation TEXT, namespace TEXT, table_name TEXT)
+-- Same shape as sql_statement_columns, populated from DataWindow SetItem
+-- calls with a statically-resolvable column/control binding rather than
+-- sqlglot text extraction; kept as its own table so a row's producer is
+-- always unambiguous.
+cat_footprint_columns  (file TEXT, object TEXT, proc_name TEXT, line INT,
+                         namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN)
 all_sql_tables         -- VIEW: UNION of dw_retrieve_tables + sql_statement_tables, one row shape
 
 -- Static DDL catalog (populated from --ddl files via the sqlglot bridge)
@@ -373,18 +386,34 @@ catalog_fks     (constraint_name TEXT, from_namespace TEXT, from_table TEXT, fro
 catalog_checks  (constraint_name TEXT, namespace TEXT, table_name TEXT, predicate TEXT)
 
 -- Intra-procedural def-use + cross-file type/call resolution
-local_vars      (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
-                  is_param BOOLEAN, scope_line INT)
-call_sites      (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT, line INT)
-global_vars     (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)
-proc_defs       (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
-                  stmt_index INT, line INT, kind TEXT)
-proc_uses       (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
-                  stmt_index INT, line INT, kind TEXT)
-resolved_types  (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
-                  kind TEXT, target TEXT, is_param BOOLEAN, scope_line INT)
-resolved_calls  (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT, line INT,
-                  target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT)
+local_vars       (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
+                   is_param BOOLEAN, scope_line INT,
+                   type_start_line INT, type_start_col INT, type_end_line INT, type_end_col INT)
+call_sites       (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT,
+                   line INT, receiver_object TEXT,
+                   to_name_start_line INT, to_name_start_col INT,
+                   to_name_end_line INT, to_name_end_col INT)
+-- The canonical variable/property cross-reference relation, fully resolved
+-- at extraction time (no later cross-file resolution stage needed).
+resolved_var_refs (file TEXT, object TEXT, proc_name TEXT, line INT,
+                    name TEXT, access TEXT, target_object TEXT, kind TEXT, confidence TEXT,
+                    declared_type TEXT,
+                    name_start_line INT, name_start_col INT,
+                    name_end_line INT, name_end_col INT)
+global_vars      (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT,
+                   type_start_line INT, type_start_col INT, type_end_line INT, type_end_col INT)
+proc_defs        (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
+                   stmt_index INT, line INT, kind TEXT,
+                   var_start_line INT, var_start_col INT, var_end_line INT, var_end_col INT)
+proc_uses        (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
+                   stmt_index INT, line INT, kind TEXT,
+                   var_start_line INT, var_start_col INT, var_end_line INT, var_end_col INT)
+resolved_types   (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
+                   kind TEXT, target TEXT, scope TEXT, scope_line INT)
+resolved_calls   (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT, line INT,
+                   target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT,
+                   to_name_start_line INT, to_name_start_col INT,
+                   to_name_end_line INT, to_name_end_col INT)
 
 -- Inter-procedural taint analysis
 interproc_edges     (caller_object TEXT, caller_proc TEXT, caller_line INT,
@@ -400,33 +429,52 @@ taint_paths          (file TEXT, object TEXT, proc_name TEXT, var_name TEXT,
                        severity TEXT, category TEXT, steps_json TEXT)
 taint_annotations    (file TEXT, object TEXT, proc_name TEXT, block_id TEXT,
                        is_taint_entry BOOLEAN, is_taint_sink BOOLEAN, tainted_vars TEXT)
+-- Intra-procedure (use_var, def_var) edges and EReturn-payload var rows that
+-- feed inter-procedural taint-successor construction.
+taint_intra_edges    (object TEXT, proc_name TEXT, use_var TEXT, def_var TEXT)
+taint_return_rows    (object TEXT, proc_name TEXT, var_name TEXT)
 
 dead_code (object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT, confidence TEXT,
            caller_count_naive INT, caller_count_scoped INT)
+dead_vars (object TEXT, proc_name TEXT, var_name TEXT, line INT, kind TEXT)
+type_mismatches (object TEXT, proc_name TEXT, line INT, target TEXT,
+                  lhs_type TEXT, rhs_desc TEXT, kind TEXT)
 
--- DB schema as a free category (Plan 148): objects are (table,column) pairs and
--- SQL-statement/DW-retrieve instances; morphisms are the legs a statement has into
--- the columns it touches, plus FK morphisms from DW JOINs and DDL foreign keys.
+-- DB schema as a free category: objects are (table,column) pairs and
+-- SQL-statement/DW-retrieve instances; morphisms are the legs a statement has
+-- into the columns it touches, plus FK morphisms from DW JOINs and DDL
+-- foreign keys.
 schema_objects   (object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT,
                    stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INT)
-schema_morphisms (from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)
+schema_morphisms (from_key TEXT, to_key TEXT, leg_kind TEXT, leg_source TEXT)
 
--- Per-column "rewrite cost": union of forward blast-radius + backward validation-walk,
--- collapsed to the shortest path per reachable statement (Plan 153 D5)
+-- Per-column "rewrite cost": union of forward blast-radius + backward
+-- validation-walk, collapsed to the shortest path per reachable statement.
+-- The seed/target/leg_from/leg_to key columns are additionally decomposed
+-- into 4 physical columns each (kind, namespace, table_name, column_name)
+-- plus 4 provenance columns each (stmt_file, stmt_object, stmt_proc,
+-- stmt_line), joined back from schema_objects — 32 additive columns total,
+-- named `<role>_<field>` (e.g. `seed_table_name`, `leg_to_stmt_proc`) for
+-- role in {seed, target, leg_from, leg_to}. Read these instead of parsing
+-- the encoded `*_key` strings.
 decomposition_coslice (seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INT,
-                        leg_from TEXT, leg_to TEXT, leg_kind TEXT, fk_source TEXT)
+                        leg_from TEXT, leg_to TEXT, leg_kind TEXT, leg_source TEXT,
+                        -- + 32 role-prefixed columns, see note above)
 
 -- Inheritance is `objects.ancestor` (walked via a recursive CTE, see the
 -- example query below); the call graph is `call_sites` (raw) /
 -- `resolved_calls` (cross-file resolved) above.
+implied_fk  (from_namespace TEXT, from_table TEXT, from_column TEXT,
+             to_namespace TEXT, to_table TEXT, to_column TEXT)
+column_risk (namespace TEXT, table_name TEXT, column_name TEXT, downstream_count INT)
 
--- Pre-computed graph metrics (populated by `pb analyze`, Python/NetworkX;
--- schema DDL owned by `db.py:setup_db_extras`)
-object_metrics (
-    object TEXT, in_degree INT, out_degree INT,
-    betweenness DOUBLE, pagerank DOUBLE,
-    max_cyclomatic INT, avg_cyclomatic DOUBLE, dit INT, cbo INT
-)
+-- Pre-computed graph metrics and run bookkeeping (populated by `pb analyze`
+-- and `pb index`, Python/NetworkX; schema DDL owned by `db.py:setup_db_extras`,
+-- not `DuckDb.hs`'s `initSchema`)
+object_metrics (object TEXT, in_degree INT, out_degree INT,
+                betweenness DOUBLE, pagerank DOUBLE,
+                max_cyclomatic INT, avg_cyclomatic DOUBLE, dit INT, cbo INT)
+metadata (key TEXT PRIMARY KEY, value TEXT)
 ```
 
 ### Example canonical queries

@@ -32,3 +32,14 @@ pb.pipeline.bridge.sql_worker`, never via an installed console-script shim —
 if you touch its location or entry point, update
 `PB.Pipeline.SqlParse.sqlWorkerModuleArgs` on the Haskell side in the same
 change.
+
+## Renaming or adding a DuckDB column
+
+`pb.duckdb`'s schema is owned by `compiler/src/PB/Pipeline/DuckDb.hs`, not
+`cli/` — but a rename ripples into `cli/`'s row builders, pydantic models,
+and hand-written SQL strings every time. Before touching a column name a
+`cli/`-only session references, read `compiler/AGENTS.md`'s "DuckDB Schema
+Standards" section first: it has the naming conventions, the full
+five-layer consumer checklist, and the pointer to `doc/architecture-
+pipeline.md`'s §5 schema listing (read that, not `initSchema`, for schema
+shape lookups when you are not the one changing it).

@@ -224,3 +224,14 @@ expect(rendered.dataWindows[0]!.rows).toHaveLength(1);
 **TestStore assert pattern.** `ts.send`/`ts.receive` callbacks run on the PRE-action state —
 describe mutations there (as shown above), not `expect()` assertions after the fact, and
 describe ALL fields the action changes or the comparison fails.
+
+---
+
+## Renaming or adding a DuckDB column
+
+`pb.duckdb`'s schema is owned by `compiler/src/PB/Pipeline/DuckDb.hs`, but a
+rename reaches `ui/` whenever the column is part of the JSON wire format —
+`ui/packages/platform/src/types/api.ts` and any component reading the field.
+Before touching a column name a `ui/`-only session references, read
+`compiler/AGENTS.md`'s "DuckDB Schema Standards" section first: it has the
+naming conventions and the full five-layer consumer checklist.
