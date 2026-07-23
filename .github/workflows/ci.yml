@@ -22,24 +22,20 @@ jobs:
             /home/runner/.ghcup/bin
           key: ghcup-${{ runner.os }}-ghc-9.10.2-v3
 
-      - name: Reset cabal Hackage mirror
-        run: rm -f ~/.cabal/config
+      - name: Configure cabal to skip Hackage's dead DNS-advertised mirror
+        run: |
+          mkdir -p ~/.cabal
+          cat > ~/.cabal/config <<'EOF'
+          repository hackage.haskell.org
+            url: https://hackage.haskell.org/
+            secure: False
+          EOF
 
       - name: Set up GHC
         uses: haskell-actions/setup@v2
         with:
           ghc-version: "9.10.2"
           cabal-version: "3.12"
-          cabal-update: false
-
-      - name: cabal update (retry against dead Hackage DNS mirror)
-        run: |
-          for i in 1 2 3; do
-            cabal update && exit 0
-            echo "cabal update failed (attempt $i), retrying..."
-            sleep 5
-          done
-          exit 1
 
       - name: Cache cabal store
         uses: actions/cache@v4
