@@ -109,22 +109,22 @@ inline validation function.
 ```sql
 -- Find all validation-related procedures and DW expressions for invoice forms
 WITH invoice_objects AS (
-    SELECT name, ancestor FROM objects
-    WHERE name LIKE '%invoice%'
+    SELECT object, ancestor FROM objects
+    WHERE object LIKE '%invoice%'
 ),
 val_procs AS (
-    SELECT p.file, p.object, p.proc_type, p.name, p.start_line, p.end_line
+    SELECT p.file, p.object, p.proc_type, p.proc_name, p.start_line, p.end_line
     FROM procedures p
-    JOIN invoice_objects o ON p.object = o.name
-    WHERE p.name IN ('itemchanged', 'pbm_dwnitemchange')
-       OR lower(p.name) LIKE '%validate%'
-       OR lower(p.name) LIKE '%check%'
-       OR lower(p.name) LIKE '%verify%'
+    JOIN invoice_objects o ON p.object = o.object
+    WHERE p.proc_name IN ('itemchanged', 'pbm_dwnitemchange')
+       OR lower(p.proc_name) LIKE '%validate%'
+       OR lower(p.proc_name) LIKE '%check%'
+       OR lower(p.proc_name) LIKE '%verify%'
 ),
 val_dw AS (
     SELECT dc.file, dc.object, dc.name AS control_name, dc.expression
     FROM dw_controls dc
-    JOIN invoice_objects o ON dc.file LIKE '%' || lower(o.name) || '%'
+    JOIN invoice_objects o ON dc.file LIKE '%' || lower(o.object) || '%'
     WHERE dc.expression IS NOT NULL
 ),
 referenced_tables AS (
@@ -137,13 +137,13 @@ SELECT
     p.object AS context_object,
     o.ancestor AS ancestor_class,
     p.proc_type AS logic_type,
-    p.name AS identifier,
+    p.proc_name AS identifier,
     p.start_line,
     p.end_line,
     (SELECT json_group_array(rt.table_name)
      FROM referenced_tables rt WHERE rt.file = p.file) AS referenced_tables
 FROM val_procs p
-JOIN invoice_objects o ON p.object = o.name
+JOIN invoice_objects o ON p.object = o.object
 
 UNION ALL
 
