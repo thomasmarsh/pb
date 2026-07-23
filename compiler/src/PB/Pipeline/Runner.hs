@@ -121,6 +121,7 @@ import Control.Concurrent.STM
 import GHC.Conc   (getNumCapabilities)
 import Control.DeepSeq     (force)
 import Control.Exception   (finally, evaluate)
+import System.Directory    (doesFileExist, removeFile)
 import System.Environment  (lookupEnv)
 import System.IO           (hFlush, stderr)
 import Data.IORef          (IORef, newIORef, readIORef, atomicModifyIORef')
@@ -767,8 +768,22 @@ validateDdlNamespaceConfig ddlArgs mDefaultNamespace
 -- -> 'buildSchema', which resolves an unqualified SQL/DW-retrieve/DW-join
 -- table reference against it iff the DDL catalog defines the table under
 -- that namespace -- never guessed.
+-- | There is no incremental-update mode: every '--db' run performs a full
+-- ingest of 'srcDir' from scratch. 'initSchema''s @CREATE TABLE IF NOT
+-- EXISTS@ leaves an existing file's rows untouched, so a stale file left
+-- over from a prior run at the same path (or a scratch path a bench
+-- harness reuses) collides with this run's own Phase A inserts --
+-- deterministically on the very first row, since @__stdlib__@'s rows are
+-- always appended first. Deleting it upfront makes every '--db' run
+-- idempotent regardless of what a previous run at this path left behind.
+resetDbFile :: FilePath -> IO ()
+resetDbFile dbPath = do
+  exists <- doesFileExist dbPath
+  when exists (removeFile dbPath)
+
 runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> Maybe Text -> IO ()
 runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
+  resetDbFile dbPath
   files <- Progress.timedStep "Scanning source directory" (walkAllSrFiles srcDir)
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])

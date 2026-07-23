@@ -1,7 +1,7 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, CompiledFile (..), CompiledPs (..), CompiledDw (..))
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, runModeDb, CompiledFile (..), CompiledPs (..), CompiledDw (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
 import PB.Pipeline.DuckDb.PhaseA
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
@@ -12,7 +12,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , DwArgumentRow (..)
   , SqlStmtTableRow (..)
   )
-import PB.Pipeline.DuckDb          (inMemory, initSchema, queryHandle, withHandle)
+import PB.Pipeline.DuckDb          (Config (..), inMemory, initSchema, queryHandle, withHandle)
 import PB.Pipeline.DuckDb.Appender (withAppenderPool)
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow
@@ -40,6 +40,7 @@ import PB.Pipeline.SqlParse
 
 import Control.DeepSeq (force)
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
+import Database.DuckDB.Simple          (Only (..))
 import Database.DuckDB.Simple.FromRow  (FromRow (..), field)
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -1354,6 +1355,30 @@ tests = testGroup "Pipeline.Runner"
               orqConfidence     r @?= "confirmed"
             _ -> assertFailure
                    ("expected exactly one objects row for d_test, got " <> show (length objRows))
+    ]
+
+  , testGroup "runModeDb against a stale DB file (source_files double-append regression)"
+    -- BACKLOG: `pb index`/`check-corpus`/bench harnesses re-running against
+    -- an existing --db path used to fail at Phase A ingestion with a
+    -- primary-key violation on "__stdlib__/datastore.sru" -- initSchema's
+    -- CREATE TABLE IF NOT EXISTS means a stale file's source_files rows
+    -- persist, so a second run's parseStdlibFiles insert collides with the
+    -- first run's own rows.
+    [ testCase "second run against the same db path succeeds and leaves no duplicate __stdlib__ source_files rows" $ do
+        srcDir <- freshRelPathRoot
+        writeFile (srcDir </> "w_test.srw") (T.unlines
+          [ "global type w_test from window"
+          , "end type"
+          ])
+        dbDir <- freshRelPathRoot
+        let dbPath = dbDir </> "test.duckdb"
+        runModeDb srcDir dbPath [] "oracle" Nothing Nothing
+        runModeDb srcDir dbPath [] "oracle" Nothing Nothing
+        withHandle (Config dbPath) $ \conn -> do
+          rows <- queryHandle conn "SELECT file FROM source_files" :: IO [Only Text]
+          let stdlibFiles = [ f | Only f <- rows, "__stdlib__/" `T.isPrefixOf` f ]
+          assertBool "no duplicate __stdlib__ source_files rows after a second run"
+            (length stdlibFiles == length (Set.fromList stdlibFiles))
     ]
   ]
 
