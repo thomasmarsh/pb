@@ -288,8 +288,8 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \(file TEXT, object TEXT, proc_name TEXT, \
         \var_name TEXT, sink_type TEXT, severity TEXT, line INTEGER)"
       , "CREATE TABLE IF NOT EXISTS taint_paths \
-        \(source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT, \
-        \sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT, \
+        \(file TEXT, object TEXT, proc_name TEXT, var_name TEXT, \
+        \target_file TEXT, target_object TEXT, target_proc TEXT, target_var TEXT, \
         \severity TEXT, category TEXT, steps_json TEXT)"
       , "CREATE TABLE IF NOT EXISTS taint_annotations \
         \(file TEXT, object TEXT, proc_name TEXT, block_id TEXT, \

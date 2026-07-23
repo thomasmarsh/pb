@@ -80,8 +80,8 @@ def taint_client(tmp_path_factory):
 
     conn.execute("""
         CREATE TABLE taint_paths (
-            source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT,
-            sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT,
+            file TEXT, object TEXT, proc_name TEXT, var_name TEXT,
+            target_file TEXT, target_object TEXT, target_proc TEXT, target_var TEXT,
             severity TEXT, category TEXT, steps_json TEXT
         )
     """)
@@ -707,8 +707,8 @@ def report_client(tmp_path_factory):
 
     conn.execute("""
         CREATE TABLE taint_paths (
-            source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT,
-            sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT,
+            file TEXT, object TEXT, proc_name TEXT, var_name TEXT,
+            target_file TEXT, target_object TEXT, target_proc TEXT, target_var TEXT,
             severity TEXT, category TEXT, steps_json TEXT
         )
     """)

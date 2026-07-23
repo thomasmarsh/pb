@@ -62,16 +62,16 @@ def get_taint_paths(
         params.append(severity)
     # source_type and sink_type no longer in taint_paths (new Haskell schema) — ignored
     if object_name is not None:
-        where.append("(source_object = ? OR sink_object = ?)")
+        where.append("(object = ? OR target_object = ?)")
         params.extend([object_name, object_name])
     if proc_name is not None:
-        where.append("(source_proc = ? OR sink_proc = ?)")
+        where.append("(proc_name = ? OR target_proc = ?)")
         params.extend([proc_name, proc_name])
 
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
     query = (
-        "SELECT rowid AS id, source_object, source_proc, source_var, "
-        "sink_object, sink_proc, sink_var, severity, category "
+        "SELECT rowid AS id, object, proc_name, var_name, "
+        "target_object, target_proc, target_var, severity, category "
         f"FROM taint_paths {where_clause} ORDER BY rowid LIMIT ?"
     )
     path_rows = rows(conn.execute(query, params + [limit]))
@@ -83,16 +83,16 @@ def get_taint_paths(
         {
             "id": r["id"],
             "source": {
-                "object": r["source_object"],
-                "proc": r["source_proc"],
-                "var": r["source_var"],
+                "object": r["object"],
+                "proc": r["proc_name"],
+                "var": r["var_name"],
                 "line": None,
                 "type": None,
             },
             "sink": {
-                "object": r["sink_object"],
-                "proc": r["sink_proc"],
-                "var": r["sink_var"],
+                "object": r["target_object"],
+                "proc": r["target_proc"],
+                "var": r["target_var"],
                 "line": None,
                 "type": None,
                 "severity": r["severity"],
@@ -111,8 +111,8 @@ def get_taint_path(
 ) -> dict[str, Any] | None:
     path_rows = rows(
         conn.execute(
-            "SELECT rowid AS id, source_object, source_proc, source_var, "
-            "sink_object, sink_proc, sink_var, severity, category, steps_json "
+            "SELECT rowid AS id, object, proc_name, var_name, "
+            "target_object, target_proc, target_var, severity, category, steps_json "
             "FROM taint_paths WHERE rowid = ?",
             [path_id],
         )
@@ -128,16 +128,16 @@ def get_taint_path(
     return {
         "id": r["id"],
         "source": {
-            "object": r["source_object"],
-            "proc_name": r["source_proc"],
-            "var": r["source_var"],
+            "object": r["object"],
+            "proc_name": r["proc_name"],
+            "var": r["var_name"],
             "line": None,
             "type": None,
         },
         "sink": {
-            "object": r["sink_object"],
-            "proc_name": r["sink_proc"],
-            "var": r["sink_var"],
+            "object": r["target_object"],
+            "proc_name": r["target_proc"],
+            "var": r["target_var"],
             "line": None,
             "type": None,
             "severity": r["severity"],

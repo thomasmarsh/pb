@@ -395,8 +395,8 @@ procedure_summaries (file TEXT, object TEXT, proc_name TEXT, params_in TEXT,
 taint_sources        (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, source_type TEXT, line INT)
 taint_sinks          (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, sink_type TEXT,
                        severity TEXT, line INT)
-taint_paths          (source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT,
-                       sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT,
+taint_paths          (file TEXT, object TEXT, proc_name TEXT, var_name TEXT,
+                       target_file TEXT, target_object TEXT, target_proc TEXT, target_var TEXT,
                        severity TEXT, category TEXT, steps_json TEXT)
 taint_annotations    (file TEXT, object TEXT, proc_name TEXT, block_id TEXT,
                        is_taint_entry BOOLEAN, is_taint_sink BOOLEAN, tainted_vars TEXT)
