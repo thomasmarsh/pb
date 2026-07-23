@@ -68,7 +68,7 @@ end function
 public function integer enable ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
 public function powerobject getparent ()
@@ -77,16 +77,16 @@ end function
 public function integer hide ()
 end function
 
-public function integer popmenu ()
+public function integer popmenu (any xlocation, any ylocation)
 end function
 
-public function integer postevent ()
+public function integer postevent (string event, long word, any long)
 end function
 
 public function integer show ()
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

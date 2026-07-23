@@ -27,10 +27,10 @@ end function
 public function string classname ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
-public function string gethttprequestheader ()
+public function string gethttprequestheader (string headerName)
 end function
 
 public function string gethttprequestheaders ()
@@ -57,28 +57,28 @@ end function
 public function string getsessionid ()
 end function
 
-public function boolean postevent ()
+public function boolean postevent (string event, long word, any long)
 end function
 
 public function integer sethighdpimode ()
 end function
 
-public function integer sethttprequestheader ()
+public function integer sethttprequestheader (string headerName, string headerValue, boolean replace)
 end function
 
-public function integer setlibrarylist ()
+public function integer setlibrarylist (any filelist)
 end function
 
-public function integer setpowerserverurl ()
+public function integer setpowerserverurl (string asurl)
 end function
 
-public function integer setquickaccesstoolbarstatuspath ()
+public function integer setquickaccesstoolbarstatuspath (string path)
 end function
 
-public function integer settranspool ()
+public function integer settranspool (any minimum, any maximum, any timeout)
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

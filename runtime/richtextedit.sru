@@ -71,7 +71,7 @@ end function
 public function string classname ()
 end function
 
-public function long clear ()
+public function long clear (boolean gridflag)
 end function
 
 public function long clearall ()
@@ -80,58 +80,58 @@ end function
 public function long copy ()
 end function
 
-public function string copyrtf ()
+public function string copyrtf (boolean selected, any band)
 end function
 
 public function long cut ()
 end function
 
-public function integer datasource ()
+public function integer datasource (datawindow dwsource)
 end function
 
-public function integer drag ()
+public function integer drag (dragmodes m)
 end function
 
-public function integer find ()
+public function integer find (string searchtext, boolean forward, boolean insensitive, boolean wholeword, boolean cursor)
 end function
 
 public function integer findnext ()
 end function
 
-public function boolean formcheckboxgetchecked ()
+public function boolean formcheckboxgetchecked (integer fieldID)
 end function
 
-public function integer formcheckboxinsert ()
+public function integer formcheckboxinsert (boolean checked, char checkedChar, char uncheckedChar)
 end function
 
-public function integer formcheckboxsetchecked ()
+public function integer formcheckboxsetchecked (integer fieldID, boolean checked)
 end function
 
-public function integer formcomboboxgetitems ()
+public function integer formcomboboxgetitems (integer fieldID, ref string items[])
 end function
 
 public function integer formcomboboxinsert ()
 end function
 
-public function integer formcomboboxsetitems ()
+public function integer formcomboboxsetitems (integer fieldID, string items[])
 end function
 
-public function date formdatefieldgetdate ()
+public function date formdatefieldgetdate (integer fieldID)
 end function
 
-public function string formdatefieldgetformat ()
+public function string formdatefieldgetformat (integer fieldID)
 end function
 
-public function integer formdatefieldinsert ()
+public function integer formdatefieldinsert (date fieldDate, boolean showDateControl, string format, integer emptyWidth)
 end function
 
-public function integer formdatefieldsetdate ()
+public function integer formdatefieldsetdate (integer fieldID, date fieldDate)
 end function
 
-public function integer formdatefieldsetformat ()
+public function integer formdatefieldsetformat (integer fieldID, string format)
 end function
 
-public function integer formfielddelete ()
+public function integer formfielddelete (integer fieldID, boolean deleteTotal)
 end function
 
 public function integer formfieldgetcurrent ()
@@ -140,43 +140,43 @@ end function
 public function integer formfieldgetdeletable ()
 end function
 
-public function integer formfieldgetemptywidth ()
+public function integer formfieldgetemptywidth (integer fieldID)
 end function
 
-public function integer formfieldgetend ()
+public function integer formfieldgetend (integer fieldID)
 end function
 
-public function integer formfieldgetstart ()
+public function integer formfieldgetstart (integer fieldID)
 end function
 
-public function integer formfieldgettext ()
+public function integer formfieldgettext (integer fieldID)
 end function
 
-public function integer formfieldnext ()
+public function integer formfieldnext (integer fieldID, string formFieldTypes[])
 end function
 
-public function integer formfieldsetcurrent ()
+public function integer formfieldsetcurrent (integer fieldID)
 end function
 
 public function integer formfieldsetdeletable ()
 end function
 
-public function integer formfieldsetemptywidth ()
+public function integer formfieldsetemptywidth (integer fieldID, integer width)
 end function
 
-public function integer formfieldsettext ()
+public function integer formfieldsettext (integer fieldID, string text)
 end function
 
-public function integer formtextfieldinsert ()
+public function integer formtextfieldinsert (string text, integer emptyWidth)
 end function
 
 public function any getalignment ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
-public function long getparagraphsetting ()
+public function long getparagraphsetting (any whichsetting)
 end function
 
 public function powerobject getparent ()
@@ -194,13 +194,13 @@ end function
 public function integer gettextfontsize ()
 end function
 
-public function boolean gettextstyle ()
+public function boolean gettextstyle (any textstyle)
 end function
 
 public function integer hide ()
 end function
 
-public function integer inputfieldchangedata ()
+public function integer inputfieldchangedata (string inputfieldname, string inputfieldvalue)
 end function
 
 public function string inputfieldcurrentname ()
@@ -209,19 +209,19 @@ end function
 public function integer inputfielddeletecurrent ()
 end function
 
-public function string inputfieldgetdata ()
+public function string inputfieldgetdata (string inputfieldname)
 end function
 
-public function integer inputfieldinsert ()
+public function integer inputfieldinsert (string inputfieldname)
 end function
 
-public function string inputfieldlocate ()
+public function string inputfieldlocate (any location, string inputfieldname)
 end function
 
-public function integer insertdocument ()
+public function integer insertdocument (string filename, boolean clearflag, any filetype, any encoding)
 end function
 
-public function integer insertpicture ()
+public function integer insertpicture (string filename, integer format)
 end function
 
 public function boolean ispreview ()
@@ -233,7 +233,7 @@ end function
 public function integer linelength ()
 end function
 
-public function integer move ()
+public function integer move (any x, any y)
 end function
 
 public function integer pagecount ()
@@ -242,7 +242,7 @@ end function
 public function integer paste ()
 end function
 
-public function long pastertf ()
+public function long pastertf (string richtextstring, any band)
 end function
 
 public function integer pastespecial ()
@@ -254,40 +254,40 @@ end function
 public function integer pointery ()
 end function
 
-public function integer position ()
+public function integer position (except RichTextEdit)
 end function
 
-public function boolean postevent ()
+public function boolean postevent (string event, long word, any long)
 end function
 
-public function integer preview ()
+public function integer preview (boolean previewsetting)
 end function
 
 public function integer print ()
 end function
 
-public function integer printex ()
+public function integer printex (boolean canceldialog)
 end function
 
 public function integer redo ()
 end function
 
-public function integer removetab ()
+public function integer removetab (integer tabcurrent)
 end function
 
-public function integer replacetext ()
+public function integer replacetext (string string)
 end function
 
-public function integer resize ()
+public function integer resize (any width, any height)
 end function
 
-public function integer savedocument ()
+public function integer savedocument (string filename, any filetype, character encoding)
 end function
 
-public function integer savedocumentaspdf ()
+public function integer savedocumentaspdf (string filePathName, string standard, string userPassword, string masterPassword, string restrictions)
 end function
 
-public function integer scroll ()
+public function integer scroll (long number)
 end function
 
 public function integer scrollnextpage ()
@@ -302,7 +302,7 @@ end function
 public function long scrollpriorrow ()
 end function
 
-public function long scrolltorow ()
+public function long scrolltorow (datawindow row)
 end function
 
 public function integer selectedcolumn ()
@@ -326,7 +326,7 @@ end function
 public function long selecttext ()
 end function
 
-public function integer selecttextall ()
+public function integer selecttextall (any band)
 end function
 
 public function integer selecttextline ()
@@ -335,13 +335,13 @@ end function
 public function integer selecttextword ()
 end function
 
-public function integer setalignment ()
+public function integer setalignment (any align)
 end function
 
 public function integer setfocus ()
 end function
 
-public function integer setparagraphsetting ()
+public function integer setparagraphsetting (any whichsetting, long value)
 end function
 
 public function integer setposition ()
@@ -350,28 +350,28 @@ end function
 public function integer setredraw ()
 end function
 
-public function integer setspacing ()
+public function integer setspacing (any spacing)
 end function
 
-public function integer settab ()
+public function integer settab (integer tabcurrent, integer tabtype, integer tabpos)
 end function
 
-public function integer settextcolor ()
+public function integer settextcolor (long colornumber)
 end function
 
-public function integer settextfontname ()
+public function integer settextfontname (string fontname)
 end function
 
-public function integer settextfontsize ()
+public function integer settextfontsize (integer fontsize)
 end function
 
-public function integer settextstyle ()
+public function integer settextstyle (boolean bold, boolean underline, boolean subscript, boolean superscript, boolean italic, boolean strikeout)
 end function
 
 public function integer show ()
 end function
 
-public function integer showheadfoot ()
+public function integer showheadfoot (boolean editheadfoot, boolean headerfooter)
 end function
 
 public function long tableatinputpos ()
@@ -380,226 +380,226 @@ end function
 public function boolean tablecanchangeattr ()
 end function
 
-public function boolean tablecellselect ()
+public function boolean tablecellselect (long tableID, long row, long column)
 end function
 
-public function long tablecellstart ()
+public function long tablecellstart (long tableID, long row, long column)
 end function
 
 public function long tablecolumnatinputpos ()
 end function
 
-public function boolean tabledelete ()
+public function boolean tabledelete (long tableID)
 end function
 
-public function boolean tabledeletecolumn ()
+public function boolean tabledeletecolumn (long tableID, long column)
 end function
 
 public function boolean tabledeletecolumns ()
 end function
 
-public function boolean tabledeleterow ()
+public function boolean tabledeleterow (long tableID, long row)
 end function
 
 public function boolean tabledeleterows ()
 end function
 
-public function long tablefromselection ()
+public function long tablefromselection (ref long row, ref long column)
 end function
 
-public function long tablegetcellbackcolor ()
+public function long tablegetcellbackcolor (long tableID, long row, long column)
 end function
 
-public function long tablegetcellbordercolor ()
+public function long tablegetcellbordercolor (long tableID, long row, long column, integer borderType)
 end function
 
-public function integer tablegetcellborderwidth ()
+public function integer tablegetcellborderwidth (long tableID, long row, long column, integer borderType)
 end function
 
-public function boolean tablegetcellheader ()
+public function boolean tablegetcellheader (long tableID, long row, long column)
 end function
 
-public function integer tablegetcellheight ()
+public function integer tablegetcellheight (long tableID, long row, long column)
 end function
 
 public function integer tablegetcellhorizontalext ()
 end function
 
-public function integer tablegetcellhorizontalpos ()
+public function integer tablegetcellhorizontalpos (long tableID, long row, long column)
 end function
 
-public function string tablegetcelllength ()
+public function string tablegetcelllength (long tableID, long row, long column)
 end function
 
-public function string tablegetcellnumberformat ()
+public function string tablegetcellnumberformat (long tableID, long row, long column)
 end function
 
-public function string tablegetcelltext ()
+public function string tablegetcelltext (long tableID, long row, long column)
 end function
 
-public function integer tablegetcelltextgap ()
+public function integer tablegetcelltextgap (long tableID, long row, long column, integer gapType)
 end function
 
-public function integer tablegetcelltexttype ()
+public function integer tablegetcelltexttype (long tableID, long row, long column)
 end function
 
-public function integer tablegetcellvertalign ()
+public function integer tablegetcellvertalign (long tableID, long row, long column)
 end function
 
-public function long tablegetcolumncount ()
+public function long tablegetcolumncount (long tableID)
 end function
 
-public function long tablegetrowcount ()
+public function long tablegetrowcount (long tableID)
 end function
 
-public function long tableinsert ()
+public function long tableinsert (long rows, long columns)
 end function
 
-public function boolean tableinsertcolumn ()
+public function boolean tableinsertcolumn (integer position)
 end function
 
 public function long tableinsertdialog ()
 end function
 
-public function boolean tableinsertrow ()
+public function boolean tableinsertrow (integer position)
 end function
 
-public function boolean tableinsertrows ()
+public function boolean tableinsertrows (integer position)
 end function
 
 public function boolean tablemergecells ()
 end function
 
-public function integer tablenext ()
+public function integer tablenext (integer enumerationNumber, ref integer tableID)
 end function
 
-public function boolean tablepropertiesdialog ()
+public function boolean tablepropertiesdialog (integer activeTab)
 end function
 
 public function long tablerowatinputpos ()
 end function
 
-public function boolean tablesetcellbackcolor ()
+public function boolean tablesetcellbackcolor (long tableID, long row, long column, long color)
 end function
 
-public function boolean tablesetcellbordercolor ()
+public function boolean tablesetcellbordercolor (long tableID, long row, long column, long color)
 end function
 
-public function boolean tablesetcellborderwidth ()
+public function boolean tablesetcellborderwidth (long tableID, long row, long column, integer width)
 end function
 
-public function boolean tablesetcellheader ()
+public function boolean tablesetcellheader (long tableID, long row, long column, boolean bHeader)
 end function
 
-public function boolean tablesetcellheight ()
+public function boolean tablesetcellheight (long tableID, long row, long column, integer height)
 end function
 
-public function boolean tablesetcellhorizontalext ()
+public function boolean tablesetcellhorizontalext (long tableID, long row, long column, integer horizontalExt)
 end function
 
-public function boolean tablesetcellhorizontalpos ()
+public function boolean tablesetcellhorizontalpos (long tableID, long row, long column, integer horizontalPos)
 end function
 
-public function boolean tablesetcellnumberformat ()
+public function boolean tablesetcellnumberformat (long tableID, long row, long column, string format)
 end function
 
-public function boolean tablesetcelltext ()
+public function boolean tablesetcelltext (long tableID, long row, long column, string text)
 end function
 
-public function boolean tablesetcelltextgap ()
+public function boolean tablesetcelltextgap (long tableID, long row, long column, integer gap)
 end function
 
-public function boolean tablesetcelltexttype ()
+public function boolean tablesetcelltexttype (long tableID, long row, long column, integer textType)
 end function
 
-public function boolean tablesetcellvertalign ()
+public function boolean tablesetcellvertalign (long tableID, long row, long column, integer align)
 end function
 
 public function boolean tablesplitcells ()
 end function
 
-public function integer targetdelete ()
+public function integer targetdelete (long id)
 end function
 
-public function string targetgetname ()
+public function string targetgetname (long id)
 end function
 
-public function integer targetgoto ()
+public function integer targetgoto (long id)
 end function
 
 public function long targetinsert ()
 end function
 
-public function long targetnext ()
+public function long targetnext (long id)
 end function
 
 public function integer targetsetname ()
 end function
 
-public function string textfieldgettext ()
+public function string textfieldgettext (integer id)
 end function
 
-public function string textfieldgettype ()
+public function string textfieldgettype (integer id)
 end function
 
-public function integer textfieldgettypedata ()
+public function integer textfieldgettypedata (integer id, ref string data)
 end function
 
-public function integer textfieldinsert ()
+public function integer textfieldinsert (string text)
 end function
 
-public function integer textfieldsettext ()
+public function integer textfieldsettext (integer id, string text)
 end function
 
 public function integer textfieldsettypeanddata ()
 end function
 
-public function long textframegetbackcolor ()
+public function long textframegetbackcolor (integer textFrameID)
 end function
 
-public function integer textframegetborderwidth ()
+public function integer textframegetborderwidth (integer textFrameID)
 end function
 
-public function integer textframegetinternalmargin ()
+public function integer textframegetinternalmargin (integer textFrameID, integer index)
 end function
 
-public function boolean textframegetmarkerlines ()
+public function boolean textframegetmarkerlines (integer textFrameID)
 end function
 
-public function string textframegettext ()
+public function string textframegettext (integer textFrameID)
 end function
 
-public function integer textframeinsert ()
+public function integer textframeinsert (long textPos, integer alignment, long posX, long posY, integer width, integer height, integer textFlow, integer distanceL, integer distanceT, integer distanceR, integer distanceB)
 end function
 
-public function integer textframeinsertaschar ()
+public function integer textframeinsertaschar (long textPos, integer width, integer height)
 end function
 
-public function integer textframeinsertfixed ()
+public function integer textframeinsertfixed (long pageNo, long posX, long PosY, integer width, integer height, integer textFlow, integer distanceL, integer distanceT, integer distanceR, integer distanceB)
 end function
 
-public function boolean textframeselect ()
+public function boolean textframeselect (integer textFrameID)
 end function
 
-public function boolean textframesetbackcolor ()
+public function boolean textframesetbackcolor (integer textFrameID, long color)
 end function
 
-public function boolean textframesetborderwidth ()
+public function boolean textframesetborderwidth (integer textFrameID, integer width)
 end function
 
-public function boolean textframesetinternalmargin ()
+public function boolean textframesetinternalmargin (integer textFrameID, integer index, integer margin)
 end function
 
-public function boolean textframesetmarkerlines ()
+public function boolean textframesetmarkerlines (integer textFrameID, boolean markerLines)
 end function
 
-public function boolean textframesettext ()
+public function boolean textframesettext (integer textFrameID, string text)
 end function
 
 public function string textline ()
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

@@ -53,19 +53,19 @@ end function
 public function integer deleteitem ()
 end function
 
-public function boolean dirlist ()
+public function boolean dirlist (string filespec, unsigned filetype, any statictext)
 end function
 
-public function boolean dirselect ()
+public function boolean dirselect (string selection)
 end function
 
-public function integer drag ()
+public function integer drag (dragmodes m)
 end function
 
 public function integer finditem ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
 public function powerobject getparent ()
@@ -77,7 +77,7 @@ end function
 public function integer insertitem ()
 end function
 
-public function integer move ()
+public function integer move (any x, any y)
 end function
 
 public function integer pointerx ()
@@ -86,7 +86,7 @@ end function
 public function integer pointery ()
 end function
 
-public function boolean postevent ()
+public function boolean postevent (string event, long word, any long)
 end function
 
 public function integer print ()
@@ -95,7 +95,7 @@ end function
 public function integer reset ()
 end function
 
-public function integer resize ()
+public function integer resize (any width, any height)
 end function
 
 public function integer selectedindex ()
@@ -116,16 +116,16 @@ end function
 public function integer setredraw ()
 end function
 
-public function integer setstate ()
+public function integer setstate (any index, boolean state)
 end function
 
-public function integer settop ()
+public function integer settop (any index)
 end function
 
 public function integer show ()
 end function
 
-public function integer state ()
+public function integer state (any index)
 end function
 
 public function string text ()
@@ -140,7 +140,7 @@ end function
 public function integer totalselected ()
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

@@ -21,7 +21,7 @@ end variables
 public function string classname ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
 public function powerobject getparent ()
@@ -30,19 +30,19 @@ end function
 public function integer hide ()
 end function
 
-public function integer move ()
+public function integer move (any x, any y)
 end function
 
-public function boolean postevent ()
+public function boolean postevent (string event, long word, any long)
 end function
 
-public function integer resize ()
+public function integer resize (any width, any height)
 end function
 
 public function integer show ()
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

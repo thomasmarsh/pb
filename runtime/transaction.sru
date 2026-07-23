@@ -28,10 +28,10 @@ end function
 public function long dbhandle ()
 end function
 
-public function integer enablesecureconnection ()
+public function integer enablesecureconnection (boolean flag)
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
 public function powerobject getparent ()
@@ -40,19 +40,19 @@ end function
 public function string getsecureconnectionstring ()
 end function
 
-public function boolean postevent ()
+public function boolean postevent (string event, long word, any long)
 end function
 
 public function integer setsecureconnectionproperty ()
 end function
 
-public function integer setsecureconnectionstring ()
+public function integer setsecureconnectionstring (string strconnect)
 end function
 
-public function string syntaxfromsql ()
+public function string syntaxfromsql (string sqlselect, datawindow presentation, string err)
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

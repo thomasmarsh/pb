@@ -73,19 +73,19 @@ integer X
 integer Y
 end variables
 
-public function integer addcolumn ()
+public function integer addcolumn (string label, any alignment, integer width)
 end function
 
 public function integer additem ()
 end function
 
-public function integer addlargepicture ()
+public function integer addlargepicture (any picturename)
 end function
 
-public function integer addsmallpicture ()
+public function integer addsmallpicture (listview picturename)
 end function
 
-public function integer addstatepicture ()
+public function integer addstatepicture (any picturename)
 end function
 
 public function integer arrange ()
@@ -94,7 +94,7 @@ end function
 public function string classname ()
 end function
 
-public function integer deletecolumn ()
+public function integer deletecolumn (any index)
 end function
 
 public function integer deletecolumns ()
@@ -106,25 +106,25 @@ end function
 public function integer deleteitems ()
 end function
 
-public function integer deletelargepicture ()
+public function integer deletelargepicture (any index)
 end function
 
 public function integer deletelargepictures ()
 end function
 
-public function integer deletesmallpicture ()
+public function integer deletesmallpicture (any index)
 end function
 
 public function integer deletesmallpictures ()
 end function
 
-public function integer deletestatepicture ()
+public function integer deletestatepicture (any index)
 end function
 
 public function integer deletestatepictures ()
 end function
 
-public function integer drag ()
+public function integer drag (dragmodes m)
 end function
 
 public function integer editlabel ()
@@ -133,16 +133,16 @@ end function
 public function integer finditem ()
 end function
 
-public function integer getcolumn ()
+public function integer getcolumn (integer index, string label, any alignment, integer width)
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
 public function integer getitem ()
 end function
 
-public function integer getorigin ()
+public function integer getorigin (listview x, listview y)
 end function
 
 public function powerobject getparent ()
@@ -151,13 +151,13 @@ end function
 public function integer hide ()
 end function
 
-public function integer insertcolumn ()
+public function integer insertcolumn (integer index, string label, any alignment, integer width)
 end function
 
 public function integer insertitem ()
 end function
 
-public function integer move ()
+public function integer move (any x, any y)
 end function
 
 public function integer pointerx ()
@@ -166,19 +166,19 @@ end function
 public function integer pointery ()
 end function
 
-public function boolean postevent ()
+public function boolean postevent (string event, long word, any long)
 end function
 
 public function integer print ()
 end function
 
-public function integer resize ()
+public function integer resize (any width, any height)
 end function
 
 public function integer selectedindex ()
 end function
 
-public function integer setcolumn ()
+public function integer setcolumn (any index, any label, any alignment, any width)
 end function
 
 public function integer setfocus ()
@@ -187,7 +187,7 @@ end function
 public function integer setitem ()
 end function
 
-public function integer setoverlaypicture ()
+public function integer setoverlaypicture (any overlayindex, any imageindex)
 end function
 
 public function integer setposition ()
@@ -211,7 +211,7 @@ end function
 public function integer totalselected ()
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

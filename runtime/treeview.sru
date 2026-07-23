@@ -60,49 +60,49 @@ integer X
 integer Y
 end variables
 
-public function integer addpicture ()
+public function integer addpicture (any picturename)
 end function
 
-public function integer addstatepicture ()
+public function integer addstatepicture (any picturename)
 end function
 
 public function string classname ()
 end function
 
-public function integer collapseitem ()
+public function integer collapseitem (any itemhandle)
 end function
 
 public function integer deleteitem ()
 end function
 
-public function integer deletepicture ()
+public function integer deletepicture (treeview index)
 end function
 
 public function integer deletepictures ()
 end function
 
-public function integer deletestatepicture ()
+public function integer deletestatepicture (any index)
 end function
 
 public function integer deletestatepictures ()
 end function
 
-public function integer drag ()
+public function integer drag (dragmodes m)
 end function
 
 public function integer editlabel ()
 end function
 
-public function integer expandall ()
+public function integer expandall (any itemhandle)
 end function
 
-public function integer expanditem ()
+public function integer expanditem (any itemhandle)
 end function
 
 public function long finditem ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
 public function integer getitem ()
@@ -129,7 +129,7 @@ end function
 public function long insertitemsort ()
 end function
 
-public function integer move ()
+public function integer move (any x, any y)
 end function
 
 public function integer pointerx ()
@@ -138,22 +138,22 @@ end function
 public function integer pointery ()
 end function
 
-public function boolean postevent ()
+public function boolean postevent (string event, long word, any long)
 end function
 
 public function integer print ()
 end function
 
-public function integer resize ()
+public function integer resize (any width, any height)
 end function
 
 public function integer selectitem ()
 end function
 
-public function integer setdrophighlight ()
+public function integer setdrophighlight (any itemhandle)
 end function
 
-public function integer setfirstvisible ()
+public function integer setfirstvisible (treeview itemhandle)
 end function
 
 public function integer setfocus ()
@@ -162,10 +162,10 @@ end function
 public function integer setitem ()
 end function
 
-public function integer setlevelpictures ()
+public function integer setlevelpictures (treeview level, any pictureindex, any selectedpictureindex, any statepictureindex, any overlaypictureindex)
 end function
 
-public function integer setoverlaypicture ()
+public function integer setoverlaypicture (any overlayindex, any imageindex)
 end function
 
 public function integer setposition ()
@@ -180,10 +180,10 @@ end function
 public function integer sort ()
 end function
 
-public function integer sortall ()
+public function integer sortall (any itemhandle, any sorttype)
 end function
 
-public function integer triggerevent ()
+public function integer triggerevent (string event, long word, long long)
 end function
 
 public function any typeof ()

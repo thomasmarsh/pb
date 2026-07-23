@@ -13,7 +13,7 @@ end function
 public function string classname ()
 end function
 
-public function string clearvalues ()
+public function string clearvalues (string column)
 end function
 
 public function integer crosstabdialog ()
@@ -31,28 +31,28 @@ end function
 public function long deletedcount ()
 end function
 
-public function integer deleterow ()
+public function integer deleterow (long row)
 end function
 
-public function string describe ()
+public function string describe (string propertylist)
 end function
 
-public function integer expand ()
+public function integer expand (long row, long groupLevel)
 end function
 
-public function integer expandall ()
+public function integer expandall (any itemhandle)
 end function
 
-public function integer expandallchildren ()
+public function integer expandallchildren (long row, long groupLevel)
 end function
 
-public function integer expandlevel ()
+public function integer expandlevel (long groupLevel)
 end function
 
 public function string exportjson ()
 end function
 
-public function string exportrowasjson ()
+public function string exportrowasjson (long row, dwbuffer dwbuffer)
 end function
 
 public function integer filter ()
@@ -61,19 +61,19 @@ end function
 public function integer filteredcount ()
 end function
 
-public function long find ()
+public function long find (string searchtext, boolean forward, boolean insensitive, boolean wholeword, boolean cursor)
 end function
 
-public function long findgroupchange ()
+public function long findgroupchange (long row, integer level)
 end function
 
 public function string getbandatpointer ()
 end function
 
-public function any getborderstyle ()
+public function any getborderstyle (integer column)
 end function
 
-public function long getchanges ()
+public function long getchanges (ref blob changeblob, blob cookie)
 end function
 
 public function integer getchild ()
@@ -85,40 +85,40 @@ end function
 public function long getclickedrow ()
 end function
 
-public function integer getcolumn ()
+public function integer getcolumn (integer index, string label, any alignment, integer width)
 end function
 
 public function string getcolumnname ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
-public function string getformat ()
+public function string getformat (string column)
 end function
 
-public function date getitemdate ()
+public function date getitemdate (char itempath)
 end function
 
-public function datetime getitemdatetime ()
+public function datetime getitemdatetime (char itempath)
 end function
 
-public function decimal getitemdecimal ()
+public function decimal getitemdecimal (long ItemHandle)
 end function
 
-public function double getitemnumber ()
+public function double getitemnumber (char itempath)
 end function
 
-public function any getitemstatus ()
+public function any getitemstatus (long row, integer column, dwbuffer dwbuffer)
 end function
 
-public function string getitemstring ()
+public function string getitemstring (char itempath)
 end function
 
-public function time getitemtime ()
+public function time getitemtime (char itempath)
 end function
 
-public function long getnextmodified ()
+public function long getnextmodified (long row, dwbuffer dwbuffer)
 end function
 
 public function string getobjectatpointer ()
@@ -130,13 +130,13 @@ end function
 public function long getrow ()
 end function
 
-public function long getrowfromrowid ()
+public function long getrowfromrowid (long rowid, dwbuffer buffer)
 end function
 
-public function long getrowidfromrow ()
+public function long getrowidfromrow (long rownumber, dwbuffer buffer)
 end function
 
-public function integer getselectedrow ()
+public function integer getselectedrow (long row)
 end function
 
 public function string getsqlpreview ()
@@ -148,13 +148,13 @@ end function
 public function string gettext ()
 end function
 
-public function integer gettrans ()
+public function integer gettrans (transaction transaction)
 end function
 
-public function integer getupdatestatus ()
+public function integer getupdatestatus (long row, dwbuffer dwbuffer)
 end function
 
-public function string getvalidate ()
+public function string getvalidate (string column)
 end function
 
 public function string getvalue ()
@@ -163,40 +163,40 @@ end function
 public function integer groupcalc ()
 end function
 
-public function long importclipboard ()
+public function long importclipboard (any importtype, any startrow, any endrow, any startcolumn)
 end function
 
 public function long importfile ()
 end function
 
-public function long importjson ()
+public function long importjson (string data)
 end function
 
-public function long importjsonbykey ()
+public function long importjsonbykey (string json, string error, dwbuffer dwbuffer, long startrow, long endrow)
 end function
 
-public function long importrowfromjson ()
+public function long importrowfromjson (string json, long row, ref string error, dwbuffer dwbuffer)
 end function
 
 public function long importstring ()
 end function
 
-public function long insertrow ()
+public function long insertrow (long row)
 end function
 
-public function boolean isselected ()
+public function boolean isselected (long row)
 end function
 
 public function long modifiedcount ()
 end function
 
-public function string modify ()
+public function string modify (string modstring)
 end function
 
-public function integer oleactivate ()
+public function integer oleactivate (long row, integer column, integer verb)
 end function
 
-public function integer reselectrow ()
+public function integer reselectrow (long row)
 end function
 
 public function integer reset ()
@@ -208,25 +208,25 @@ end function
 public function integer resetupdate ()
 end function
 
-public function long retrieve ()
+public function long retrieve (datawindow dwcontrol, string urlname, string data, any tokenrequest)
 end function
 
 public function long rowcount ()
 end function
 
-public function integer rowscopy ()
+public function integer rowscopy (long startrow, long endrow, dwbuffer copybuffer, datawindow targetdw, long beforerow, dwbuffer targetbuffer)
 end function
 
-public function integer rowsdiscard ()
+public function integer rowsdiscard (long startrow, long endrow, dwbuffer buffer)
 end function
 
-public function integer rowsmove ()
+public function integer rowsmove (long startrow, long endrow, dwbuffer movebuffer, datawindow targetdw, long beforerow, dwbuffer targetbuffer)
 end function
 
 public function integer saveas ()
 end function
 
-public function integer savenativepdftoblob ()
+public function integer savenativepdftoblob (blob data)
 end function
 
 public function long scrollnextpage ()
@@ -241,34 +241,34 @@ end function
 public function long scrollpriorrow ()
 end function
 
-public function integer scrolltorow ()
+public function integer scrolltorow (datawindow row)
 end function
 
-public function integer selectrow ()
+public function integer selectrow (long row, boolean select)
 end function
 
-public function integer setborderstyle ()
+public function integer setborderstyle (integer column, border borderstyle)
 end function
 
-public function long setchanges ()
+public function long setchanges (blob changeblob, dwconflictresolution resolution)
 end function
 
-public function integer setcolumn ()
+public function integer setcolumn (any index, any label, any alignment, any width)
 end function
 
-public function integer setdetailheight ()
+public function integer setdetailheight (long startrow, long endrow, long height)
 end function
 
-public function integer setfilter ()
+public function integer setfilter (string format)
 end function
 
-public function integer setformat ()
+public function integer setformat (string column, string format)
 end function
 
 public function integer setitem ()
 end function
 
-public function integer setitemstatus ()
+public function integer setitemstatus (long row, integer column, dwbuffer dwbuffer, dwitemstatus status)
 end function
 
 public function integer setposition ()
@@ -277,34 +277,34 @@ end function
 public function integer setredraw ()
 end function
 
-public function integer setrow ()
+public function integer setrow (long row)
 end function
 
-public function integer setrowfocusindicator ()
+public function integer setrowfocusindicator (rowfocusind focusindicator, integer xlocation, integer ylocation)
 end function
 
-public function integer setsort ()
+public function integer setsort (string format)
 end function
 
-public function integer setsqlpreview ()
+public function integer setsqlpreview (string sqlsyntax)
 end function
 
-public function integer setsqlselect ()
+public function integer setsqlselect (string statement)
 end function
 
-public function integer settaborder ()
+public function integer settaborder (integer column, integer tabnumber)
 end function
 
-public function integer settext ()
+public function integer settext (string text)
 end function
 
-public function integer settrans ()
+public function integer settrans (transaction transaction)
 end function
 
-public function integer settransobject ()
+public function integer settransobject (transaction transaction)
 end function
 
-public function integer setvalidate ()
+public function integer setvalidate (string column, string rule)
 end function
 
 public function integer setvalue ()
@@ -313,7 +313,7 @@ end function
 public function integer setwsobject ()
 end function
 
-public function integer sharedata ()
+public function integer sharedata (datawindow dwsecondary)
 end function
 
 public function integer sharedataoff ()
@@ -325,7 +325,7 @@ end function
 public function any typeof ()
 end function
 
-public function integer update ()
+public function integer update (boolean accept, boolean resetflag)
 end function
 
 on datawindowchild.constructor

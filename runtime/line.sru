@@ -19,7 +19,7 @@ end variables
 public function string classname ()
 end function
 
-public function integer getcontextservice ()
+public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
 public function powerobject getparent ()
@@ -28,10 +28,10 @@ end function
 public function integer hide ()
 end function
 
-public function integer move ()
+public function integer move (any x, any y)
 end function
 
-public function integer resize ()
+public function integer resize (any width, any height)
 end function
 
 public function integer show ()
