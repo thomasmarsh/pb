@@ -203,6 +203,34 @@ clause). Converging → let it run, verify after. Flailing → kill.
   count, verification-gate result, and files touched, then stop. Don't
   ask it to suggest what's next.
 
+## mimo reads this project's AGENTS.md/CLAUDE.md too — account for that
+
+`mimo run --dir <project-path>` operates in the project directory, so it
+picks up `CLAUDE.md`/`AGENTS.md` (and nested subsystem `AGENTS.md` files,
+e.g. `compiler/AGENTS.md`) the same way a Claude Code session does. This
+cuts both ways and the spec should account for it rather than assume mimo
+either has or lacks this context by default:
+
+- **Helps — don't re-state baseline conventions.** Prelude rules, no-`git
+  add`/`git commit`, Text-everywhere/no-partial-functions, naming
+  conventions — mimo already gets these from the repo's own docs. Spend
+  the spec's words on the task-specific transformation rules, not
+  boilerplate the project docs already cover.
+- **Misfires — protocol steps written for an interactive Claude Code
+  session don't make sense headless.** This project's Staged Verification
+  Loop says "stop here and wait for review" at Stage 1/Stage 3 for
+  non-trivial changes — but a `mimo run --dangerously-skip-permissions`
+  invocation has no one to hand a review to mid-run. Likewise,
+  `compiler/AGENTS.md`'s mandatory `constraint-evasion` skill invocation on
+  every Haskell diff assumes a `Skill` tool mimo doesn't have. If the
+  task touches a subsystem whose `AGENTS.md` contains gates like these,
+  say so explicitly in the spec's non-negotiables: e.g. "the constraint-
+  evasion review this repo's `compiler/AGENTS.md` calls for happens after
+  you report done, not during this run — do not attempt to invoke it,
+  just finish the mechanical task and stop." Otherwise mimo may stall
+  waiting on a review step that will never come, or silently skip a gate
+  it can't satisfy without saying so.
+
 ## Invocation mechanics
 
 **Primary pattern — the Bash tool's `run_in_background` option** (no
