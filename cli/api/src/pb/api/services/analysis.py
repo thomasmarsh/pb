@@ -256,6 +256,59 @@ def get_taint_sources(
     return {"sources": src_rows, "total": total}
 
 
+def get_type_coverage(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Token-level type-resolution coverage. Mirrors
+    PB.Pipeline.DuckDb.Relations.typeCoverageStats's SQL exactly (same
+    __stdlib__/-prefixed row exclusion, same identifier_tokens denominator) so
+    the CLI-reported percentage always matches the compiler-side measurement."""
+    total_tokens, resolved_tokens, var_total, var_resolved, call_total, call_resolved = conn.execute(
+        "WITH resolved_positions AS ( "
+        "  SELECT file, name_start_line AS l, name_start_col AS c "
+        "  FROM resolved_var_refs "
+        "  WHERE name_start_line IS NOT NULL AND file NOT LIKE '__stdlib__/%' "
+        "  UNION "
+        "  SELECT file, to_name_start_line AS l, to_name_start_col AS c "
+        "  FROM resolved_calls "
+        "  WHERE to_name_start_line IS NOT NULL AND file NOT LIKE '__stdlib__/%' "
+        ") "
+        "SELECT "
+        "  (SELECT COUNT(*) FROM identifier_tokens WHERE file NOT LIKE '__stdlib__/%'), "
+        "  (SELECT COUNT(*) FROM identifier_tokens it "
+        "     WHERE it.file NOT LIKE '__stdlib__/%' "
+        "     AND EXISTS (SELECT 1 FROM resolved_positions rp "
+        "                 WHERE rp.file = it.file AND rp.l = it.start_line AND rp.c = it.start_col)), "
+        "  (SELECT COUNT(*) FROM resolved_var_refs WHERE file NOT LIKE '__stdlib__/%'), "
+        "  (SELECT COUNT(*) FROM resolved_var_refs WHERE file NOT LIKE '__stdlib__/%' AND kind != 'unresolved'), "
+        "  (SELECT COUNT(*) FROM resolved_calls WHERE file NOT LIKE '__stdlib__/%'), "
+        "  (SELECT COUNT(*) FROM resolved_calls WHERE file NOT LIKE '__stdlib__/%' AND kind != 'unresolved')"
+    ).fetchone()  # type: ignore[misc]
+
+    def pct(numerator: int, denominator: int) -> float:
+        return round(numerator / denominator * 100, 2) if denominator else 0.0
+
+    var_ref_kind_counts = rows(conn.execute(
+        "SELECT kind, COUNT(*) AS count FROM resolved_var_refs "
+        "WHERE file NOT LIKE '__stdlib__/%' GROUP BY kind ORDER BY count DESC"
+    ))
+    call_kind_counts = rows(conn.execute(
+        "SELECT kind, COUNT(*) AS count FROM resolved_calls "
+        "WHERE file NOT LIKE '__stdlib__/%' GROUP BY kind ORDER BY count DESC"
+    ))
+    return {
+        "total_identifier_tokens": total_tokens,
+        "resolved_identifier_tokens": resolved_tokens,
+        "token_coverage_pct": pct(resolved_tokens, total_tokens),
+        "var_ref_total": var_total,
+        "var_ref_resolved": var_resolved,
+        "var_ref_pct": pct(var_resolved, var_total),
+        "call_total": call_total,
+        "call_resolved": call_resolved,
+        "call_pct": pct(call_resolved, call_total),
+        "var_ref_kind_counts": var_ref_kind_counts,
+        "call_kind_counts": call_kind_counts,
+    }
+
+
 def get_code_quality_report(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     """Aggregated code-quality signals — pure SQL over already-computed tables
     (Plan 174 T0-5)."""

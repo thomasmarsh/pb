@@ -1,6 +1,6 @@
 // features/errors/types.ts
 
-import type { ParseErrorRow } from "../../types/api.js";
+import type { ParseErrorRow, TypeCoverageResponse } from "../../types/api.js";
 
 export type ErrorKindFilter = "all" | "powerscript" | "sql";
 
@@ -14,4 +14,5 @@ export interface ErrorsState {
   query: string;
   page: number;
   selected: ParseErrorRow | null;
+  typeCoverage: TypeCoverageResponse | null;
 }

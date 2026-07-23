@@ -16,6 +16,62 @@ const KIND_FILTERS: { value: ErrorKindFilter; label: string }[] = [
   { value: "sql", label: "SQL" },
 ];
 
+function TypeCoverageCard(props: { store: Store<AppState, AppAction> }) {
+  const snap = props.store.getState();
+  const tc = () => snap().errors.typeCoverage;
+
+  return (
+    <Show when={tc()}>
+      <div class="card" style={{ "margin-bottom": "16px" }}>
+        <div class="card-header"><h2>Type Coverage</h2></div>
+        <div class="metric-grid">
+          <div class="metric-card">
+            <div class="label">Token Coverage</div>
+            <div class="value">{tc()!.token_coverage_pct}%</div>
+          </div>
+          <div class="metric-card">
+            <div class="label">Var Refs Resolved</div>
+            <div class="value">{tc()!.var_ref_pct}%</div>
+          </div>
+          <div class="metric-card">
+            <div class="label">Calls Resolved</div>
+            <div class="value">{tc()!.call_pct}%</div>
+          </div>
+        </div>
+        <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-bottom": "12px" }}>
+          {tc()!.resolved_identifier_tokens.toLocaleString()} / {tc()!.total_identifier_tokens.toLocaleString()} identifier
+          tokens matched a resolved var-ref or call row (token-level denominator — an identifier that never parsed
+          into either table counts against this even when the parsed rows above resolve almost perfectly)
+        </div>
+        <div style={{ display: "flex", gap: "16px", "flex-wrap": "wrap" }}>
+          <table class="data-table" style={{ flex: "1", "min-width": "220px" }}>
+            <thead>
+              <tr><th colspan="2">Var Ref Kinds</th></tr>
+              <tr><th>Kind</th><th>Count</th></tr>
+            </thead>
+            <tbody>
+              <For each={tc()!.var_ref_kind_counts}>
+                {(row) => <tr><td class="name-cell">{row.kind}</td><td>{row.count}</td></tr>}
+              </For>
+            </tbody>
+          </table>
+          <table class="data-table" style={{ flex: "1", "min-width": "220px" }}>
+            <thead>
+              <tr><th colspan="2">Call Kinds</th></tr>
+              <tr><th>Kind</th><th>Count</th></tr>
+            </thead>
+            <tbody>
+              <For each={tc()!.call_kind_counts}>
+                {(row) => <tr><td class="name-cell">{row.kind}</td><td>{row.count}</td></tr>}
+              </For>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
 export function Errors(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = store.getState();
@@ -37,7 +93,10 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
   const totalPages = () => Math.max(1, Math.ceil(e().total / PAGE_SIZE));
 
   return (
-    <div class="card">
+    <>
+      <TypeCoverageCard store={store} />
+
+      <div class="card">
       <div class="card-header"><h2>Diagnostics</h2></div>
 
       <div class="filter-pills">
@@ -175,7 +234,8 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
         })()}
       </Show>
 
-    </div>
+      </div>
+    </>
   );
 }
 

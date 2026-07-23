@@ -278,6 +278,20 @@ export interface CodeQualityReportResponse {
   }[];
 }
 
+export interface TypeCoverageResponse {
+  total_identifier_tokens: number;
+  resolved_identifier_tokens: number;
+  token_coverage_pct: number;
+  var_ref_total: number;
+  var_ref_resolved: number;
+  var_ref_pct: number;
+  call_total: number;
+  call_resolved: number;
+  call_pct: number;
+  var_ref_kind_counts: { kind: string; count: number }[];
+  call_kind_counts: { kind: string; count: number }[];
+}
+
 export interface QueryParam {
   name: string;
   type: string;

@@ -3,10 +3,25 @@
 import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { errorsReducer, initialErrorsState, type ErrorsEnv } from "@pb/platform";
+import { errorsReducer, initialErrorsState, type ErrorsEnv, type TypeCoverageResponse } from "@pb/platform";
 
 const mockEnv: ErrorsEnv = {
   getErrors: () => Effect.none(),
+  getTypeCoverage: () => Effect.none(),
+};
+
+const MOCK_COVERAGE: TypeCoverageResponse = {
+  total_identifier_tokens: 100,
+  resolved_identifier_tokens: 80,
+  token_coverage_pct: 80,
+  var_ref_total: 50,
+  var_ref_resolved: 48,
+  var_ref_pct: 96,
+  call_total: 30,
+  call_resolved: 29,
+  call_pct: 96.67,
+  var_ref_kind_counts: [{ kind: "local", count: 40 }, { kind: "unresolved", count: 2 }],
+  call_kind_counts: [{ kind: "virtual", count: 29 }, { kind: "unresolved", count: 1 }],
 };
 
 describe("errors reducer", () => {
@@ -20,6 +35,48 @@ describe("errors reducer", () => {
         s.items = items;
         s.total = 1;
         s.loading = false;
+      });
+    });
+  });
+
+  describe("errors/load", () => {
+    it("fetches errors and type coverage in parallel", () => {
+      const items = [
+        { file: "a.srw", error_kind: "powerscript" as const, message: "lex error", object: null, proc_name: null, line: 3, snippet: "garble" },
+      ];
+      const env: ErrorsEnv = {
+        getErrors: () => Effect.send({ items, total: 1, offset: 0, limit: 200 }),
+        getTypeCoverage: () => Effect.send(MOCK_COVERAGE),
+      };
+      const ts = createTestStore(errorsReducer, env, initialErrorsState);
+      ts.send({ tag: "load" }, (s) => {
+        s.loading = true;
+      });
+      ts.receive({ tag: "loaded", items, total: 1 }, (s) => {
+        s.items = items;
+        s.total = 1;
+        s.loading = false;
+      });
+      ts.receive({ tag: "typeCoverageLoaded", data: MOCK_COVERAGE }, (s) => {
+        s.typeCoverage = MOCK_COVERAGE;
+      });
+    });
+  });
+
+  describe("errors/typeCoverageLoaded", () => {
+    it("sets typeCoverage", () => {
+      const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
+      ts.send({ tag: "typeCoverageLoaded", data: MOCK_COVERAGE }, (s) => {
+        s.typeCoverage = MOCK_COVERAGE;
+      });
+    });
+  });
+
+  describe("errors/typeCoverageError", () => {
+    it("is a no-op on state (errors table stays usable even if coverage fails)", () => {
+      const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
+      ts.send({ tag: "typeCoverageError", error: "boom" }, () => {
+        /* no state change expected */
       });
     });
   });

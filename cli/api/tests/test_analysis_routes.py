@@ -563,6 +563,171 @@ def test_type_mismatches_endpoint_works_against_real_corpus(db_path):
 
 
 # ---------------------------------------------------------------------------
+# Type-coverage endpoint (Plan 201 Phase 5b)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def type_coverage_client(tmp_path_factory):
+    """TestClient backed by a synthetic DB exercising both resolved-vs-never-
+    a-row (token-level) and resolved-vs-unresolved-kind (row-level) gaps, plus
+    __stdlib__/-prefixed rows that must be excluded from every count.
+    """
+    tmp = tmp_path_factory.mktemp("type_coverage_db")
+    db_path = str(tmp / "type_coverage.duckdb")
+    conn = duckdb.connect(db_path)
+
+    conn.execute("""
+        CREATE TABLE identifier_tokens (
+            file TEXT, text TEXT, kind TEXT,
+            start_line INT, start_col INT, end_line INT, end_col INT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE resolved_var_refs (
+            file TEXT, object TEXT, proc_name TEXT, line INT,
+            name TEXT, kind TEXT,
+            name_start_line INT, name_start_col INT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE resolved_calls (
+            file TEXT, object TEXT, proc_name TEXT, to_name TEXT, line INT,
+            kind TEXT,
+            to_name_start_line INT, to_name_start_col INT
+        )
+    """)
+
+    # 5 real identifier tokens: (1,1)/(1,5) resolved via var_refs (one
+    # resolved-kind, one unresolved-kind -- both still "became a row"),
+    # (2,1)/(2,5) resolved via calls (same split), (3,1) never became a row.
+    for line, col in [(1, 1), (1, 5), (2, 1), (2, 5), (3, 1)]:
+        conn.execute(
+            "INSERT INTO identifier_tokens VALUES ('f1.srw', 'x', 'ident', ?, ?, ?, ?)",
+            [line, col, line, col],
+        )
+    conn.execute(
+        "INSERT INTO resolved_var_refs VALUES ('f1.srw', 'w_main', 'uf_x', 1, 'a', 'local', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO resolved_var_refs VALUES ('f1.srw', 'w_main', 'uf_x', 1, 'b', 'unresolved', 1, 5)"
+    )
+    conn.execute(
+        "INSERT INTO resolved_calls VALUES ('f1.srw', 'w_main', 'uf_x', 'c', 2, 'virtual', 2, 1)"
+    )
+    conn.execute(
+        "INSERT INTO resolved_calls VALUES ('f1.srw', 'w_main', 'uf_x', 'd', 2, 'unresolved', 2, 5)"
+    )
+
+    # __stdlib__/-prefixed rows must be excluded from every count -- if they
+    # leaked in, total_identifier_tokens would be 6 instead of 5.
+    conn.execute(
+        "INSERT INTO identifier_tokens VALUES ('__stdlib__/x.sru', 'y', 'ident', 9, 9, 9, 9)"
+    )
+    conn.execute(
+        "INSERT INTO resolved_var_refs VALUES ('__stdlib__/x.sru', 'x', 'uf_y', 9, 'y', 'local', 9, 9)"
+    )
+
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+def test_type_coverage_token_level_counts_rows_regardless_of_kind(type_coverage_client):
+    """4 of 5 real tokens became a resolved_var_refs/resolved_calls row at
+    all (positions (1,1)/(1,5)/(2,1)/(2,5)) -- kind='unresolved' rows still
+    count here, since token coverage measures "did this ever parse into a
+    row", not "did it resolve to something real"."""
+    r = type_coverage_client.get("/api/analysis/type-coverage")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_identifier_tokens"] == 5
+    assert body["resolved_identifier_tokens"] == 4
+    assert body["token_coverage_pct"] == 80.0
+
+
+def test_type_coverage_row_level_pct_excludes_unresolved_kind(type_coverage_client):
+    body = type_coverage_client.get("/api/analysis/type-coverage").json()
+    assert body["var_ref_total"] == 2
+    assert body["var_ref_resolved"] == 1
+    assert body["var_ref_pct"] == 50.0
+    assert body["call_total"] == 2
+    assert body["call_resolved"] == 1
+    assert body["call_pct"] == 50.0
+
+
+def test_type_coverage_kind_histograms(type_coverage_client):
+    body = type_coverage_client.get("/api/analysis/type-coverage").json()
+    var_kinds = {row["kind"]: row["count"] for row in body["var_ref_kind_counts"]}
+    call_kinds = {row["kind"]: row["count"] for row in body["call_kind_counts"]}
+    assert var_kinds == {"local": 1, "unresolved": 1}
+    assert call_kinds == {"virtual": 1, "unresolved": 1}
+
+
+def test_type_coverage_excludes_stdlib_rows(type_coverage_client):
+    """__stdlib__/-prefixed identifier_tokens/resolved_var_refs rows are
+    appended to every --db run regardless of target corpus and must never
+    move a real corpus's coverage percentage."""
+    body = type_coverage_client.get("/api/analysis/type-coverage").json()
+    assert body["total_identifier_tokens"] == 5
+    assert sum(row["count"] for row in body["var_ref_kind_counts"]) == 2
+
+
+@pytest.fixture(scope="module")
+def empty_type_coverage_client(tmp_path_factory):
+    """TestClient backed by a DB with the coverage tables present but empty --
+    guards against a divide-by-zero crash on a freshly-indexed workspace."""
+    tmp = tmp_path_factory.mktemp("empty_type_coverage_db")
+    db_path = str(tmp / "empty_type_coverage.duckdb")
+    conn = duckdb.connect(db_path)
+    conn.execute("CREATE TABLE identifier_tokens (file TEXT, text TEXT, kind TEXT, "
+                 "start_line INT, start_col INT, end_line INT, end_col INT)")
+    conn.execute("CREATE TABLE resolved_var_refs (file TEXT, object TEXT, proc_name TEXT, "
+                 "line INT, name TEXT, kind TEXT, name_start_line INT, name_start_col INT)")
+    conn.execute("CREATE TABLE resolved_calls (file TEXT, object TEXT, proc_name TEXT, "
+                 "to_name TEXT, line INT, kind TEXT, to_name_start_line INT, to_name_start_col INT)")
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+def test_type_coverage_empty_db_returns_zero_pct_not_a_crash(empty_type_coverage_client):
+    r = empty_type_coverage_client.get("/api/analysis/type-coverage")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_identifier_tokens"] == 0
+    assert body["token_coverage_pct"] == 0.0
+    assert body["var_ref_pct"] == 0.0
+    assert body["call_pct"] == 0.0
+
+
+def test_type_coverage_endpoint_works_against_real_corpus(db_path):
+    """Sanity-check the endpoint's real-corpus shape: percentages in [0, 100],
+    resolved counts never exceed their totals."""
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    client = TestClient(app)
+    r = client.get("/api/analysis/type-coverage")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["resolved_identifier_tokens"] <= body["total_identifier_tokens"]
+    assert body["var_ref_resolved"] <= body["var_ref_total"]
+    assert body["call_resolved"] <= body["call_total"]
+    for key in ("token_coverage_pct", "var_ref_pct", "call_pct"):
+        assert 0.0 <= body[key] <= 100.0
+
+
+# ---------------------------------------------------------------------------
 # Slice endpoint — scoped fetch regression
 # ---------------------------------------------------------------------------
 

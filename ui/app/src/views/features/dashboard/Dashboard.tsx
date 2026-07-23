@@ -221,6 +221,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
     { label: "DB Tables",         value: fmt(s()?.tables),     route: { view: "tables" }        as Route },
     { label: "Procedures",        value: fmt(s()?.procedures), route: { view: "proceduresList" } as Route },
     { label: "Unreferenced DWs",  value: fmt(s()?.dead_dw),   route: { view: "queries", queryName: "dead-dw" } as Route },
+    { label: "Diagnostics",       value: fmt(s()?.parse_error_count ?? 0), route: { view: "errors" } as Route },
     ...(s()?.ddl_loaded ? [
       { label: "Unenforced FKs", value: fmt(s()?.unenforced_fk_count), route: { view: "diagrams", kind: "fk-graph" } as Route },
       { label: "Dead Columns",   value: fmt(s()?.dead_column_count),   route: { view: "tables" }   as Route },

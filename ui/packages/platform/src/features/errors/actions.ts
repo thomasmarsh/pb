@@ -1,6 +1,6 @@
 // features/errors/actions.ts — Errors feature actions (self-contained).
 
-import type { ParseErrorRow } from "../../types/api.js";
+import type { ParseErrorRow, TypeCoverageResponse } from "../../types/api.js";
 import type { ErrorKindFilter } from "./types.js";
 
 export type ErrorsAction =
@@ -11,4 +11,6 @@ export type ErrorsAction =
   | { tag: "setPage"; page: number }
   | { tag: "select"; row: ParseErrorRow | null }
   | { tag: "error"; error: string }
+  | { tag: "typeCoverageLoaded"; data: TypeCoverageResponse }
+  | { tag: "typeCoverageError"; error: string }
   ;

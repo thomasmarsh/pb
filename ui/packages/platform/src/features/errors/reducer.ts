@@ -4,14 +4,16 @@ import { Effect, type Reducer } from "@pb/core";
 import type { ErrorsState } from "./types.js";
 import { PAGE_SIZE } from "./types.js";
 import type { ErrorsAction } from "./actions.js";
-import type { ErrorListResponse } from "../../types/api.js";
+import type { ErrorListResponse, TypeCoverageResponse } from "../../types/api.js";
 
 export interface ErrorsEnv {
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Effect<ErrorListResponse>;
+  getTypeCoverage(): Effect<TypeCoverageResponse>;
 }
 
 export const initialErrorsState: ErrorsState = {
   items: [], total: 0, loading: false, filterKind: "all", query: "", page: 0, selected: null,
+  typeCoverage: null,
 };
 
 function fetchErrors(draft: ErrorsState, env: ErrorsEnv): Effect<ErrorsAction> {
@@ -26,11 +28,18 @@ function fetchErrors(draft: ErrorsState, env: ErrorsEnv): Effect<ErrorsAction> {
     .catch((e): ErrorsAction => ({ tag: "error", error: String(e) }));
 }
 
+function fetchTypeCoverage(env: ErrorsEnv): Effect<ErrorsAction> {
+  return env
+    .getTypeCoverage()
+    .map((data): ErrorsAction => ({ tag: "typeCoverageLoaded", data }))
+    .catch((e): ErrorsAction => ({ tag: "typeCoverageError", error: String(e) }));
+}
+
 function reduce(draft: ErrorsState, action: ErrorsAction, env: ErrorsEnv): Effect<ErrorsAction> | null {
   switch (action.tag) {
   case "load":
     draft.loading = true;
-    return fetchErrors(draft, env);
+    return Effect.merge(fetchErrors(draft, env), fetchTypeCoverage(env));
   case "loaded":
     draft.items = action.items;
     draft.total = action.total;
@@ -55,6 +64,11 @@ function reduce(draft: ErrorsState, action: ErrorsAction, env: ErrorsEnv): Effec
     return null;
   case "error":
     draft.loading = false;
+    return null;
+  case "typeCoverageLoaded":
+    draft.typeCoverage = action.data;
+    return null;
+  case "typeCoverageError":
     return null;
   default:
     return null;

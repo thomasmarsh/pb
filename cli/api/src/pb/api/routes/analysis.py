@@ -17,6 +17,7 @@ from pb.api.services.analysis import (
     get_taint_paths,
     get_taint_sinks,
     get_taint_sources,
+    get_type_coverage,
     get_type_mismatches,
 )
 
@@ -39,6 +40,11 @@ async def dead_vars(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
 async def type_mismatches(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     items = get_type_mismatches(conn)
     return {"items": items, "total": len(items)}
+
+
+@router.get("/api/analysis/type-coverage")
+async def type_coverage(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    return get_type_coverage(conn)
 
 
 @router.get("/api/analysis/live-procedures", response_model=LiveProceduresResponse)

@@ -19,6 +19,7 @@ import type {
   TableSummary,
   TableDetail,
   ErrorListResponse,
+  TypeCoverageResponse,
   LiveProceduresResponse,
   DeadVarsResponse,
   TypeMismatchesResponse,
@@ -68,6 +69,7 @@ export interface ApiClient {
   getColumnUsage(): Promise<ColumnUsageResponse>;
   getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
+  getTypeCoverage(): Promise<TypeCoverageResponse>;
   getLiveProcedures(): Promise<LiveProceduresResponse>;
   getDeadVars(): Promise<DeadVarsResponse>;
   getTypeMismatches(): Promise<TypeMismatchesResponse>;
@@ -148,6 +150,7 @@ export function createEnv(api: ApiClient): Env {
     getColumnUsage: () => lift(() => api.getColumnUsage()),
     getDecompositionCandidates: (t: string, ns?: string) => lift(() => api.getDecompositionCandidates(t, ns)),
     getErrors: (p) => lift(() => api.getErrors(p)),
+    getTypeCoverage: () => lift(() => api.getTypeCoverage()),
     getLiveProcedures: () => lift(() => api.getLiveProcedures().then((r) => r.items)),
     getDeadVars: () => lift(() => api.getDeadVars().then((r) => r.items)),
     getTypeMismatches: () => lift(() => api.getTypeMismatches().then((r) => r.items)),
@@ -328,6 +331,10 @@ export function createApiClient(): ApiClient {
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {
       return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "", limit: params.limit ?? 200, offset: params.offset ?? 0 }));
+    },
+
+    async getTypeCoverage(): Promise<TypeCoverageResponse> {
+      return fetchJson("/api/analysis/type-coverage");
     },
 
     async getLiveProcedures(): Promise<LiveProceduresResponse> {

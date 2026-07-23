@@ -58,6 +58,7 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     getColumnUsage: () => Effect.none(),
     getDecompositionCandidates: () => Effect.none(),
     getErrors: () => Effect.none(),
+    getTypeCoverage: () => Effect.none(),
     getLiveProcedures: () => Effect.none(),
     getDeadVars: () => Effect.none(),
     getTypeMismatches: () => Effect.none(),
