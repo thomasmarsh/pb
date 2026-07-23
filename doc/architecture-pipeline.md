@@ -348,10 +348,10 @@ dw_controls (
 )
 
 -- PBSELECT retrieval decomposition (namespace-aware, Plan 157)
-dw_retrieve_tables  (file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT)
-dw_retrieve_columns (file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)
-dw_retrieve_where   (file TEXT, dw_name TEXT, idx INT, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)
-dw_joins            (file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT,
+dw_retrieve_tables  (file TEXT, object TEXT, namespace TEXT, table_name TEXT)
+dw_retrieve_columns (file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)
+dw_retrieve_where   (file TEXT, object TEXT, idx INT, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)
+dw_joins            (file TEXT, object TEXT, left_ref TEXT, op TEXT, right_ref TEXT,
                       outer1 TEXT, outer2 TEXT)
 
 -- Embedded SQL per procedure, plus per-column/filter/table attribution
@@ -433,14 +433,14 @@ object_metrics (
 
 Note: `objects` holds PowerScript objects only (`.srw`/`.sru`/`.srf`/…);
 DataWindow files (`.srd`) are separate rows in `dw_objects`, keyed by
-`dw_name` in the `dw_*` tables — there is no `objects` row to join against
+`object` in the `dw_*` tables — there is no `objects` row to join against
 for a DW by file path.
 
 ```sql
 -- What DB tables does a given DataWindow retrieve from?
 SELECT DISTINCT dt.namespace, dt.table_name
 FROM dw_retrieve_tables dt
-WHERE dt.dw_name = 'd_invoice_detail';
+WHERE dt.object = 'd_invoice_detail';
 
 -- Full inheritance chain for an object
 WITH RECURSIVE anc AS (

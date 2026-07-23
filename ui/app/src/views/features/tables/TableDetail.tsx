@@ -245,8 +245,8 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
                   {(dw) => (
                     <EntityCard
                       type="datawindow"
-                      name={dw.dw_name}
-                      onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "select", name: dw.dw_name } })}
+                      name={dw.object}
+                      onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "select", name: dw.object } })}
                     />
                   )}
                 </For>

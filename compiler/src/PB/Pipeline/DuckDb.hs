@@ -232,18 +232,18 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       , "CREATE TABLE IF NOT EXISTS dw_objects \
         \(file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
-        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT)"
+        \(file TEXT, object TEXT, namespace TEXT, table_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_columns \
-        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
+        \(file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_write_columns \
-        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
+        \(file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_where_columns \
-        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
+        \(file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_joins \
-        \(file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \
+        \(file TEXT, object TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \
         \outer1 TEXT, outer2 TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_where \
-        \(file TEXT, dw_name TEXT, idx INTEGER, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)"
+        \(file TEXT, object TEXT, idx INTEGER, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_arguments \
         \(file TEXT, object TEXT, arg_name TEXT, arg_type TEXT, ordinal INTEGER)"
       , "CREATE TABLE IF NOT EXISTS catalog_columns \
@@ -330,7 +330,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- CSV-split of sql_statements.tables (which has no namespace of its
       -- own; kept as-is for its other consumers).
       , "CREATE OR REPLACE VIEW all_sql_tables AS \
-        \SELECT file, dw_name AS object, 'datawindow' AS source, \
+        \SELECT file, object, 'datawindow' AS source, \
         \'retrieve' AS operation, namespace, table_name, NULL AS proc_name, NULL::INT AS line \
         \FROM dw_retrieve_tables \
         \UNION ALL \

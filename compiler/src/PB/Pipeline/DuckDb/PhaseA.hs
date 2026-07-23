@@ -120,14 +120,14 @@ data DwControlRow = DwControlRow
 
 data DwRetrieveTableRow = DwRetrieveTableRow
   { drtrFile      :: Text
-  , drtrDwName    :: Text
+  , drtrObject    :: Text
   , drtrNamespace :: Maybe Text
   , drtrTableName :: Text
   }
 
 data DwRetrieveColumnRow = DwRetrieveColumnRow
   { drcrFile       :: Text
-  , drcrDwName     :: Text
+  , drcrObject     :: Text
   , drcrNamespace  :: Maybe Text
   , drcrTableName  :: Text
   , drcrColumnName :: Text
@@ -135,7 +135,7 @@ data DwRetrieveColumnRow = DwRetrieveColumnRow
 
 data DwJoinRow = DwJoinRow
   { djrFile     :: Text
-  , djrDwName   :: Text
+  , djrObject   :: Text
   , djrLeftRef  :: Text
   , djrOp       :: Text
   , djrRightRef :: Text
@@ -145,7 +145,7 @@ data DwJoinRow = DwJoinRow
 
 data DwRetrieveWhereRow = DwRetrieveWhereRow
   { drwrFile   :: Text
-  , drwrDwName :: Text
+  , drwrObject :: Text
   , drwrIdx    :: Int
   , drwrExp1   :: Text
   , drwrOp     :: Text
@@ -309,7 +309,7 @@ appendDwRetrieveTables _    [] = pure ()
 appendDwRetrieveTables pool rows = appendRow pool "dw_retrieve_tables" $ \app ->
   forEachRow app rows $ \_ r -> do
     aText app (drtrFile r)
-    aText app (drtrDwName r)
+    aText app (drtrObject r)
     aMaybeText app (drtrNamespace r)
     aText app (drtrTableName r)
 
@@ -318,7 +318,7 @@ appendDwRetrieveColumns _    [] = pure ()
 appendDwRetrieveColumns pool rows = appendRow pool "dw_retrieve_columns" $ \app ->
   forEachRow app rows $ \_ r -> do
     aText      app (drcrFile r)
-    aText      app (drcrDwName r)
+    aText      app (drcrObject r)
     aMaybeText app (drcrNamespace r)
     aText      app (drcrTableName r)
     aText      app (drcrColumnName r)
@@ -333,7 +333,7 @@ appendDwWriteColumns _    [] = pure ()
 appendDwWriteColumns pool rows = appendRow pool "dw_write_columns" $ \app ->
   forEachRow app rows $ \_ r -> do
     aText      app (drcrFile r)
-    aText      app (drcrDwName r)
+    aText      app (drcrObject r)
     aMaybeText app (drcrNamespace r)
     aText      app (drcrTableName r)
     aText      app (drcrColumnName r)
@@ -346,7 +346,7 @@ appendDwWhereColumns _    [] = pure ()
 appendDwWhereColumns pool rows = appendRow pool "dw_where_columns" $ \app ->
   forEachRow app rows $ \_ r -> do
     aText      app (drcrFile r)
-    aText      app (drcrDwName r)
+    aText      app (drcrObject r)
     aMaybeText app (drcrNamespace r)
     aText      app (drcrTableName r)
     aText      app (drcrColumnName r)
@@ -356,7 +356,7 @@ appendDwJoins _    [] = pure ()
 appendDwJoins pool rows = appendRow pool "dw_joins" $ \app ->
   forEachRow app rows $ \_ r -> do
     aText      app (djrFile r)
-    aText      app (djrDwName r)
+    aText      app (djrObject r)
     aText      app (djrLeftRef r)
     aText      app (djrOp r)
     aText      app (djrRightRef r)
@@ -368,7 +368,7 @@ appendDwRetrieveWhere _    [] = pure ()
 appendDwRetrieveWhere pool rows = appendRow pool "dw_retrieve_where" $ \app ->
   forEachRow app rows $ \_ r -> do
     aText      app (drwrFile r)
-    aText      app (drwrDwName r)
+    aText      app (drwrObject r)
     aInt       app (drwrIdx r)
     aText      app (drwrExp1 r)
     aText      app (drwrOp r)

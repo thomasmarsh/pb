@@ -67,7 +67,6 @@ class ColumnManagerRef(BaseModel):
     file: str
     object: str | None = None
     proc_name: str | None = None
-    dw_name: str | None = None
     line: int | None = None
     is_write: bool | None = None
 
@@ -104,7 +103,6 @@ class SchemaObjectRef(BaseModel):
     object: str | None = None
     proc_name: str | None = None
     line: int | None = None
-    dw_name: str | None = None
     namespace: str | None = None
     table: str | None = None
     column: str | None = None

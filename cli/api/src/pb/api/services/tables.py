@@ -89,8 +89,8 @@ def column_lineage(
     try:
         dw_cols = rows(
             conn.execute(
-                f"SELECT column_name, dw_name FROM dw_retrieve_columns "
-                f"WHERE table_name = ? AND {ns_filter} ORDER BY column_name, dw_name",
+                f"SELECT column_name, object FROM dw_retrieve_columns "
+                f"WHERE table_name = ? AND {ns_filter} ORDER BY column_name, object",
                 [table_name, namespace],
             )
         )
@@ -129,8 +129,8 @@ def column_lineage(
 
     for r in dw_cols:
         col = r["column_name"]
-        if r["dw_name"] not in col_map[col]["dw_readers"]:
-            col_map[col]["dw_readers"].append(r["dw_name"])
+        if r["object"] not in col_map[col]["dw_readers"]:
+            col_map[col]["dw_readers"].append(r["object"])
 
     for r in ps_cols:
         col = r["col"]
@@ -234,8 +234,8 @@ def get_table_detail(
     try:
         dws = rows(
             conn.execute(
-                f"SELECT DISTINCT dw_name, file FROM dw_retrieve_tables "
-                f"WHERE table_name = ? AND {ns_filter} ORDER BY dw_name",
+                f"SELECT DISTINCT object, file FROM dw_retrieve_tables "
+                f"WHERE table_name = ? AND {ns_filter} ORDER BY object",
                 [table_name, namespace],
             )
         )
@@ -244,8 +244,8 @@ def get_table_detail(
     try:
         columns = rows(
             conn.execute(
-                f"SELECT dw_name, column_fqn, column_name "
-                f"FROM dw_retrieve_columns WHERE table_name = ? AND {ns_filter} ORDER BY dw_name, column_name",
+                f"SELECT object, column_fqn, column_name "
+                f"FROM dw_retrieve_columns WHERE table_name = ? AND {ns_filter} ORDER BY object, column_name",
                 [table_name, namespace],
             )
         )
@@ -257,8 +257,8 @@ def get_table_detail(
         # unaffected by the namespace scoping in this function.
         where = rows(
             conn.execute(
-                "SELECT dw_name, idx, exp1, op, exp2, logic "
-                "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
+                "SELECT object, idx, exp1, op, exp2, logic "
+                "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY object, idx",
                 [f"%{table_name}%", f"%{table_name}%"],
             )
         )
@@ -426,7 +426,7 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
                   SELECT 1 FROM call_sites c WHERE lower(c.to_name) = lower(o.object)
               )
               AND NOT EXISTS (
-                  SELECT 1 FROM dw_retrieve_tables d WHERE lower(d.dw_name) = lower(o.object)
+                  SELECT 1 FROM dw_retrieve_tables d WHERE lower(d.object) = lower(o.object)
               )
               AND NOT EXISTS (
                   SELECT 1 FROM all_sql_tables a WHERE lower(a.table_name) = lower(o.object)

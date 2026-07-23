@@ -204,11 +204,11 @@ def get_fk_graph(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         constraint_by_key.setdefault(key, r["constraint_name"])
 
     dw_sources_by_key: dict[tuple[ColumnKey, ColumnKey], list[dict[str, str]]] = defaultdict(list)
-    for r in rows(conn.execute("SELECT file, dw_name, left_ref, right_ref FROM dw_joins")):
+    for r in rows(conn.execute("SELECT file, object, left_ref, right_ref FROM dw_joins")):
         lt, lc = r["left_ref"].rsplit(".", 1)
         rt, rc = r["right_ref"].rsplit(".", 1)
         key = _canon((None, lt, lc), (None, rt, rc))
-        dw_sources_by_key[key].append({"file": r["file"], "dw_name": r["dw_name"]})
+        dw_sources_by_key[key].append({"file": r["file"], "object": r["object"]})
 
     def _build_entry(row: dict[str, Any]) -> dict[str, Any]:
         key = _edge_key(row)
@@ -502,9 +502,9 @@ def get_column_managers(
     )
     dw_rows = rows(
         conn.execute(
-            "SELECT file, dw_name FROM dw_retrieve_columns "
+            "SELECT file, object FROM dw_retrieve_columns "
             "WHERE table_name = ? AND column_name = ? AND namespace IS NOT DISTINCT FROM ? "
-            "ORDER BY dw_name",
+            "ORDER BY object",
             [table, column, namespace],
         )
     )
@@ -520,7 +520,7 @@ def get_column_managers(
         }
         for r in sql_rows
     ]
-    managers += [{"kind": "dw_retrieve", "file": r["file"], "dw_name": r["dw_name"]} for r in dw_rows]
+    managers += [{"kind": "dw_retrieve", "file": r["file"], "object": r["object"]} for r in dw_rows]
     return managers
 
 
@@ -540,7 +540,7 @@ def _object_ref(row: dict[str, Any], prefix: str, fallback_key: str) -> dict[str
     """
     kind = row[f"{prefix}kind"]
     if kind == "dw_retrieve":
-        return {"kind": "dw_retrieve", "file": row[f"{prefix}stmt_file"], "dw_name": row[f"{prefix}stmt_object"]}
+        return {"kind": "dw_retrieve", "file": row[f"{prefix}stmt_file"], "object": row[f"{prefix}stmt_object"]}
     if kind == "stmt":
         return {
             "kind": "sql",

@@ -22,7 +22,7 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
         tables = rows(
             conn.execute(
                 "SELECT DISTINCT table_name, namespace FROM dw_retrieve_tables "
-                "WHERE dw_name = ? ORDER BY table_name",
+                "WHERE object = ? ORDER BY table_name",
                 [name],
             )
         )
@@ -32,7 +32,7 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
         columns = rows(
             conn.execute(
                 "SELECT column_fqn, table_name, column_name "
-                "FROM dw_retrieve_columns WHERE dw_name = ? ORDER BY table_name, column_name",
+                "FROM dw_retrieve_columns WHERE object = ? ORDER BY table_name, column_name",
                 [name],
             )
         )
@@ -40,7 +40,7 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
         columns = []
     try:
         where = rows(
-            conn.execute("SELECT idx, exp1, op, exp2, logic FROM dw_retrieve_where WHERE dw_name = ? ORDER BY idx", [name])
+            conn.execute("SELECT idx, exp1, op, exp2, logic FROM dw_retrieve_where WHERE object = ? ORDER BY idx", [name])
         )
     except Exception:
         where = []

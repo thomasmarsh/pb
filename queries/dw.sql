@@ -5,6 +5,6 @@ SELECT dt.table_name,
        string_agg(dc.column_name, ', ' ORDER BY dc.column_name) AS columns
 FROM dw_retrieve_tables dt
 JOIN dw_retrieve_columns dc
-  ON dc.dw_name = dt.dw_name AND dc.table_name = dt.table_name
-WHERE dt.dw_name = $name
+  ON dc.object = dt.object AND dc.table_name = dt.table_name
+WHERE dt.object = $name
 GROUP BY dt.table_name;

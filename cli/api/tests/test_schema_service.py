@@ -411,13 +411,13 @@ def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_c
     # decomposition_coslice's schema_objects join-back columns), not
     # formatted strings -- every field needed to navigate to the real
     # table/procedure/DataWindow (namespace/table/column, or
-    # object/proc_name/line, or dw_name) is recovered, dropping only the
+    # object/proc_name/line) is recovered, dropping only the
     # absolute pb-extract file path from display concerns (it's still
     # present under "file" for completeness).
     result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
     triple = next(c for c in result["candidates"] if set(c["columns"]) == {"kodfinal", "kodxrisi", "kodypal"})
 
-    fk_chained = next(p for p in triple["paths"] if p["target"].get("dw_name") == "dw_misth_final_form")
+    fk_chained = next(p for p in triple["paths"] if p["target"].get("object") == "dw_misth_final_form")
     assert fk_chained["target"]["kind"] == "dw_retrieve"
     assert fk_chained["direction"] == "backward"
     assert len(fk_chained["legs"]) == 2
@@ -429,7 +429,7 @@ def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_c
     # than the pre-existing retrieve edge (both are real; this is which one
     # the BFS discovers first, deterministic given allLegs' fixed fold order).
     leg0 = fk_chained["legs"][0]
-    assert leg0["from_object"] == {"kind": "dw_retrieve", "file": leg0["from_object"]["file"], "dw_name": "dw_misth_final_form"}
+    assert leg0["from_object"] == {"kind": "dw_retrieve", "file": leg0["from_object"]["file"], "object": "dw_misth_final_form"}
     assert leg0["to_object"] == {"kind": "column", "namespace": None, "table": "misth_final", "column": "kodfinal"}
     assert leg0["leg_kind"] == "writes"
 
@@ -450,7 +450,7 @@ def test_object_ref_recovers_structured_fields():
     assert _object_ref(dw_row, "p_", "stmt:dw:...") == {
         "kind": "dw_retrieve",
         "file": "/tmp/pb-extract-abc123/final.pbl/dw_x.srd",
-        "dw_name": "dw_x",
+        "object": "dw_x",
     }
 
     sql_row = {

@@ -153,7 +153,7 @@ def render_dw_tables(
     rows: list[tuple[str, str]],
     count_map: dict[str, int],
 ) -> graphviz.Digraph:
-    dw_names = sorted({r[0] for r in rows})
+    dw_objects = sorted({r[0] for r in rows})
     tbl_names = sorted({r[1] for r in rows})
 
     dot = graphviz.Digraph(engine="dot", name="dw_tables")
@@ -168,7 +168,7 @@ def render_dw_tables(
             fontcolor="#E8E8E8",
             bgcolor="#2A2A3A",
         )
-        for dw in dw_names:
+        for dw in dw_objects:
             nc = count_map.get(dw, 1)
             fill = complexity_color(nc - 1)
             c.node(

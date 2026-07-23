@@ -147,15 +147,15 @@ def build_dw_tables(
     try:
         dw_rows = conn.execute(
             """
-            SELECT dw_name, table_name FROM dw_retrieve_tables
+            SELECT object, table_name FROM dw_retrieve_tables
             WHERE (? IS NULL OR table_name = ?)
-              AND (? IS NULL OR dw_name = ?)
-            ORDER BY dw_name, table_name
+              AND (? IS NULL OR object = ?)
+            ORDER BY object, table_name
         """,
             [filter_table, filter_table, filter_dw, filter_dw],
         ).fetchall()
         count_map: dict[str, int] = dict(
-            conn.execute("SELECT dw_name, count(*) FROM dw_retrieve_tables GROUP BY dw_name").fetchall()
+            conn.execute("SELECT object, count(*) FROM dw_retrieve_tables GROUP BY object").fetchall()
         )
     except Exception:
         dw_rows = []

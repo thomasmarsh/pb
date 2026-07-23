@@ -42,7 +42,7 @@ class CallRow(NamedTuple):
 
 class DwControlRow(NamedTuple):
     file: str
-    dw_name: str
+    object: str
     control_name: str | None
     control_type: str | None
     band: str | None
@@ -57,13 +57,13 @@ class DwControlRow(NamedTuple):
 
 class DwRetrieveTableRow(NamedTuple):
     file: str
-    dw_name: str
+    object: str
     table_name: str
 
 
 class DwRetrieveColumnRow(NamedTuple):
     file: str
-    dw_name: str
+    object: str
     column_fqn: str
     table_name: str | None
     column_name: str
@@ -71,7 +71,7 @@ class DwRetrieveColumnRow(NamedTuple):
 
 class DwRetrieveWhereRow(NamedTuple):
     file: str
-    dw_name: str
+    object: str
     idx: int
     exp1: str | None
     op: str | None

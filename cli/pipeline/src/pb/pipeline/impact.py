@@ -31,7 +31,7 @@ def run_impact(
                 WHERE ? = ANY(tables) AND ? = ANY(columns)
             """, [table, column]).fetchall()
             direct_dw = conn.execute("""
-                SELECT DISTINCT dw_name AS object, NULL AS proc_name,
+                SELECT DISTINCT object, NULL AS proc_name,
                                 'SELECT' AS operation, 'datawindow' AS source
                 FROM dw_retrieve_columns
                 WHERE table_name = ? AND column_name = ?

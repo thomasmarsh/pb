@@ -29,7 +29,7 @@ def impact_db(tmp_path):
     conn.execute("INSERT INTO inherits VALUES ('w_child', 'w_base')")
     conn.execute("""
         CREATE TABLE dw_retrieve_columns (
-            file TEXT, dw_name TEXT, column_fqn TEXT, table_name TEXT, column_name TEXT
+            file TEXT, object TEXT, column_fqn TEXT, table_name TEXT, column_name TEXT
         )
     """)
     conn.execute("""

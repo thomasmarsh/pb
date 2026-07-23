@@ -14,8 +14,8 @@ const baseDetail: TableDetailData = {
   namespace: null,
   dw_count: 1,
   ps_count: 2,
-  datawindows: [{ dw_name: "dw_orders", file: "a.srd" }],
-  columns: [{ dw_name: "dw_orders", column_fqn: "orders.id", column_name: "id" }],
+  datawindows: [{ object: "dw_orders", file: "a.srd" }],
+  columns: [{ object: "dw_orders", column_fqn: "orders.id", column_name: "id" }],
   columns_detail: [],
   where: [],
   procedures: [
@@ -246,11 +246,11 @@ describe("TableDetail source-first", () => {
               }],
             },
             {
-              target: { kind: "dw_retrieve", file: "/tmp/pb-extract-abc/dw_orders.srd", dw_name: "dw_orders" },
+              target: { kind: "dw_retrieve", file: "/tmp/pb-extract-abc/dw_orders.srd", object: "dw_orders" },
               direction: "backward",
               legs: [{
                 from_object: { kind: "column", namespace: null, table: "orders", column: "status" },
-                to_object: { kind: "dw_retrieve", file: "/tmp/pb-extract-abc/dw_orders.srd", dw_name: "dw_orders" },
+                to_object: { kind: "dw_retrieve", file: "/tmp/pb-extract-abc/dw_orders.srd", object: "dw_orders" },
                 leg_kind: "retrieve",
               }],
             },

@@ -74,8 +74,8 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: SearchR
                 <For each={props.data.datawindows}>
                   {(d) => (
                     <tr class="clickable"
-                        onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.dw_name } })}>
-                      <td class="name-cell">{d.dw_name}</td>
+                        onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.object } })}>
+                      <td class="name-cell">{d.object}</td>
                       <td>{d.control_name ?? "–"}</td>
                       <td>{d.control_type ?? ""}</td>
                     </tr>

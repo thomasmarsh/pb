@@ -28,8 +28,8 @@ const detail: TableDetail = {
   namespace: null,
   dw_count: 1,
   ps_count: 2,
-  datawindows: [{ dw_name: "dw_orders", file: "a.srd" }],
-  columns: [{ dw_name: "dw_orders", column_fqn: "orders.id", column_name: "id" }],
+  datawindows: [{ object: "dw_orders", file: "a.srd" }],
+  columns: [{ object: "dw_orders", column_fqn: "orders.id", column_name: "id" }],
   columns_detail: [],
   where: [],
   procedures: [

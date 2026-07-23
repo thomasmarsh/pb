@@ -70,11 +70,11 @@ function SchemaObjectRefLink(props: { obj: SchemaObjectRef; store: Store<AppStat
           })}
         />
       </Match>
-      <Match when={props.obj.kind === "dw_retrieve" && props.obj.dw_name}>
+      <Match when={props.obj.kind === "dw_retrieve" && props.obj.object}>
         <EntityCard
           type="datawindow"
-          name={props.obj.dw_name!}
-          onClick={() => props.store.dispatch({ tag: "datawindows", action: { tag: "select", name: props.obj.dw_name! } })}
+          name={props.obj.object!}
+          onClick={() => props.store.dispatch({ tag: "datawindows", action: { tag: "select", name: props.obj.object! } })}
         />
       </Match>
     </Switch>
@@ -113,7 +113,7 @@ export function schemaObjectKey(obj: SchemaObjectRef): string {
     case "sql":
       return `sql:${obj.object ?? ""}.${obj.proc_name ?? ""}:${obj.line ?? ""}`;
     case "dw_retrieve":
-      return `dw_retrieve:${obj.dw_name ?? ""}`;
+      return `dw_retrieve:${obj.object ?? ""}`;
     default:
       return `unknown:${obj.file ?? ""}`;
   }

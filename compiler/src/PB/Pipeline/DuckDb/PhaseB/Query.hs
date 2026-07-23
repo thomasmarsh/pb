@@ -340,21 +340,21 @@ queryTaintInputs conn = do
 -- | Plan 148 Phase 1b: SchemaCategory read-side queries.
 queryDwRetrieveColumns :: Handle -> IO [DwRetrieveColRow]
 queryDwRetrieveColumns conn = queryHandle conn
-  "SELECT file, dw_name, namespace, table_name, column_name FROM dw_retrieve_columns"
+  "SELECT file, object, namespace, table_name, column_name FROM dw_retrieve_columns"
 
 -- | Plan 163 Phase 6. Same 'DwRetrieveColRow' 'FromRow' shape as
 -- 'queryDwRetrieveColumns' -- only the source table differs.
 queryDwWriteColumns :: Handle -> IO [DwRetrieveColRow]
 queryDwWriteColumns conn = queryHandle conn
-  "SELECT file, dw_name, namespace, table_name, column_name FROM dw_write_columns"
+  "SELECT file, object, namespace, table_name, column_name FROM dw_write_columns"
 
 queryDwWhereColumns :: Handle -> IO [DwRetrieveColRow]
 queryDwWhereColumns conn = queryHandle conn
-  "SELECT file, dw_name, namespace, table_name, column_name FROM dw_where_columns"
+  "SELECT file, object, namespace, table_name, column_name FROM dw_where_columns"
 
 queryDwJoinLegs :: Handle -> IO [DwJoinLegRow]
 queryDwJoinLegs conn = queryHandle conn
-  "SELECT file, dw_name, left_ref, right_ref FROM dw_joins"
+  "SELECT file, object, left_ref, right_ref FROM dw_joins"
 
 querySqlCols :: Handle -> IO [SqlColRow]
 querySqlCols conn = queryHandle conn

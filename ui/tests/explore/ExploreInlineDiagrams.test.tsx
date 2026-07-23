@@ -65,7 +65,7 @@ describe("Explore Tables — InlineDiagram", () => {
           detail: {
             table_name: "orders",
             dw_count: 1,
-            datawindows: [{ dw_name: "dw_orders", file: "a.srd" }],
+            datawindows: [{ object: "dw_orders", file: "a.srd" }],
             columns: [],
             where: [],
           },
@@ -90,7 +90,7 @@ describe("Explore Tables — InlineDiagram", () => {
           detail: {
             table_name: "orders",
             dw_count: 1,
-            datawindows: [{ dw_name: "dw_orders", file: "a.srd" }],
+            datawindows: [{ object: "dw_orders", file: "a.srd" }],
             columns: [],
             where: [],
           },

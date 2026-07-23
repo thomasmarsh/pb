@@ -113,14 +113,14 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     obj["callees"] = [c["callee"] for c in callees]
 
     dws = rows(conn.execute(
-        "SELECT DISTINCT c.to_name AS dw_name "
+        "SELECT DISTINCT c.to_name AS object "
         "FROM call_sites c "
         "JOIN objects o ON o.object = c.to_name AND o.kind = 'datawindow' "
         "WHERE c.object = ? "
         "ORDER BY c.to_name",
         [name],
     ))
-    obj["dws_used"] = [d["dw_name"] for d in dws]
+    obj["dws_used"] = [d["object"] for d in dws]
 
     tables = rows(conn.execute(
         "SELECT DISTINCT t.table_name "

@@ -127,10 +127,10 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
               <For each={results()!.datawindows.slice(0, 8)}>
                 {(d) => (
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
-                    store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.dw_name } })
+                    store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.object } })
                   )}>
                     <span class="gs-result-icon" aria-hidden="true"><Dynamic component={entityIcon("datawindow")} size={14} /></span>
-                    <span class="gs-result-name">{d.dw_name}</span>
+                    <span class="gs-result-name">{d.object}</span>
                     <span class="gs-result-meta">{d.control_type ?? ""}</span>
                   </button>
                 )}

@@ -63,7 +63,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
 
 // ── Right panel: table detail ─────────────────────────────────────────────────
 
-function WhereRow(props: { row: { dw_name: string; idx: number; exp1: string; op: string; exp2: string; logic: string } }) {
+function WhereRow(props: { row: { object: string; idx: number; exp1: string; op: string; exp2: string; logic: string } }) {
   const r = props.row;
   return (
     <tr>
@@ -71,7 +71,7 @@ function WhereRow(props: { row: { dw_name: string; idx: number; exp1: string; op
       <td class="dw-sql-cell mono">{r.op}</td>
       <td class="dw-sql-cell mono">{r.exp2}</td>
       <td class="dw-sql-cell">{r.logic || ""}</td>
-      <td class="dw-sql-cell dim">{r.dw_name}</td>
+      <td class="dw-sql-cell dim">{r.object}</td>
     </tr>
   );
 }
@@ -115,11 +115,11 @@ export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
                             class="table-detail-dw-row clickable"
                             onClick={() => store.dispatch({
                               tag: "explore",
-                              action: { tag: "dw-select", dwName: dw.dw_name, nodeId: `dw:${dw.dw_name}` },
+                              action: { tag: "dw-select", dwName: dw.object, nodeId: `dw:${dw.object}` },
                             })}
                           >
                             <span class="badge badge-dw">dw</span>
-                            <span class="table-detail-dw-name">{dw.dw_name}</span>
+                            <span class="table-detail-dw-name">{dw.object}</span>
                           </div>
                         )}
                       </For>
@@ -142,7 +142,7 @@ export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
                             {(col) => (
                               <tr>
                                 <td class="dw-sql-cell mono">{col.column_fqn}</td>
-                                <td class="dw-sql-cell dim">{col.dw_name}</td>
+                                <td class="dw-sql-cell dim">{col.object}</td>
                               </tr>
                             )}
                           </For>

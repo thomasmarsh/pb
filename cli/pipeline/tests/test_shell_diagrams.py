@@ -130,7 +130,7 @@ def test_dw_tables_table_filter(conn):
 
 def test_dw_tables_dw_filter(conn):
     _require_dw_retrieve_tables(conn)
-    row = conn.execute("SELECT dw_name FROM dw_retrieve_tables LIMIT 1").fetchone()
+    row = conn.execute("SELECT object FROM dw_retrieve_tables LIMIT 1").fetchone()
     if row is None:
         pytest.skip("dw_retrieve_tables is empty")
     dw_name = row[0]

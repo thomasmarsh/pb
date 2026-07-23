@@ -217,7 +217,7 @@ export interface SearchResponse {
     start_line: number;
   }[];
   datawindows: {
-    dw_name: string;
+    object: string;
     control_name: string;
     control_type: string;
   }[];
@@ -359,11 +359,11 @@ export interface TableDetail {
   namespace: string | null;
   dw_count: number;
   ps_count: number;
-  datawindows: { dw_name: string; file: string }[];
-  columns: { dw_name: string; column_fqn: string; column_name: string }[];
+  datawindows: { object: string; file: string }[];
+  columns: { object: string; column_fqn: string; column_name: string }[];
   columns_detail: ColumnDetail[];
   where: {
-    dw_name: string;
+    object: string;
     idx: number;
     exp1: string;
     op: string;
@@ -583,7 +583,6 @@ export interface SchemaObjectRef {
   object?: string | null;
   proc_name?: string | null;
   line?: number | null;
-  dw_name?: string | null;
   namespace?: string | null;
   table?: string | null;
   column?: string | null;

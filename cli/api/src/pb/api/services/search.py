@@ -27,7 +27,7 @@ def global_search(conn: duckdb.DuckDBPyConnection, q: str) -> dict[str, Any]:
     )
     dw = rows(
         conn.execute(
-            "SELECT DISTINCT object AS dw_name, name AS control_name, control_type "
+            "SELECT DISTINCT object, name AS control_name, control_type "
             "FROM dw_controls "
             "WHERE object ILIKE ? OR name ILIKE ? "
             "LIMIT 50",

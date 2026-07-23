@@ -46,8 +46,8 @@ def window_table_pairs(conn: Conn) -> set[tuple[str, str]]:
     pairs = {(r["window"], r["table_name"]) for r in _rows(conn.execute(_WINDOW_DIRECT_SQL_TABLES_SQL))}
 
     dw_to_tables: dict[str, set[str]] = defaultdict(set)
-    for r in _rows(conn.execute("SELECT lower(dw_name) AS dw_name, table_name FROM dw_retrieve_tables")):
-        dw_to_tables[r["dw_name"]].add(r["table_name"])
+    for r in _rows(conn.execute("SELECT lower(object) AS object, table_name FROM dw_retrieve_tables")):
+        dw_to_tables[r["object"]].add(r["table_name"])
 
     for r in _rows(conn.execute("SELECT object, layout_json FROM objects WHERE layout_json IS NOT NULL")):
         layout = json.loads(r["layout_json"])
