@@ -19,8 +19,11 @@ jobs:
         with:
           path: |
             /usr/local/.ghcup/ghc/9.10.2
-            /usr/local/.ghcup/bin
-          key: ghcup-${{ runner.os }}-ghc-9.10.2-v2
+            /home/runner/.ghcup/bin
+          key: ghcup-${{ runner.os }}-ghc-9.10.2-v3
+
+      - name: Reset cabal Hackage mirror
+        run: rm -f ~/.cabal/config
 
       - name: Set up GHC
         uses: haskell-actions/setup@v2
