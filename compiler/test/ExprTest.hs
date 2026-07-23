@@ -141,6 +141,21 @@ tests = testGroup "Expr"
                     , mkTok TkIdent "y", mkTok TkLParen "(", mkTok TkRParen ")" ]
             @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "super" Nothing])) "y" []
 
+      , testCase "super::create() → ExMethodCall (scope-qualified dispatch)" $
+          parseExpr [ mkTok TkOtherKw "super", mkTok TkDoubleColon "::"
+                    , mkTok TkIdent "create", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "super" Nothing])) "create" []
+
+      , testCase "w_main::event() → ExMethodCall (class-qualified static dispatch)" $
+          parseExpr [ mkTok TkIdent "w_main", mkTok TkDoubleColon "::"
+                    , mkTok TkIdent "event", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "w_main" Nothing])) "event" []
+
+      , testCase "ancestor::somevar (no parens) → ExLvalue (matches bare dot-chain, no method call)" $
+          parseExpr [ mkTok TkIdent "ancestor", mkTok TkDoubleColon "::"
+                    , mkTok TkIdent "somevar" ]
+            @?= ExLvalue (Lvalue [LvSegment "ancestor" Nothing, LvSegment "somevar" Nothing])
+
       , testCase "args containing operators parse into a structured ExBinOp arg" $
           parseExpr [ mkTok TkIdent "foo", mkTok TkLParen "("
                     , mkTok TkIdent "x", mkTok TkArithOp "+", mkTok TkIntLiteral "1"
@@ -702,6 +717,7 @@ propParseExprTotal = property $ do
       , (TkIntLiteral,  "1")
       , (TkEnumLiteral, "Black!")
       , (TkDot,         ".")
+      , (TkDoubleColon, "::")
       , (TkLParen,      "(")
       , (TkRParen,      ")")
       , (TkLBrace,      "{")

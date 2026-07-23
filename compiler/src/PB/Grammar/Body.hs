@@ -119,6 +119,13 @@ classifyByOp s ts =
 isSegmentName :: Token -> Bool
 isSegmentName t = tkKind t `elem` [TkIdent, TkOtherKw, TkSqlKw, TkDatatype]
 
+-- | '.' member access and '::' scope resolution chain lvalue segments and
+-- method calls identically -- PB's scope-qualified dispatch (@super::create@,
+-- @ClassName::method@) has the same receiver/member structure as a dotted
+-- chain.
+isChainSep :: Token -> Bool
+isChainSep t = tkKind t `elem` [TkDot, TkDoubleColon]
+
 lvaluePrefix :: [Token] -> Maybe ([LvSegment], [Token])
 lvaluePrefix = goSegs
   where
@@ -128,7 +135,7 @@ lvaluePrefix = goSegs
           (msub, afterSub) <- consumeSub rest
           let seg = LvSegment (mkIdentAt (tkSpan t) (tkText t)) msub
           case afterSub of
-            (dot:more) | tkKind dot == TkDot ->
+            (dot:more) | isChainSep dot ->
               case goSegs more of
                 Just (segs, remaining) -> Just (seg : segs, remaining)
                 Nothing                -> Nothing
@@ -256,7 +263,7 @@ lookupBinOp t = case (tkKind t, T.toLower (tkText t)) of
 
 chainCalls :: Expr -> [Token] -> (Expr, [Token])
 chainCalls e (dot : nm : lp : rest)
-  | tkKind dot  == TkDot
+  | isChainSep dot
   , isSegmentName nm
   , tkKind lp   == TkLParen
   = case findMatchingClose rest of
@@ -268,7 +275,7 @@ chainCalls e (dot : nm : lp : rest)
           , methodArgs = map parseExpr (splitArgs inner)
           } after
 chainCalls e (dot : nm : rest)
-  | tkKind dot == TkDot
+  | isChainSep dot
   , isSegmentName nm
   = chainCalls ExMethodCall { receiver = e, method = mkIdentAt (tkSpan nm) (tkText nm), methodArgs = [] } rest
 chainCalls e ts = (e, ts)
