@@ -586,14 +586,14 @@ def type_coverage_client(tmp_path_factory):
     conn.execute("""
         CREATE TABLE resolved_var_refs (
             file TEXT, object TEXT, proc_name TEXT, line INT,
-            name TEXT, kind TEXT,
+            name TEXT, kind TEXT, confidence TEXT,
             name_start_line INT, name_start_col INT
         )
     """)
     conn.execute("""
         CREATE TABLE resolved_calls (
             file TEXT, object TEXT, proc_name TEXT, to_name TEXT, line INT,
-            kind TEXT,
+            kind TEXT, confidence TEXT,
             to_name_start_line INT, to_name_start_col INT
         )
     """)
@@ -607,16 +607,18 @@ def type_coverage_client(tmp_path_factory):
             [line, col, line, col],
         )
     conn.execute(
-        "INSERT INTO resolved_var_refs VALUES ('f1.srw', 'w_main', 'uf_x', 1, 'a', 'local', 1, 1)"
+        "INSERT INTO resolved_var_refs VALUES ('f1.srw', 'w_main', 'uf_x', 1, 'a', 'local', 'high', 1, 1)"
     )
     conn.execute(
-        "INSERT INTO resolved_var_refs VALUES ('f1.srw', 'w_main', 'uf_x', 1, 'b', 'unresolved', 1, 5)"
+        "INSERT INTO resolved_var_refs VALUES "
+        "('f1.srw', 'w_main', 'uf_x', 1, 'b', 'unresolved', 'unresolved', 1, 5)"
     )
     conn.execute(
-        "INSERT INTO resolved_calls VALUES ('f1.srw', 'w_main', 'uf_x', 'c', 2, 'virtual', 2, 1)"
+        "INSERT INTO resolved_calls VALUES ('f1.srw', 'w_main', 'uf_x', 'c', 2, 'virtual', 'high', 2, 1)"
     )
     conn.execute(
-        "INSERT INTO resolved_calls VALUES ('f1.srw', 'w_main', 'uf_x', 'd', 2, 'unresolved', 2, 5)"
+        "INSERT INTO resolved_calls VALUES "
+        "('f1.srw', 'w_main', 'uf_x', 'd', 2, 'unresolved', 'unresolved', 2, 5)"
     )
 
     # __stdlib__/-prefixed rows must be excluded from every count -- if they
@@ -625,7 +627,8 @@ def type_coverage_client(tmp_path_factory):
         "INSERT INTO identifier_tokens VALUES ('__stdlib__/x.sru', 'y', 'ident', 9, 9, 9, 9)"
     )
     conn.execute(
-        "INSERT INTO resolved_var_refs VALUES ('__stdlib__/x.sru', 'x', 'uf_y', 9, 'y', 'local', 9, 9)"
+        "INSERT INTO resolved_var_refs VALUES "
+        "('__stdlib__/x.sru', 'x', 'uf_y', 9, 'y', 'local', 'high', 9, 9)"
     )
 
     conn.close()
@@ -668,6 +671,19 @@ def test_type_coverage_kind_histograms(type_coverage_client):
     assert call_kinds == {"virtual": 1, "unresolved": 1}
 
 
+def test_type_coverage_kind_confidence_histograms(type_coverage_client):
+    """The (kind, confidence) breakdown is a separate, additive field from
+    the plain kind histogram above -- it's what lets a currently-scoped-out
+    shape (e.g. a bandname kind that's normally high-confidence) become
+    visible as a new low-confidence bump if a different corpus starts
+    using it, without needing a dedicated kind value per gap."""
+    body = type_coverage_client.get("/api/analysis/type-coverage").json()
+    var_kc = {(row["kind"], row["confidence"]): row["count"] for row in body["var_ref_kind_confidence_counts"]}
+    call_kc = {(row["kind"], row["confidence"]): row["count"] for row in body["call_kind_confidence_counts"]}
+    assert var_kc == {("local", "high"): 1, ("unresolved", "unresolved"): 1}
+    assert call_kc == {("virtual", "high"): 1, ("unresolved", "unresolved"): 1}
+
+
 def test_type_coverage_excludes_stdlib_rows(type_coverage_client):
     """__stdlib__/-prefixed identifier_tokens/resolved_var_refs rows are
     appended to every --db run regardless of target corpus and must never
@@ -687,9 +703,10 @@ def empty_type_coverage_client(tmp_path_factory):
     conn.execute("CREATE TABLE identifier_tokens (file TEXT, text TEXT, kind TEXT, "
                  "start_line INT, start_col INT, end_line INT, end_col INT)")
     conn.execute("CREATE TABLE resolved_var_refs (file TEXT, object TEXT, proc_name TEXT, "
-                 "line INT, name TEXT, kind TEXT, name_start_line INT, name_start_col INT)")
+                 "line INT, name TEXT, kind TEXT, confidence TEXT, name_start_line INT, name_start_col INT)")
     conn.execute("CREATE TABLE resolved_calls (file TEXT, object TEXT, proc_name TEXT, "
-                 "to_name TEXT, line INT, kind TEXT, to_name_start_line INT, to_name_start_col INT)")
+                 "to_name TEXT, line INT, kind TEXT, confidence TEXT, "
+                 "to_name_start_line INT, to_name_start_col INT)")
     conn.close()
 
     from fastapi.testclient import TestClient

@@ -46,23 +46,23 @@ function TypeCoverageCard(props: { store: Store<AppState, AppAction> }) {
         <div style={{ display: "flex", gap: "16px", "flex-wrap": "wrap" }}>
           <table class="data-table" style={{ flex: "1", "min-width": "220px" }}>
             <thead>
-              <tr><th colspan="2">Var Ref Kinds</th></tr>
-              <tr><th>Kind</th><th>Count</th></tr>
+              <tr><th colspan="3">Var Ref Kinds</th></tr>
+              <tr><th>Kind</th><th>Confidence</th><th>Count</th></tr>
             </thead>
             <tbody>
-              <For each={tc()!.var_ref_kind_counts}>
-                {(row) => <tr><td class="name-cell">{row.kind}</td><td>{row.count}</td></tr>}
+              <For each={tc()!.var_ref_kind_confidence_counts}>
+                {(row) => <tr><td class="name-cell">{row.kind}</td><td>{row.confidence}</td><td>{row.count}</td></tr>}
               </For>
             </tbody>
           </table>
           <table class="data-table" style={{ flex: "1", "min-width": "220px" }}>
             <thead>
-              <tr><th colspan="2">Call Kinds</th></tr>
-              <tr><th>Kind</th><th>Count</th></tr>
+              <tr><th colspan="3">Call Kinds</th></tr>
+              <tr><th>Kind</th><th>Confidence</th><th>Count</th></tr>
             </thead>
             <tbody>
-              <For each={tc()!.call_kind_counts}>
-                {(row) => <tr><td class="name-cell">{row.kind}</td><td>{row.count}</td></tr>}
+              <For each={tc()!.call_kind_confidence_counts}>
+                {(row) => <tr><td class="name-cell">{row.kind}</td><td>{row.confidence}</td><td>{row.count}</td></tr>}
               </For>
             </tbody>
           </table>

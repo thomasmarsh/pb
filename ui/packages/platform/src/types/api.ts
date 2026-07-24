@@ -290,6 +290,8 @@ export interface TypeCoverageResponse {
   call_pct: number;
   var_ref_kind_counts: { kind: string; count: number }[];
   call_kind_counts: { kind: string; count: number }[];
+  var_ref_kind_confidence_counts: { kind: string; confidence: string; count: number }[];
+  call_kind_confidence_counts: { kind: string; confidence: string; count: number }[];
 }
 
 export interface QueryParam {

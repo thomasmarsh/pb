@@ -907,6 +907,79 @@ tests = testGroup "TypeResolve"
               (rvrKind propSeg, rvrConfidence propSeg) @?= ("unresolved", "unresolved")
             other -> assertFailure ("expected 4 refs, got " ++ show (length other))
 
+      , testCase "dotted: .Object.DataWindow.<bandname>.<property> resolves a closed-set bandname keyword to its DwBandCategory bucket (real syntax: dw1.Object.DataWindow.Detail.Height)" $ do
+          -- Plan 201 BACKLOG follow-up to Track B2 scoping: 'classifyDwBandKeyword'
+          -- recognizes the bare, non-numbered bandname keywords confirmed by
+          -- XREF_80815_Bandname_property.html. 'Brushmode' is a real
+          -- 'DbcDetail' catalog key, so both hops resolve high.
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing
+                        , LvSegment "Detail" Nothing, LvSegment "Brushmode" Nothing ])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, _objSeg, bandSeg, propSeg] -> do
+              (rvrKind bandSeg, rvrConfidence bandSeg) @?= ("builtin_property", "high")
+              (rvrKind propSeg, rvrConfidence propSeg) @?= ("dw_property", "high")
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
+
+      , testCase "dotted: .Object.DataWindow.Trailer.<property> recognizes the bandname keyword even though DbcGroupTrailer's catalog bucket has no real survey data" $ do
+          -- The real per-band survey data for group trailers lives under
+          -- DwEkGroup with a "trailer."-prefixed key, not DwEkBand
+          -- DbcGroupTrailer -- an asymmetry in the Track B1 survey data, not
+          -- a bug to paper over here. The bandname keyword itself is still
+          -- confirmed (high), only the property lookup is low.
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing
+                        , LvSegment "Trailer" Nothing, LvSegment "Height" Nothing ])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, _objSeg, bandSeg, propSeg] -> do
+              (rvrKind bandSeg, rvrConfidence bandSeg) @?= ("builtin_property", "high")
+              (rvrKind propSeg, rvrConfidence propSeg) @?= ("dw_property", "low")
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
+
+      , testCase "dotted: .Object.DataWindow.Tree.Level stays a distinguishable low-confidence dw_property, not generic unresolved/dw_column noise" $ do
+          -- Tree.Level is the one bandname spelled as two dot segments, with
+          -- no confirmed real-corpus occurrence and no DbcTreeLevel catalog
+          -- data either way -- deliberately scoped out of full resolution,
+          -- but both hops still classify as 'dw_property'/"low" (never
+          -- 'unresolved' or generic 'dw_column') specifically so a future
+          -- corpus using this shape is visible in the Type Coverage
+          -- dashboard's kind/confidence breakdown instead of disappearing.
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing
+                        , LvSegment "Tree" Nothing, LvSegment "Level" Nothing ])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, _objSeg, treeSeg, levelSeg] -> do
+              (rvrKind treeSeg, rvrConfidence treeSeg) @?= ("dw_property", "low")
+              (rvrKind levelSeg, rvrConfidence levelSeg) @?= ("dw_property", "low")
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
+
       , testCase "dotted: .Object.DataWindow.<property> resolves the object-level property bucket (single-segment key)" $ do
           let sf = emptySrFile
                 { srTypeBlocks =

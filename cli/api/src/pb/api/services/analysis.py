@@ -294,6 +294,20 @@ def get_type_coverage(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         "SELECT kind, COUNT(*) AS count FROM resolved_calls "
         "WHERE file NOT LIKE '__stdlib__/%' GROUP BY kind ORDER BY count DESC"
     ))
+    # (kind, confidence) breakdown, not just kind: a kind that's usually high
+    # confidence (e.g. dw_property) showing a new low-confidence bump is the
+    # signal that a currently-unhandled shape (e.g. the Object.DataWindow.
+    # Tree.Level bandname, scoped out of full resolution -- see TypeResolve's
+    # classifyMemberOf) started appearing in a different corpus, without
+    # needing a dedicated kind value per scoped-out gap.
+    var_ref_kind_confidence_counts = rows(conn.execute(
+        "SELECT kind, confidence, COUNT(*) AS count FROM resolved_var_refs "
+        "WHERE file NOT LIKE '__stdlib__/%' GROUP BY kind, confidence ORDER BY kind, count DESC"
+    ))
+    call_kind_confidence_counts = rows(conn.execute(
+        "SELECT kind, confidence, COUNT(*) AS count FROM resolved_calls "
+        "WHERE file NOT LIKE '__stdlib__/%' GROUP BY kind, confidence ORDER BY kind, count DESC"
+    ))
     return {
         "total_identifier_tokens": total_tokens,
         "resolved_identifier_tokens": resolved_tokens,
@@ -306,6 +320,8 @@ def get_type_coverage(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         "call_pct": pct(call_resolved, call_total),
         "var_ref_kind_counts": var_ref_kind_counts,
         "call_kind_counts": call_kind_counts,
+        "var_ref_kind_confidence_counts": var_ref_kind_confidence_counts,
+        "call_kind_confidence_counts": call_kind_confidence_counts,
     }
 
 

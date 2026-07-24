@@ -64,7 +64,7 @@ module PB.Analysis.TypeResolve
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..), DwTable (..), DwColumn (..))
-import PB.AST.DwPropertySchema (DwElementKind (..))
+import PB.AST.DwPropertySchema (DwElementKind (..), DwBandCategory (..))
 import PB.AST.Expr
 import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapLookup, identMapToList,
                            identOrig, identSetFromList, identSetLookup, identSpan, mkIdent,
@@ -74,7 +74,7 @@ import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeTextAt, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
 import PB.Analysis.CallClassify   (ProcUnit (..), forProcedures)
-import PB.Analysis.DwBuiltins     (dwPropertyCatalog)
+import PB.Analysis.DwBuiltins     (dwPropertyCatalog, classifyDwBandKeyword)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
                                       resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
@@ -760,15 +760,30 @@ classifyChainHops wsEnv env obj proc_ lv =
     -- declared chain rather than a same-named coincidence.
     classifyMemberOf Nothing _ = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
     -- | The hop immediately after @.Object@: either the literal @DataWindow@
-    -- pseudo-name (selects the object-level property bucket), a real data
-    -- column name, or a placed control's own name (Plan 201 Track B1 Slice
-    -- D -- real corpus grep confirms @.Object.gr_1.graphtype@-shaped chains
-    -- are common, not edge cases). Whichever wins threads its
-    -- 'DwElementKind' forward via 'DwPropertyNamespace' so the *next* hop
-    -- can resolve the actual property name against 'dwPropertyCatalog'.
+    -- pseudo-name (selects the object-level property bucket), a closed-set
+    -- bandname keyword (@Detail@\/@Footer@\/@Summary@\/@Header@\/@Trailer@,
+    -- 'classifyDwBandKeyword'), a real data column name, or a placed
+    -- control's own name (Plan 201 Track B1 Slice D -- real corpus grep
+    -- confirms @.Object.gr_1.graphtype@-shaped chains are common, not edge
+    -- cases). Whichever wins threads its 'DwElementKind' forward via
+    -- 'DwPropertyNamespace' so the *next* hop can resolve the actual
+    -- property name against 'dwPropertyCatalog'.
     classifyMemberOf (Just (DwColumnsNamespace mDwName)) finalName
       | identCanon finalName == "datawindow" =
           ("builtin_property", Nothing, "high", Nothing, Just (DwPropertyNamespace DwEkObject []))
+      | Just cat <- classifyDwBandKeyword (identCanon finalName) =
+          ("builtin_property", Nothing, "high", Nothing, Just (DwPropertyNamespace (DwEkBand cat) []))
+      -- | @Tree.Level@ is the one bandname the real syntax spells as two dot
+      -- segments (XREF_80815_Bandname_property.html), with no confirmed
+      -- occurrence in either in-repo example corpus and no real catalog data
+      -- behind 'DbcTreeLevel' either way -- so this never reports "high"
+      -- confidence. Tagging it 'dw_property'\/"low" (rather than falling
+      -- through to the generic 'otherwise' \"dw_column\" bucket below) keeps
+      -- it distinguishable in the Type Coverage dashboard's kind\/confidence
+      -- breakdown, so a future corpus that does use this shape shows up as a
+      -- visible bump instead of disappearing into undifferentiated noise.
+      | identCanon finalName == "tree" =
+          ("dw_property", Nothing, "low", Nothing, Just (DwPropertyNamespace (DwEkBand DbcTreeLevel) ["tree"]))
       | Just col <- mCol =
           ("dw_column", Nothing, "high", Just (dcType col), Just (DwPropertyNamespace DwEkTableColumn []))
       | Just ctrlKind <- mCtrl =

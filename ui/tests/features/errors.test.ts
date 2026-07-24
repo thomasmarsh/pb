@@ -22,6 +22,14 @@ const MOCK_COVERAGE: TypeCoverageResponse = {
   call_pct: 96.67,
   var_ref_kind_counts: [{ kind: "local", count: 40 }, { kind: "unresolved", count: 2 }],
   call_kind_counts: [{ kind: "virtual", count: 29 }, { kind: "unresolved", count: 1 }],
+  var_ref_kind_confidence_counts: [
+    { kind: "local", confidence: "high", count: 40 },
+    { kind: "unresolved", confidence: "unresolved", count: 2 },
+  ],
+  call_kind_confidence_counts: [
+    { kind: "virtual", confidence: "high", count: 29 },
+    { kind: "unresolved", confidence: "unresolved", count: 1 },
+  ],
 };
 
 describe("errors reducer", () => {

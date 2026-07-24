@@ -8,6 +8,7 @@ module PB.Analysis.DwBuiltins
   ( dwPropertyCatalog
   , dwExprFunctionCatalog
   , classifyDwControlKind
+  , classifyDwBandKeyword
   ) where
 
 import PB.Prelude
@@ -128,6 +129,25 @@ classifyDwControlKind t = case T.toLower t of
     "xhtmlgen"  -> Just DwCkXhtmlGen
     "xsltgen"   -> Just DwCkXsltGen
     _           -> Nothing
+
+-- | The closed set of @Bandname@ keywords real PowerScript accepts in the
+-- static dot-notation form (@dw_control.Object.DataWindow.bandname.
+-- property@), per @doc/pb2025r2/datawindow_reference/
+-- XREF_80815_Bandname_property.html@. Deliberately narrower than
+-- 'PB.Grammar.DataWindow.parseBandKind', which additionally recognizes
+-- @background@\/@foreground@ (not reachable via this dot notation, only via
+-- @.srd@ band blocks) and the numbered group\/tree-level variants (the same
+-- doc page states those are @Describe@\/@Modify@-string-only, never valid in
+-- a static @.Object.@ chain). Case-insensitive, matching every other
+-- keyword classifier in this module.
+classifyDwBandKeyword :: Text -> Maybe DwBandCategory
+classifyDwBandKeyword t = case T.toLower t of
+    "detail"  -> Just DbcDetail
+    "footer"  -> Just DbcFooter
+    "summary" -> Just DbcSummary
+    "header"  -> Just DbcHeader
+    "trailer" -> Just DbcGroupTrailer
+    _         -> Nothing
 
 parsedCatalog :: Either String DwPropertiesJson
 parsedCatalog = eitherDecodeStrict dwPropertiesBytes
