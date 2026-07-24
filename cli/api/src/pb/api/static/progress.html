@@ -37,79 +37,124 @@ function fmtMs(ms) {
   return (ms / 1000).toFixed(1) + "s";
 }
 
-function renderCurrent(current) {
-  const el = document.getElementById("current-line");
-  if (!current) {
-    el.textContent = "";
-    return;
-  }
-  let text = current.label + " ";
-  text += "— " + fmtMs(current.elapsed_ms) + " ";
-  if (current.residency_mb) text += "(" + Math.round(current.residency_mb) + "MB RES) ";
+function renderCurrent(label, elapsedMs, residencyMb) {
+  var el = document.getElementById("current-line");
+  if (!label) { el.textContent = ""; return; }
+  var text = label + " \u2014 " + fmtMs(elapsedMs);
+  if (residencyMb != null) text += " (" + Math.round(residencyMb) + "MB RES)";
   el.textContent = text.trim();
 }
 
 function renderWorkers(workers) {
-  const el = document.getElementById("worker-rows");
+  var el = document.getElementById("worker-rows");
   el.innerHTML = "";
-  for (const w of workers) {
-    const li = document.createElement("li");
-    li.textContent = "Worker " + w.worker + " — " + w.file + " (" + fmtMs(w.elapsed_ms) + ")";
+  for (var i = 0; i < workers.length; i++) {
+    var w = workers[i];
+    var li = document.createElement("li");
+    li.textContent = "Worker " + w.worker + " \u2014 " + w.file + " (" + fmtMs(w.elapsed_ms) + ")";
     el.appendChild(li);
   }
 }
 
-function renderTimeline(timelineHtml) {
-  document.getElementById("timeline").innerHTML = timelineHtml || "";
+function renderTimeline(html) {
+  document.getElementById("timeline").innerHTML = html || "";
 }
 
 function showBanner(kind, message) {
-  const el = document.getElementById("status-banner");
+  var el = document.getElementById("status-banner");
   el.className = kind;
   el.style.display = "block";
   el.innerHTML = message;
 }
 
-let polling = true;
+// ── timer state ──
+// Anchor: serverElapsed_ms at last snapshot, wall-clock time of that snapshot
+var serverElapsed = 0;
+var anchorTime = 0;
+var timerInterval = null;
 
-async function poll() {
-  if (!polling) return;
-  let data;
-  try {
-    const r = await fetch("/api/index-progress");
-    data = await r.json();
-  } catch (e) {
-    setTimeout(poll, 1000);
-    return;
+function tick() {
+  var now = serverElapsed + (Date.now() - anchorTime);
+  var current = lastSnapshot && lastSnapshot.current;
+  if (current) {
+    var stepElapsed = now - (current.start_since_start_ms || 0);
+    renderCurrent(current.label, stepElapsed, current.residency_mb);
+  }
+  // Tick worker elapsed times too
+  var workers = lastSnapshot && lastSnapshot.workers;
+  if (workers && workers.length) {
+    renderWorkers(workers.map(function(w) {
+      return {
+        worker: w.worker,
+        file: w.file,
+        elapsed_ms: w.start_since_start_ms !== null ? now - w.start_since_start_ms : null
+      };
+    }));
+  }
+}
+
+var lastSnapshot = null;
+
+function handleSnapshot(data) {
+  lastSnapshot = data;
+  serverElapsed = data.elapsed_ms || 0;
+  anchorTime = Date.now();
+
+  if (data.current) {
+    var stepElapsed = serverElapsed - (data.current.start_since_start_ms || 0);
+    renderCurrent(data.current.label, stepElapsed, data.current.residency_mb);
+  } else {
+    renderCurrent(null, null, null);
   }
 
-  if (!data.active) {
-    showBanner("done", "No active index run. <a id=\"view-explorer\" href=\"/\">View Explorer &rarr;</a>");
-    polling = false;
-    return;
-  }
-
-  renderCurrent(data.current);
   renderWorkers(data.workers || []);
   renderTimeline(data.timeline_html);
 
   if (data.job_status === "done") {
-    polling = false;
-    showBanner("done", "Indexing complete. <a id=\"view-explorer\" href=\"/\">View Explorer &rarr;</a>");
-    setTimeout(() => { window.location.href = "/"; }, 1500);
+    onDone();
     return;
   }
   if (data.job_status === "error") {
-    polling = false;
-    showBanner("error", "Indexing failed: " + (data.error || "unknown error") +
-      " <a id=\"view-explorer\" href=\"/\">View Explorer &rarr;</a>");
+    onError(data);
     return;
   }
 
-  setTimeout(poll, 1000);
+  // Start ticking if not already
+  if (!timerInterval) {
+    timerInterval = setInterval(tick, 1000);
+  }
 }
 
-poll();
+function onDone() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  showBanner("done", "Indexing complete. <a id=\"view-explorer\" href=\"/\">View Explorer &rarr;</a>");
+  setTimeout(function() { window.location.href = "/"; }, 1500);
+}
+
+function onError(data) {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  showBanner("error", "Indexing failed: " + (data.error || "unknown error") +
+    " <a id=\"view-explorer\" href=\"/\">View Explorer &rarr;</a>");
+}
+
+// ── SSE connection ──
+var es = new EventSource("/api/index-events");
+
+es.onmessage = function(ev) {
+  var data = JSON.parse(ev.data);
+
+  if (!data.active) {
+    showBanner("done", "No active index run. <a id=\"view-explorer\" href=\"/\">View Explorer &rarr;</a>");
+    es.close();
+    return;
+  }
+
+  handleSnapshot(data);
+};
+
+es.onerror = function() {
+  // EventSource auto-reconnects after transient failures
+};
 </script>
 </body>
 </html>

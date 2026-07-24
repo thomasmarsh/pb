@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import queue
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -406,6 +407,7 @@ class DiagnosticsCollector:
         self._lock = threading.Lock()
         self._finished = False
         self._seq = 0
+        self._subscribers: list[queue.Queue] = []
 
     def on_event(self, event: dict) -> None:
         with self._lock:
@@ -426,17 +428,22 @@ class DiagnosticsCollector:
                     self._worker_open[worker] = (event.get("since_start_ms"), event.get("file", ""))
             elif tag == "worker_done":
                 worker = event.get("worker")
-                if worker is None:
-                    return
-                start_since, file = self._worker_open.pop(worker, (event.get("since_start_ms"), event.get("file", "")))
-                if start_since is None:
-                    return
-                self._worker_intervals.append(_WorkerInterval(
-                    worker=worker,
-                    file=file,
-                    start_since_start_ms=start_since,
-                    end_since_start_ms=event.get("since_start_ms"),
-                ))
+                if worker is not None:
+                    start_since, file = self._worker_open.pop(worker, (event.get("since_start_ms"), event.get("file", "")))
+                    if start_since is not None:
+                        self._worker_intervals.append(_WorkerInterval(
+                            worker=worker,
+                            file=file,
+                            start_since_start_ms=start_since,
+                            end_since_start_ms=event.get("since_start_ms"),
+                        ))
+            if self._subscribers:
+                snap = self._snapshot_locked()
+                for q in self._subscribers:
+                    try:
+                        q.put_nowait(snap)
+                    except Exception:  # noqa: BLE001 — slow subscriber, drop
+                        pass
 
     def _handle_step(self, event: dict) -> None:
         label = event.get("label", "")
@@ -547,49 +554,66 @@ class DiagnosticsCollector:
     def finish(self) -> None:
         with self._lock:
             self._finished = True
+            subscribers = list(self._subscribers)
+        for q in subscribers:
+            try:
+                q.put_nowait({"tag": "done"})
+            except Exception:  # noqa: BLE001
+                pass
+
+    def subscribe(self, q: queue.Queue) -> None:
+        with self._lock:
+            self._subscribers.append(q)
+
+    def unsubscribe(self, q: queue.Queue) -> None:
+        with self._lock:
+            self._subscribers = [s for s in self._subscribers if s is not q]
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            now_ms = (time.monotonic() - self._start) * 1000
-            in_flight = [s for s in self._steps if s.start_since_start_ms is not None and s.elapsed_ms is None]
-            current = max(in_flight, key=lambda s: s.last_event_seq) if in_flight else None
-            current_start = current.start_since_start_ms if current is not None else None
-            completed = sorted(
-                [s for s in self._steps if s.completed_seq is not None],
-                key=lambda s: s.completed_seq or 0,
-            )
-            return {
-                "status": "complete" if self._finished else "running",
-                "elapsed_ms": round(now_ms, 1),
-                "timeline_html": self._render_timeline_svg(now_ms=now_ms),
-                "steps": [
-                    {
-                        "label": s.label,
-                        "elapsed_ms": s.elapsed_ms,
-                        "input_rows": s.input_rows,
-                        "derived_rows": s.derived_rows,
-                        "peak_residency_mb": s.peak_residency_mb,
-                    }
-                    for s in completed
-                ],
-                "current": {
-                    "label": current.label,
-                    "start_since_start_ms": current_start,
-                    "elapsed_ms": round(now_ms - current_start, 1) if current_start is not None else 0,
-                    "input_rows": current.input_rows,
-                    "derived_rows": current.derived_rows,
-                    "residency_mb": current.peak_residency_mb,
-                } if current is not None else None,
-                "workers": [
-                    {
-                        "worker": w,
-                        "file": f,
-                        "start_since_start_ms": s,
-                        "elapsed_ms": round(now_ms - s, 1) if s is not None else None,
-                    }
-                    for w, (s, f) in sorted(self._worker_open.items())
-                ],
-            }
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self) -> dict[str, Any]:
+        now_ms = (time.monotonic() - self._start) * 1000
+        in_flight = [s for s in self._steps if s.start_since_start_ms is not None and s.elapsed_ms is None]
+        current = max(in_flight, key=lambda s: s.last_event_seq) if in_flight else None
+        current_start = current.start_since_start_ms if current is not None else None
+        completed = sorted(
+            [s for s in self._steps if s.completed_seq is not None],
+            key=lambda s: s.completed_seq or 0,
+        )
+        return {
+            "status": "complete" if self._finished else "running",
+            "elapsed_ms": round(now_ms, 1),
+            "timeline_html": self._render_timeline_svg(now_ms=now_ms),
+            "steps": [
+                {
+                    "label": s.label,
+                    "elapsed_ms": s.elapsed_ms,
+                    "input_rows": s.input_rows,
+                    "derived_rows": s.derived_rows,
+                    "peak_residency_mb": s.peak_residency_mb,
+                }
+                for s in completed
+            ],
+            "current": {
+                "label": current.label,
+                "start_since_start_ms": current_start,
+                "elapsed_ms": round(now_ms - current_start, 1) if current_start is not None else 0,
+                "input_rows": current.input_rows,
+                "derived_rows": current.derived_rows,
+                "residency_mb": current.peak_residency_mb,
+            } if current is not None else None,
+            "workers": [
+                {
+                    "worker": w,
+                    "file": f,
+                    "start_since_start_ms": s,
+                    "elapsed_ms": round(now_ms - s, 1) if s is not None else None,
+                }
+                for w, (s, f) in sorted(self._worker_open.items())
+            ],
+        }
 
     @staticmethod
     def _effective_end(end: float | None, in_flight: bool, now_ms: float | None) -> float | None:
