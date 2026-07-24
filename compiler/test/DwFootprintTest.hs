@@ -32,7 +32,10 @@ mkTable r cols = DwTable
 writeColumn :: DwColumn
 writeColumn = DwColumn
   { dcName = "kodfinal", dcType = "decimal(0)", dcDbName = Just "misth_final.kodfinal"
-  , dcUpdate = True, dcKey = True, dcUpdateWhere = True, dcDddwName = Nothing, dcAttrs = Map.empty
+  , dcUpdate = True, dcKey = True, dcUpdateWhere = True, dcDddwName = Nothing
+  , dcValidation = Nothing, dcParsedValidation = Nothing, dcValidationTokens = []
+  , dcValidationMsg = Nothing, dcParsedValidationMsg = Nothing, dcValidationMsgTokens = []
+  , dcAttrs = Map.empty
   }
 
 ctx0 :: DwFootprintCtx

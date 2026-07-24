@@ -77,14 +77,20 @@ data DwRetrieveOrRaw
   deriving (Eq, Show, Generic)
 
 data DwColumn = DwColumn
-  { dcName        :: Text
-  , dcType        :: Text
-  , dcDbName      :: Maybe Text
-  , dcUpdate      :: Bool
-  , dcKey         :: Bool
-  , dcUpdateWhere :: Bool
-  , dcDddwName    :: Maybe Text
-  , dcAttrs       :: Map Text Text
+  { dcName                :: Text
+  , dcType                :: Text
+  , dcDbName              :: Maybe Text
+  , dcUpdate              :: Bool
+  , dcKey                 :: Bool
+  , dcUpdateWhere         :: Bool
+  , dcDddwName            :: Maybe Text
+  , dcValidation          :: Maybe Text
+  , dcParsedValidation    :: Maybe Expr
+  , dcValidationTokens    :: [Token]
+  , dcValidationMsg       :: Maybe Text
+  , dcParsedValidationMsg :: Maybe Expr
+  , dcValidationMsgTokens :: [Token]
+  , dcAttrs               :: Map Text Text
   } deriving (Eq, Show, Generic)
 
 data DwArgument = DwArgument
@@ -142,6 +148,9 @@ data DwControl = DwControl
   , dwcFormat           :: Maybe Text
   , dwcParsedFormat     :: Maybe Expr
   , dwcFormatTokens     :: [Token]
+  , dwcColor            :: Maybe Text
+  , dwcParsedColor      :: Maybe Expr
+  , dwcColorTokens      :: [Token]
   , dwcTabSeq           :: Maybe Int
   , dwcAttrs            :: Map Text Text
   } deriving (Eq, Show, Generic)

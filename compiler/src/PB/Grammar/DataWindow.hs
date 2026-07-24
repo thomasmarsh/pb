@@ -125,7 +125,7 @@ readAllDigits t = case TR.decimal t of
 -- sub-grammar's identifiers at their true file position.
 parseDwTable :: (Int, Int) -> [DwAttr] -> DwTable
 parseDwTable blkAnchor attrs = DwTable
-    { dtColumns     = extractColumns attrs
+    { dtColumns     = extractColumns blkAnchor attrs
     , dtRetrieve    = (\(txt, relPos) -> parsePbSelect (resolveDwPos blkAnchor relPos) txt)
                         <$> lookupQuotedWithPos "retrieve" attrs
     , dtUpdate      = lookupQuoted "update" attrs
@@ -161,12 +161,20 @@ lookupQuotedPos key attrs = snd <$> lookupQuotedWithPos key attrs
 
 subBlockContents :: Text -> [DwAttr] -> [Text]
 subBlockContents key attrs =
-    [c | DwAttrSubBlock k c <- attrs, T.toLower k == T.toLower key]
+    [c | DwAttrSubBlock k c _ <- attrs, T.toLower k == T.toLower key]
+
+-- | Like 'subBlockContents' but paired with the sub-block content's own
+-- relative @(line, col)@ (see 'DwAttrSubBlock') -- used to anchor a further
+-- re-parse of the sub-block's own attrs (e.g. a column's @validation=@
+-- expression) back to a real file position via 'resolveDwPos'.
+subBlockContentsWithPos :: Text -> [DwAttr] -> [(Text, (Int, Int))]
+subBlockContentsWithPos key attrs =
+    [(c, p) | DwAttrSubBlock k c p <- attrs, T.toLower k == T.toLower key]
 
 attrKV :: DwAttr -> (Text, Text)
 attrKV (DwAttrUnquoted k v) = (k, v)
 attrKV (DwAttrQuoted   k v _) = (k, v)
-attrKV (DwAttrSubBlock k _) = (k, "")
+attrKV (DwAttrSubBlock k _ _) = (k, "")
 
 parseBool :: Maybe Text -> Bool -> Bool
 parseBool (Just "yes") _ = True
@@ -176,21 +184,37 @@ parseBool _            d = d
 -- ---------------------------------------------------------------------------
 -- Column extraction
 
-extractColumns :: [DwAttr] -> [DwColumn]
-extractColumns attrs =
-    mapMaybe (parseColumn . scanBlockAttrs) (subBlockContents "column" attrs)
+extractColumns :: (Int, Int) -> [DwAttr] -> [DwColumn]
+extractColumns tableAnchor attrs =
+    [ col
+    | (content, relPos) <- subBlockContentsWithPos "column" attrs
+    , Just col <- [parseColumn (resolveDwPos tableAnchor relPos) (scanBlockAttrs content)]
+    ]
 
-parseColumn :: [DwAttr] -> Maybe DwColumn
-parseColumn attrs = do
+-- | 'anchor' is this column's own real @(line, col)@ (the @column(...)@
+-- sub-block's content start, already resolved against the enclosing
+-- @table(...)@ block by 'extractColumns') -- used to anchor
+-- @validation=@\/@validationmsg=@ re-tokenization at a true file position,
+-- the same composition 'parseDwControl's @expression=@\/@format=@ handling
+-- uses.
+parseColumn :: (Int, Int) -> [DwAttr] -> Maybe DwColumn
+parseColumn anchor attrs = do
     name     <- lookupUnquoted "name" attrs
     typ      <- lookupUnquoted "type" attrs
-    let dbName   = lookupQuoted "dbname" attrs
-        upd      = parseBool (lookupUnquoted "update"            attrs) False
-        key      = parseBool (lookupUnquoted "key"               attrs) False
-        updWhere = parseBool (lookupUnquoted "updatewhereclause" attrs) False
-        dddwName = lookupUnquoted "dddw.name" attrs
-                   <|> lookupQuoted "dddw.name" attrs
-        knownKeys = ["name","type","dbname","update","key","updatewhereclause","dddw.name"]
+    let dbName      = lookupQuoted "dbname" attrs
+        upd         = parseBool (lookupUnquoted "update"            attrs) False
+        key         = parseBool (lookupUnquoted "key"               attrs) False
+        updWhere    = parseBool (lookupUnquoted "updatewhereclause" attrs) False
+        dddwName    = lookupUnquoted "dddw.name" attrs
+                      <|> lookupQuoted "dddw.name" attrs
+        rawValid    = lookupQuoted "validation" attrs
+        validPos    = resolveDwPos anchor <$> lookupQuotedPos "validation" attrs
+        validToks   = tokenizeExprAt <$> validPos <*> rawValid
+        rawValidMsg = lookupQuoted "validationmsg" attrs
+        validMsgPos = resolveDwPos anchor <$> lookupQuotedPos "validationmsg" attrs
+        validMsgToks = tokenizeExprAt <$> validMsgPos <*> rawValidMsg
+        knownKeys = ["name","type","dbname","update","key","updatewhereclause","dddw.name",
+                     "validation","validationmsg"]
         extras   = Map.fromList
                      [ (k, v)
                      | attr  <- attrs
@@ -198,14 +222,20 @@ parseColumn attrs = do
                      , T.toLower k `notElem` knownKeys
                      ]
     return DwColumn
-        { dcName        = name
-        , dcType        = typ
-        , dcDbName      = dbName
-        , dcUpdate      = upd
-        , dcKey         = key
-        , dcUpdateWhere = updWhere
-        , dcDddwName    = dddwName
-        , dcAttrs       = extras
+        { dcName                = name
+        , dcType                = typ
+        , dcDbName              = dbName
+        , dcUpdate              = upd
+        , dcKey                 = key
+        , dcUpdateWhere         = updWhere
+        , dcDddwName            = dddwName
+        , dcValidation          = rawValid
+        , dcParsedValidation    = parseExpr <$> validToks
+        , dcValidationTokens    = fromMaybe [] validToks
+        , dcValidationMsg       = rawValidMsg
+        , dcParsedValidationMsg = parseExpr <$> validMsgToks
+        , dcValidationMsgTokens = fromMaybe [] validMsgToks
+        , dcAttrs               = extras
         }
 
 -- ---------------------------------------------------------------------------
@@ -299,20 +329,28 @@ extractFormatExpr fmt =
 
 parseDwControl :: DwBlock -> DwControl
 parseDwControl DwBlock { dwbKeyword = kw, dwbContent = content, dwbLine = blkLine, dwbCol = blkCol } =
-    let attrs      = scanBlockAttrs content
-        knownKeys  = ["name","band","id","x","y","width","height",
-                      "visible","expression","format","tabsequence"]
-        rawFmt     = lookupQuoted "format" attrs
-        anchor     = resolveDwPos (blkLine, blkCol)
-        exprPos    = anchor <$> lookupQuotedPos "expression" attrs
-        fmtPos     = anchor <$> lookupQuotedPos "format" attrs
-        fmtExprPos = do
+    let attrs        = scanBlockAttrs content
+        knownKeys    = ["name","band","id","x","y","width","height",
+                        "visible","expression","format","color","tabsequence"]
+        rawFmt       = lookupQuoted "format" attrs
+        rawColorQ    = lookupQuoted "color" attrs
+        anchor       = resolveDwPos (blkLine, blkCol)
+        exprPos      = anchor <$> lookupQuotedPos "expression" attrs
+        fmtPos       = anchor <$> lookupQuotedPos "format" attrs
+        colorPos     = anchor <$> lookupQuotedPos "color" attrs
+        fmtExprPos   = do
             (line, col) <- fmtPos
             raw         <- rawFmt
             (prefix, _) <- extractFormatExpr raw
             pure (advanceThroughText (line, col) prefix)
-        exprToks   = tokenizeExprAt <$> exprPos    <*> lookupQuoted "expression" attrs
-        fmtToks    = tokenizeExprAt <$> fmtExprPos <*> (snd <$> (rawFmt >>= extractFormatExpr))
+        colorExprPos = do
+            (line, col) <- colorPos
+            raw         <- rawColorQ
+            (prefix, _) <- extractFormatExpr raw
+            pure (advanceThroughText (line, col) prefix)
+        exprToks     = tokenizeExprAt <$> exprPos      <*> lookupQuoted "expression" attrs
+        fmtToks      = tokenizeExprAt <$> fmtExprPos   <*> (snd <$> (rawFmt    >>= extractFormatExpr))
+        colorToks    = tokenizeExprAt <$> colorExprPos <*> (snd <$> (rawColorQ >>= extractFormatExpr))
     in DwControl
         { dwcType             = kw
         , dwcName             = lookupUnquoted "name" attrs
@@ -329,6 +367,9 @@ parseDwControl DwBlock { dwbKeyword = kw, dwbContent = content, dwbLine = blkLin
         , dwcFormat           = rawFmt
         , dwcParsedFormat     = parseExpr <$> fmtToks
         , dwcFormatTokens     = fromMaybe [] fmtToks
+        , dwcColor            = rawColorQ <|> lookupUnquoted "color" attrs
+        , dwcParsedColor      = parseExpr <$> colorToks
+        , dwcColorTokens      = fromMaybe [] colorToks
         , dwcTabSeq           = parseIntAttr  "tabsequence" attrs
         , dwcAttrs            = collectResidualAttrs knownKeys attrs
         }

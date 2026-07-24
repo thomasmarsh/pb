@@ -2,7 +2,7 @@ module DataWindowTest (tests) where
 
 import PB.Prelude
 import PB.AST.DataWindow
-import PB.AST.Expr           (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Expr           (Expr (..), Lvalue (..), LvSegment (..), BinOp (..))
 import PB.AST.Ident          (identSpan, provenanceSpan)
 import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
 import PB.Lexing.Token       (SourceSpan (..), tkText)
@@ -333,7 +333,7 @@ tests = testGroup "DataWindow"
 
       , testCase "sub-block attr" $
           scanBlockAttrs "column=(type=long name=foo )" @?=
-            [DwAttrSubBlock "column" "type=long name=foo "]
+            [DwAttrSubBlock "column" "type=long name=foo " (1, 9)]
 
       , testCase "type with parens captured whole — char(10)" $
           scanBlockAttrs "type=char(10) name=x" @?=
@@ -357,8 +357,8 @@ tests = testGroup "DataWindow"
 
       , testCase "multiple sub-blocks" $
           scanBlockAttrs "column=(type=long name=a ) column=(type=char(10) name=b )" @?=
-            [ DwAttrSubBlock "column" "type=long name=a "
-            , DwAttrSubBlock "column" "type=char(10) name=b "
+            [ DwAttrSubBlock "column" "type=long name=a " (1, 9)
+            , DwAttrSubBlock "column" "type=char(10) name=b " (1, 36)
             ]
 
       , testCase "update= and updatewhere= are distinct keys" $
@@ -390,77 +390,137 @@ tests = testGroup "DataWindow"
 
   , testGroup "parseColumn"
       [ testCase "returns Nothing when name absent" $
-          parseColumn [DwAttrUnquoted "type" "long"] @?= Nothing
+          parseColumn (1,1) [DwAttrUnquoted "type" "long"] @?= Nothing
 
       , testCase "returns Nothing when type absent" $
-          parseColumn [DwAttrUnquoted "name" "aa"] @?= Nothing
+          parseColumn (1,1) [DwAttrUnquoted "name" "aa"] @?= Nothing
 
       , testCase "returns Nothing for empty attr list" $
-          parseColumn [] @?= Nothing
+          parseColumn (1,1) [] @?= Nothing
 
       , testCase "minimal column — name and type only" $
-          parseColumn [DwAttrUnquoted "type" "long", DwAttrUnquoted "name" "aa"] @?=
+          parseColumn (1,1) [DwAttrUnquoted "type" "long", DwAttrUnquoted "name" "aa"] @?=
             Just DwColumn
-              { dcName        = "aa"
-              , dcType        = "long"
-              , dcDbName      = Nothing
-              , dcUpdate      = False
-              , dcKey         = False
-              , dcUpdateWhere = False
-              , dcDddwName    = Nothing
-              , dcAttrs       = Map.empty
+              { dcName                = "aa"
+              , dcType                = "long"
+              , dcDbName              = Nothing
+              , dcUpdate              = False
+              , dcKey                 = False
+              , dcUpdateWhere         = False
+              , dcDddwName            = Nothing
+              , dcValidation          = Nothing
+              , dcParsedValidation    = Nothing
+              , dcValidationTokens    = []
+              , dcValidationMsg       = Nothing
+              , dcParsedValidationMsg = Nothing
+              , dcValidationMsgTokens = []
+              , dcAttrs               = Map.empty
               }
 
       , testCase "update=yes and key=yes parsed as Bool" $
-          parseColumn [ DwAttrUnquoted "type" "long"
+          parseColumn (1,1)
+                      [ DwAttrUnquoted "type" "long"
                       , DwAttrUnquoted "name" "id"
                       , DwAttrUnquoted "update" "yes"
                       , DwAttrUnquoted "key" "yes"
                       , DwAttrUnquoted "updatewhereclause" "yes"
                       ] @?=
             Just DwColumn
-              { dcName        = "id"
-              , dcType        = "long"
-              , dcDbName      = Nothing
-              , dcUpdate      = True
-              , dcKey         = True
-              , dcUpdateWhere = True
-              , dcDddwName    = Nothing
-              , dcAttrs       = Map.empty
+              { dcName                = "id"
+              , dcType                = "long"
+              , dcDbName              = Nothing
+              , dcUpdate              = True
+              , dcKey                 = True
+              , dcUpdateWhere         = True
+              , dcDddwName            = Nothing
+              , dcValidation          = Nothing
+              , dcParsedValidation    = Nothing
+              , dcValidationTokens    = []
+              , dcValidationMsg       = Nothing
+              , dcParsedValidationMsg = Nothing
+              , dcValidationMsgTokens = []
+              , dcAttrs               = Map.empty
               }
 
       , testCase "dbname extracted from quoted attr" $
-          parseColumn [ DwAttrUnquoted "type" "long"
+          parseColumn (1,1)
+                      [ DwAttrUnquoted "type" "long"
                       , DwAttrUnquoted "name" "aa"
                       , DwAttrQuoted   "dbname" "tbl.aa" (1, 1)
                       ] @?=
             Just DwColumn
-              { dcName        = "aa"
-              , dcType        = "long"
-              , dcDbName      = Just "tbl.aa"
-              , dcUpdate      = False
-              , dcKey         = False
-              , dcUpdateWhere = False
-              , dcDddwName    = Nothing
-              , dcAttrs       = Map.empty
+              { dcName                = "aa"
+              , dcType                = "long"
+              , dcDbName              = Just "tbl.aa"
+              , dcUpdate              = False
+              , dcKey                 = False
+              , dcUpdateWhere         = False
+              , dcDddwName            = Nothing
+              , dcValidation          = Nothing
+              , dcParsedValidation    = Nothing
+              , dcValidationTokens    = []
+              , dcValidationMsg       = Nothing
+              , dcParsedValidationMsg = Nothing
+              , dcValidationMsgTokens = []
+              , dcAttrs               = Map.empty
               }
 
       , testCase "char(50) type stored verbatim" $
-          fmap dcType (parseColumn [ DwAttrUnquoted "type" "char(50)"
-                                   , DwAttrUnquoted "name" "foo" ]) @?=
+          fmap dcType (parseColumn (1,1) [ DwAttrUnquoted "type" "char(50)"
+                                          , DwAttrUnquoted "name" "foo" ]) @?=
             Just "char(50)"
 
       , testCase "dddw.name captured" $
-          fmap dcDddwName (parseColumn [ DwAttrUnquoted "type" "long"
-                                       , DwAttrUnquoted "name" "x"
-                                       , DwAttrUnquoted "dddw.name" "pick_foo" ]) @?=
+          fmap dcDddwName (parseColumn (1,1) [ DwAttrUnquoted "type" "long"
+                                              , DwAttrUnquoted "name" "x"
+                                              , DwAttrUnquoted "dddw.name" "pick_foo" ]) @?=
             Just (Just "pick_foo")
 
       , testCase "unknown attrs go into dcAttrs map" $
-          fmap dcAttrs (parseColumn [ DwAttrUnquoted "type" "long"
-                                    , DwAttrUnquoted "name" "x"
-                                    , DwAttrUnquoted "values" "A/B/" ]) @?=
+          fmap dcAttrs (parseColumn (1,1) [ DwAttrUnquoted "type" "long"
+                                           , DwAttrUnquoted "name" "x"
+                                           , DwAttrUnquoted "values" "A/B/" ]) @?=
             Just (Map.singleton "values" "A/B/")
+
+      , testCase "validation= parsed into dcParsedValidation, anchored at real position" $
+          -- "validation" spans columns 1-10 (key), "=" at 11, quote opens at 12,
+          -- content starts at col 13; anchor (5, 1) simulates a column block
+          -- whose own real file position is line 5 col 1.
+          case parseColumn (5, 1) [ DwAttrUnquoted "type" "decimal(0)"
+                                   , DwAttrUnquoted "name" "salary"
+                                   , DwAttrQuoted "validation" "real(gettext()) > 0" (1, 13)
+                                   ] of
+            Just c -> do
+              dcValidation c @?= Just "real(gettext()) > 0"
+              case dcParsedValidation c of
+                Just ExBinOp { lhs = ExCall { callee = Lvalue [LvSegment fn Nothing] }
+                             , op = BopGt, rhs = ExInt "0" } -> do
+                  fn @?= "real"
+                  -- anchor (5,1) + validation's own relative position (1,13)
+                  -- resolves to line 5 col 13 -- "real" is 4 chars.
+                  provenanceSpan (identSpan fn) @?= Just (SourceSpan 5 13 5 17)
+                other -> assertFailure ("expected ExBinOp real(gettext()) > 0, got " <> show other)
+            Nothing -> assertFailure "expected Just DwColumn"
+
+      , testCase "validationmsg= referencing a column parsed into dcParsedValidationMsg" $
+          case parseColumn (1,1) [ DwAttrUnquoted "type" "long"
+                                  , DwAttrUnquoted "name" "dept_id"
+                                  , DwAttrQuoted "validationmsg" "dept_id" (1, 15)
+                                  ] of
+            Just c -> dcParsedValidationMsg c @?=
+              Just (ExLvalue (Lvalue [LvSegment "dept_id" Nothing]))
+            Nothing -> assertFailure "expected Just DwColumn"
+
+      , testCase "validation=/validationmsg= absent — both Nothing, not in dcAttrs" $
+          case parseColumn (1,1) [DwAttrUnquoted "type" "long", DwAttrUnquoted "name" "x"] of
+            Just c -> do
+              dcValidation c @?= Nothing
+              dcParsedValidation c @?= Nothing
+              dcValidationMsg c @?= Nothing
+              dcParsedValidationMsg c @?= Nothing
+              assertBool "validation should not be in residual attrs"
+                (Map.notMember "validation" (dcAttrs c))
+            Nothing -> assertFailure "expected Just DwColumn"
       ]
 
   , testGroup "DwControl"
@@ -594,7 +654,8 @@ tests = testGroup "DataWindow"
                 assertBool "height not in attrs" (notElem "height"     ks)
                 assertBool "visible not in attrs" (notElem "visible"   ks)
                 assertBool "tab_seq not in attrs" (notElem "tabsequence" ks)
-                assertBool "color in attrs" (elem "color" ks)
+                assertBool "color not in attrs" (notElem "color" ks)
+                dwcColor c @?= Just "0"
               cs -> assertFailure ("expected 1 control, got " <> show (length cs))
 
       , testCase "compute expression — user fn call parses to ExCall" $ do
@@ -681,6 +742,56 @@ tests = testGroup "DataWindow"
             Right dw -> case dwControls dw of
               [c] -> assertBool "format should not be in residual attrs"
                        (Map.notMember "format" (dwcAttrs c))
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "color= with ~t separator — dynamic half parsed as Expr" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c6 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" color=\"536870912~tfn_getcolor()\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcColor c @?= Just "536870912~tfn_getcolor()"
+                dwcParsedColor c @?=
+                  Just ExCall { callee = Lvalue [LvSegment "fn_getcolor" Nothing], callArgs = [] }
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "color= without ~t (static int) — parsedColor is Nothing" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c7 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" color=\"128\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcColor       c @?= Just "128"
+                dwcParsedColor c @?= Nothing
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "color= unquoted static int — captured, parsedColor is Nothing" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c8 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" color=128 )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcColor       c @?= Just "128"
+                dwcParsedColor c @?= Nothing
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "color= absent — dwcColor and dwcParsedColor both Nothing" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c9 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcColor       c @?= Nothing
+                dwcParsedColor c @?= Nothing
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "color= not in dwcAttrs (it is a known key)" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c10 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" color=\"128\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> assertBool "color should not be in residual attrs"
+                       (Map.notMember "color" (dwcAttrs c))
               cs -> assertFailure ("expected 1 control, got " <> show (length cs))
       ]
 

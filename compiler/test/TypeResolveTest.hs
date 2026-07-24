@@ -52,7 +52,10 @@ mkTB nm anc = TypeBlock
 mkDwCol :: T.Text -> T.Text -> DwColumn
 mkDwCol nm ty = DwColumn
   { dcName = nm, dcType = ty, dcDbName = Nothing, dcUpdate = False
-  , dcKey = False, dcUpdateWhere = False, dcDddwName = Nothing, dcAttrs = Map.empty
+  , dcKey = False, dcUpdateWhere = False, dcDddwName = Nothing
+  , dcValidation = Nothing, dcParsedValidation = Nothing, dcValidationTokens = []
+  , dcValidationMsg = Nothing, dcParsedValidationMsg = Nothing, dcValidationMsgTokens = []
+  , dcAttrs = Map.empty
   }
 
 mkDwTable :: [DwColumn] -> DwTable

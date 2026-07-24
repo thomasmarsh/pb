@@ -38,6 +38,7 @@ import qualified RunnerTest
 import qualified SchemaCategoryTest
 import qualified SchFootprintTest
 import qualified DwFootprintTest
+import qualified DwBindingFootprintTest
 import qualified SerialiseTest
 import qualified SqlParseTest
 import qualified SplitterTest
@@ -100,6 +101,7 @@ tests = testGroup "pb-compiler"
   , SchemaCategoryTest.tests
   , SchFootprintTest.tests
   , DwFootprintTest.tests
+  , DwBindingFootprintTest.tests
   , SerialiseTest.tests
   , TokenTest.tests
   , SplitterTest.tests

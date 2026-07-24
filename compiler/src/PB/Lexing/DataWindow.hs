@@ -140,7 +140,7 @@ pNonCloseParen = T.singleton <$> satisfy (/= ')')
 data DwAttr
   = DwAttrUnquoted Text Text  -- key, unquoted value (ends at whitespace)
   | DwAttrQuoted   Text Text (Int, Int)  -- key, quoted value (verbatim, tilde-escapes preserved), value's relative position
-  | DwAttrSubBlock Text Text  -- key, raw inner content of key=(...)
+  | DwAttrSubBlock Text Text (Int, Int)  -- key, raw inner content of key=(...), content's relative position
   deriving (Eq, Show)
 
 -- | Tokenize a block's content string into structured attributes.
@@ -178,10 +178,16 @@ pAttrKey = takeWhile1P (Just "attr key") (\c -> isAlphaNum c || c == '_' || c ==
 
 pAttrVal :: Text -> DwParser DwAttr
 pAttrVal key =
-    (char '(' >> DwAttrSubBlock key <$> pBlockContent) <|>
+    (char '(' >> pSubBlockAttr key) <|>
     (char '"' >> pQuotedAttr key) <|>
     (DwAttrUnquoted key <$> pUnquotedVal) <|>
     pure (DwAttrUnquoted key "")
+
+pSubBlockAttr :: Text -> DwParser DwAttr
+pSubBlockAttr key = do
+    pos <- getSourcePos
+    val <- pBlockContent
+    return (DwAttrSubBlock key val (unPos (sourceLine pos), unPos (sourceColumn pos)))
 
 pQuotedAttr :: Text -> DwParser DwAttr
 pQuotedAttr key = do
