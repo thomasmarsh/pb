@@ -421,6 +421,60 @@ tests = testGroup "TypeResolve"
               csReceiverObject s3 @?= Just "datawindow" -- dw_1 (control, via ControlIndex)
             other -> assertFailure ("expected 3 sites, got " ++ show (length other))
 
+      , testCase "BsPbCall (call super::create) resolves the enclosing object's own ancestor via steHierarchy" $ do
+          -- Real corpus shape (found live-broken: no tooltip for
+          -- 'call super::create'/'call super::open'): 'walkBodyCallSites'
+          -- had no case for 'BsPbCall' at all, so it never produced a
+          -- CallSite -- reuses the ExMethodCall dispatch path unchanged.
+          let body = [ Located 6 (BsPbCall (PbCall "super" "create")) ]
+              sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractCallSites wsEnv idx "test.srw" "w_test" sf of
+            [s] -> do
+              csToName         s @?= "create"
+              csCallType       s @?= "ExMethodCall"
+              csReceiverObject s @?= Just "window"
+              csLine           s @?= Just 6
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "BsPbCall (call w_ancestor::event) resolves the receiver to the literal named ancestor, not steHierarchy" $ do
+          let body = [ Located 8 (BsPbCall (PbCall "w_ancestor" "of_reset")) ]
+              sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractCallSites wsEnv idx "test.srw" "w_test" sf of
+            [s] -> csReceiverObject s @?= Just "w_ancestor"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "BsPbCall (call ancestor`control::event) resolves the control's own type, rooted at the named ancestor" $ do
+          -- Real corpus shape: explicitly invoking a specific ancestor's
+          -- version of a control's event (e.g. when a descendant window
+          -- shadows a control of the same name) -- resolves via
+          -- resolveMemberChainType rooted at the ancestor, not the calling
+          -- object.
+          let body = [ Located 9 (BsPbCall (PbCall "w_test`dw_1" "retrieve")) ]
+              sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions  = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx   = buildControlIndex [sf]
+          case extractCallSites wsEnv idx "test.srw" "w_test" sf of
+            [s] -> do
+              csToName         s @?= "retrieve"
+              csReceiverObject s @?= Just "datawindow"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
       , testCase "ExMethodCall receiver resolves a multi-segment plain instance-var chain (Plan 196 Phase 4 item 2)" $ do
           -- Real corpus shape: iw_parent.ilst_history.ishead(), where
           -- iw_parent is a plain instance var (type w_child) and

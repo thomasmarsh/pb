@@ -450,11 +450,49 @@ walkBodyCallSites wsEnv env file obj proc_ = foldStmts classify
       BsDo DoStmt { doCond = pre, doLoop = post } ->
         condCallSites line pre <> condCallSites line post
       BsChoose ChooseStmt { chooseExpr = x } -> callSitesExpr wsEnv env file obj proc_ (Just line) x
+      BsPbCall pbc       -> [pbCallSite env file obj proc_ line pbc]
       _ -> []
 
     condCallSites _    Nothing            = []
     condCallSites line (Just (DoWhile e)) = callSitesExpr wsEnv env file obj proc_ (Just line) e
     condCallSites line (Just (DoUntil e)) = callSitesExpr wsEnv env file obj proc_ (Just line) e
+
+-- | @CALL ancestor[`control]::event@ reuses the 'ExMethodCall' dispatch path
+-- unchanged (see 'resolveOne') -- @csReceiverObject@ is already exactly the
+-- field that path needs. @super@ resolves to the enclosing object's own
+-- immediate ancestor via 'steHierarchy'; a bare named ancestor
+-- (@call m_dynsql_frame::event@) is used literally; a backtick-qualified
+-- control name (@call w_ancestor\`cb_ok::clicked@ -- explicitly invoking a
+-- specific ancestor's version of a possibly-shadowed control) resolves that
+-- control's effective type starting from the named ancestor object via
+-- 'resolveMemberChainType' -- the same D1-override\/inheritance walk an
+-- ordinary member chain already gets, just rooted at the ancestor instead of
+-- the enclosing object.
+pbCallSite :: ScopedTypeEnv -> Text -> Text -> Text -> Int -> PbCall -> CallSite
+pbCallSite env file obj proc_ line (PbCall anc ev) =
+  CallSite
+    { csFile           = file
+    , csObject         = obj
+    , csFromProc       = proc_
+    , csToName         = identOrig ev
+    , csCallType       = "ExMethodCall"
+    , csLine           = Just line
+    , csReceiverObject = pbCallReceiverType env obj anc
+    , csToNameSpan     = provenanceSpan (identSpan ev)
+    }
+
+pbCallReceiverType :: ScopedTypeEnv -> Text -> Ident -> Maybe Text
+pbCallReceiverType env obj anc =
+  case T.splitOn "`" (identOrig anc) of
+    [ancPart, ctrlPart] ->
+      resolveMemberChainType (steControlIndex env) (steHierarchy env) (resolveAncestorText ancPart) [ctrlPart]
+    [ancPart] -> Just (resolveAncestorText ancPart)
+    _         -> Nothing
+  where
+    resolveAncestorText ancPart
+      | T.toLower ancPart == "super" =
+          maybe ancPart identOrig (Map.lookup (mkIdent obj) (steHierarchy env))
+      | otherwise = ancPart
 
 -- | Resolve an 'ExMethodCall' receiver's declared type for 'csReceiverObject',
 -- reusing 'classifyChainHops' -- the same per-hop fold 'classifyLvalueChain'
