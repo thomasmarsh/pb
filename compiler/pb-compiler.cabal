@@ -30,6 +30,7 @@ library
     PB.Prelude
     PB.AST.BodyStmt
     PB.AST.DataWindow
+    PB.AST.DwPropertySchema
     PB.AST.Expr
     PB.AST.Ident
     PB.AST.Located
@@ -46,6 +47,7 @@ library
     PB.Lexing.Splitter
     PB.Lexing.Token
     PB.Analysis.Builtins
+    PB.Analysis.DwBuiltins
     PB.Analysis.CallClassify
     PB.Analysis.Cfg
     PB.Analysis.CloneDetect
