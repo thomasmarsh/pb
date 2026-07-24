@@ -28,7 +28,7 @@ export function useKeyboardShortcuts(store: Store<AppState, AppAction>): void {
             store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "queries" } } });
             return;
           case "e":
-            store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "errors" } } });
+            store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "diagnostics" } } });
             return;
         }
         return;

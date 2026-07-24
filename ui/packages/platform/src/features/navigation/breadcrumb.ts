@@ -103,7 +103,7 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
     case "formalReports":
       return [{ icon: ICONS.analysis, label: "Formal Reports", route }];
 
-    case "errors":
+    case "diagnostics":
       return [{ icon: ICONS.analysis, label: "Diagnostics", route }];
 
     case "libraryDetail":

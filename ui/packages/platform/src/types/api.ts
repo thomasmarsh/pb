@@ -449,6 +449,32 @@ export interface ErrorListResponse {
   items: ParseErrorRow[];
 }
 
+export interface DiagnosticsTimelineStep {
+  label: string;
+  elapsed_ms: number | null;
+  input_rows: Record<string, number>;
+  derived_rows: Record<string, number>;
+  peak_residency_mb: number | null;
+  start_since_start_ms: number | null;
+  end_since_start_ms: number | null;
+}
+
+export interface DiagnosticsTimelineResponse {
+  active: boolean;
+  status?: string;
+  elapsed_ms?: number;
+  timeline_html: string;
+  steps: DiagnosticsTimelineStep[];
+  current: {
+    label: string;
+    start_since_start_ms: number | null;
+    elapsed_ms: number;
+    input_rows: Record<string, number>;
+    derived_rows: Record<string, number>;
+    peak_residency_mb: number | null;
+  } | null;
+}
+
 export interface LibraryObject {
   name: string;
   kind: string;

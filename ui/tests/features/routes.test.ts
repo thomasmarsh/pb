@@ -82,8 +82,8 @@ describe("parse", () => {
     expect(parse("/explore")).toEqual({ view: "explore" });
   });
 
-  it('"/errors" resolves to errors', () => {
-    expect(parse("/errors")).toEqual({ view: "errors" });
+  it('"/diagnostics" resolves to diagnostics', () => {
+    expect(parse("/diagnostics")).toEqual({ view: "diagnostics" });
   });
 
   it('"/unknown" falls back to dashboard', () => {

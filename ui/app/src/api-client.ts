@@ -19,6 +19,7 @@ import type {
   TableSummary,
   TableDetail,
   ErrorListResponse,
+  DiagnosticsTimelineResponse,
   TypeCoverageResponse,
   LiveProceduresResponse,
   DeadVarsResponse,
@@ -68,7 +69,8 @@ export interface ApiClient {
   getTableDetail(name: string, namespace?: string): Promise<TableDetail>;
   getColumnUsage(): Promise<ColumnUsageResponse>;
   getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse>;
-  getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
+  getDiagnostics(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
+  getDiagnosticsTimeline(zoom: number): Promise<DiagnosticsTimelineResponse>;
   getTypeCoverage(): Promise<TypeCoverageResponse>;
   getLiveProcedures(): Promise<LiveProceduresResponse>;
   getDeadVars(): Promise<DeadVarsResponse>;
@@ -149,7 +151,8 @@ export function createEnv(api: ApiClient): Env {
     getTableDetail: (n: string, ns?: string) => lift(() => api.getTableDetail(n, ns)),
     getColumnUsage: () => lift(() => api.getColumnUsage()),
     getDecompositionCandidates: (t: string, ns?: string) => lift(() => api.getDecompositionCandidates(t, ns)),
-    getErrors: (p) => lift(() => api.getErrors(p)),
+    getDiagnostics: (p) => lift(() => api.getDiagnostics(p)),
+    getDiagnosticsTimeline: (z) => lift(() => api.getDiagnosticsTimeline(z)),
     getTypeCoverage: () => lift(() => api.getTypeCoverage()),
     getLiveProcedures: () => lift(() => api.getLiveProcedures().then((r) => r.items)),
     getDeadVars: () => lift(() => api.getDeadVars().then((r) => r.items)),
@@ -329,8 +332,12 @@ export function createApiClient(): ApiClient {
       return fetchJson(`/api/schema/decomposition-candidates/${encodeURIComponent(table)}${qs}`);
     },
 
-    async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {
-      return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "", limit: params.limit ?? 200, offset: params.offset ?? 0 }));
+    async getDiagnostics(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {
+      return fetchJson("/api/diagnostics?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "", limit: params.limit ?? 200, offset: params.offset ?? 0 }));
+    },
+
+    async getDiagnosticsTimeline(zoom: number): Promise<DiagnosticsTimelineResponse> {
+      return fetchJson(`/api/diagnostics/timeline?zoom=${zoom}`);
     },
 
     async getTypeCoverage(): Promise<TypeCoverageResponse> {

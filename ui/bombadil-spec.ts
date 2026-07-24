@@ -46,7 +46,7 @@ const NAV_LABEL_TO_VIEW: Record<string, string> = {
   dashboard:       "dashboard",
   ask:             "queries",
   search:          "search",
-  diagnostics:     "errors",
+  diagnostics:     "diagnostics",
   objects:         "objects",
   datawindows:     "datawindows",
   tables:          "tables",
@@ -151,7 +151,7 @@ const currentView = extract((state) => {
     case "queries":    return "queries";
     case "search":     return "search";
     case "explore":    return "explore";
-    case "errors":     return "errors";
+    case "diagnostics": return "diagnostics";
     case "dead-code":  return "deadCode";
     case "taint":      return "taintExplorer";
     case "reports":    return "formalReports";
@@ -332,7 +332,7 @@ const sidebarEntityGroupExpanded = extract((state) => {
 const KNOWN_VIEWS = [
   "dashboard", "objects", "objectDetail", "procedureDetail",
   "proceduresList", "datawindows", "dwDetail", "tables", "tableDetail",
-  "diagrams", "queries", "search", "explore", "errors",
+  "diagrams", "queries", "search", "explore", "diagnostics",
   "deadCode", "taintExplorer", "formalReports", "libraryDetail",
 ];
 

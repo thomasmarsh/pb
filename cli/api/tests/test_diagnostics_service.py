@@ -1,4 +1,4 @@
-"""Unit tests for pb.api.services.errors."""
+"""Unit tests for pb.api.services.diagnostics."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import shutil
 
 import duckdb
 import pytest
-from pb.api.services.errors import list_errors
+from pb.api.services.diagnostics import list_errors
 
 
 @pytest.fixture

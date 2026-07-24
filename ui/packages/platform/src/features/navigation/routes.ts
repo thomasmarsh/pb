@@ -42,7 +42,7 @@ export function print(route: Route): string {
     }
     case "search":           return "/search";
     case "explore":          return "/explore";
-    case "errors":           return "/errors";
+    case "diagnostics":      return "/diagnostics";
     case "deadCode":         return "/dead-code";
     case "deadVars":         return "/dead-vars";
     case "typeMismatches":   return "/type-mismatches";
@@ -116,7 +116,7 @@ export function parse(path: string, search?: string): Route {
     }
     case "search":     return { view: "search" };
     case "explore":    return { view: "explore" };
-    case "errors":     return { view: "errors" };
+    case "diagnostics": return { view: "diagnostics" };
     case "dead-code":    return { view: "deadCode" };
     case "dead-vars":    return { view: "deadVars" };
     case "type-mismatches": return { view: "typeMismatches" };

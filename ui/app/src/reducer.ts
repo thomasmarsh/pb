@@ -6,7 +6,7 @@ import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
 import type { CfgDiagramResponse } from "@pb/platform";
 
-import { navReducer, type NavEnv, dashboardReducer, type DashboardEnv, initialDashboardState, exploreReducer, makeInitialExploreState, type ExploreEnv, objectsReducer, type ObjectsEnv, initialObjectsState, datawindowsReducer, type DatawindowsEnv, initialDatawindowsState, tablesReducer, type TablesEnv, initialTablesState, diagramsReducer, type DiagramsEnv, initialDiagramsState, queriesReducer, type QueriesEnv, initialQueriesState, searchReducer, type SearchEnv, initialSearchState, errorsReducer, type ErrorsEnv, initialErrorsState, analysisReducer, type AnalysisEnv, initialAnalysisState, type NavigationAction, type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type ErrorsAction, type AnalysisAction } from "@pb/platform";
+import { navReducer, type NavEnv, dashboardReducer, type DashboardEnv, initialDashboardState, exploreReducer, makeInitialExploreState, type ExploreEnv, objectsReducer, type ObjectsEnv, initialObjectsState, datawindowsReducer, type DatawindowsEnv, initialDatawindowsState, tablesReducer, type TablesEnv, initialTablesState, diagramsReducer, type DiagramsEnv, initialDiagramsState, queriesReducer, type QueriesEnv, initialQueriesState, searchReducer, type SearchEnv, initialSearchState, diagnosticsReducer, type DiagnosticsEnv, initialDiagnosticsState, analysisReducer, type AnalysisEnv, initialAnalysisState, type NavigationAction, type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type DiagnosticsAction, type AnalysisAction } from "@pb/platform";
 import { runtimeReducer, type RuntimeEnv, initialRuntimeState, windowManagerReducer, initialWindowManagerState, launchReducer, initialLaunchState, type LaunchAction, type WindowManagerAction } from "@pb/windowing";
 
 import { crumbsForRoute } from "@pb/platform";
@@ -16,7 +16,7 @@ export type { RuntimeAction } from "@pb/windowing";
 
 import type { Theme } from "./state.js";
 
-export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv & AnalysisEnv & ThemeEnv & RuntimeEnv & CfgDiagramEnv;
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & DiagnosticsEnv & AnalysisEnv & ThemeEnv & RuntimeEnv & CfgDiagramEnv;
 
 export interface ThemeEnv {
   loadTheme(): Effect<Theme>;
@@ -39,7 +39,7 @@ const matchTables      = (a: AppAction): TablesAction      | null => a.tag === "
 const matchDiagrams    = (a: AppAction): DiagramsAction    | null => a.tag === "diagrams"     ? a.action : null;
 const matchQueries     = (a: AppAction): QueriesAction     | null => a.tag === "queries"      ? a.action : null;
 const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "search"       ? a.action : null;
-const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "errors"       ? a.action : null;
+const matchDiagnostics  = (a: AppAction): DiagnosticsAction  | null => a.tag === "diagnostics"   ? a.action : null;
 const matchAnalysis    = (a: AppAction): AnalysisAction    | null => a.tag === "analysis"     ? a.action : null;
 const matchWindowManager = (a: AppAction): WindowManagerAction | null => a.tag === "windowManager" ? a.action : null;
 const matchLaunch = (a: AppAction): LaunchAction | null => a.tag === "launch" ? a.action : null;
@@ -64,7 +64,7 @@ export function initialState(): AppState {
     queries: initialQueriesState,
     search: initialSearchState,
     explore: makeInitialExploreState(),
-    errors: initialErrorsState,
+    diagnostics: initialDiagnosticsState,
     analysis: initialAnalysisState,
     inlineDiagrams: {},
     cfgDiagrams: {},
@@ -88,7 +88,7 @@ const _combined = combine<AppState, AppAction, AppEnv>(
   pullbackWithNav(diagramsReducer,    (s) => s.diagrams,    matchDiagrams,    (a): AppAction => ({ tag: "diagrams",    action: a }), (env) => env, toNav),
   pullbackWithNav(queriesReducer,     (s) => s.queries,     matchQueries,     (a): AppAction => ({ tag: "queries",     action: a }), (env) => env, toNav),
   pullbackWithNav(searchReducer,      (s) => s.search,      matchSearch,      (a): AppAction => ({ tag: "search",      action: a }), (env) => env, toNav),
-  pullback(errorsReducer,             (s) => s.errors,      matchErrors,      (a): AppAction => ({ tag: "errors",      action: a }), (env) => env),
+  pullback(diagnosticsReducer,         (s) => s.diagnostics,  matchDiagnostics,  (a): AppAction => ({ tag: "diagnostics",  action: a }), (env) => env),
   pullback(analysisReducer,           (s) => s.analysis,    matchAnalysis,    (a): AppAction => ({ tag: "analysis",    action: a }), (env) => env),
   pullback(windowManagerReducer,      (s) => s.windowManager, matchWindowManager, (a): AppAction => ({ tag: "windowManager", action: a }), () => undefined as void),
   pullback(launchReducer,             (s) => s.launch,      matchLaunch,       (a): AppAction => ({ tag: "launch",      action: a }), (env) => ({ getObjectAst: env.getObjectAst })),

@@ -16,7 +16,7 @@ export type Route =
   | { view: "queries"; queryName?: string; queryParams?: Record<string, string>; sqlText?: string }
   | { view: "search" }
   | { view: "explore" }
-  | { view: "errors" }
+  | { view: "diagnostics" }
   | { view: "libraryDetail"; name: string }
   | { view: "deadCode" }
   | { view: "deadVars" }

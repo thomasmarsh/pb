@@ -38,15 +38,15 @@ export type { DiagramsEnv } from "./features/diagrams/reducer.js";
 export type { DiagramsState } from "./features/diagrams/types.js";
 export type { DiagramsAction } from "./features/diagrams/actions.js";
 
-// Errors
+// Diagnostics
 export {
-  errorsReducer,
-  initialErrorsState,
-} from "./features/errors/reducer.js";
-export type { ErrorsEnv } from "./features/errors/reducer.js";
-export type { ErrorsState, ErrorKindFilter } from "./features/errors/types.js";
-export type { ErrorsAction } from "./features/errors/actions.js";
-export { PAGE_SIZE } from "./features/errors/types.js";
+  diagnosticsReducer,
+  initialDiagnosticsState,
+} from "./features/diagnostics/reducer.js";
+export type { DiagnosticsEnv } from "./features/diagnostics/reducer.js";
+export type { DiagnosticsState, DiagnosticsKindFilter } from "./features/diagnostics/types.js";
+export type { DiagnosticsAction } from "./features/diagnostics/actions.js";
+export { PAGE_SIZE } from "./features/diagnostics/types.js";
 
 // Explore
 export {

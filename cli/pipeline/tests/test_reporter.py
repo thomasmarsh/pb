@@ -670,3 +670,30 @@ def test_runner_progress_switches_to_step_label_once_parsing_done():
     assert "2/2" not in text
     assert "█" not in text and "░" not in text
     assert "Building workspace type env" in text
+
+
+def test_diagnostics_collector_snapshot_stable_after_finish():
+    """Snapshot data MUST be identical across repeated calls after finish().
+
+    This is the correctness invariant: once the job is done, the timeline
+    durations and step data cannot change between page loads.
+    """
+    c = DiagnosticsCollector()
+    # Simulate a realistic pipeline: three sequential steps.
+    c.on_event(_step_event("Phase B analysis (SQL)", since_start_ms=0, elapsed_ms=6500))
+    c.on_event(_step_event("Schema closure", since_start_ms=6500, elapsed_ms=3800))
+    c.on_event(_step_event("Building call graph", since_start_ms=10300, elapsed_ms=2200))
+    c.finish()
+
+    snap1 = c.snapshot()
+    snap2 = c.snapshot()
+    snap3 = c.snapshot()
+
+    # elapsed_ms must be identical across all calls
+    assert snap1["elapsed_ms"] == snap2["elapsed_ms"] == snap3["elapsed_ms"]
+    # Total should be max(start + elapsed) = 10300 + 2200 = 12500
+    assert snap1["elapsed_ms"] == 12500.0
+    # Steps list must be identical
+    assert snap1["steps"] == snap2["steps"] == snap3["steps"]
+    # Status must always be complete
+    assert snap1["status"] == snap2["status"] == snap3["status"] == "complete"

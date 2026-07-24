@@ -539,7 +539,7 @@ def test_diagram_proc_tables_filtered(client_with_sql):
     assert "<svg" in r.text
 
 
-# ── /api/errors ───────────────────────────────────────────────────────────────
+# ── /api/diagnostics ─────────────────────────────────────────────────────────
 
 
 @pytest.fixture(scope="module")
@@ -570,8 +570,8 @@ def client_with_errors(db_path, tmp_path_factory):
     return TestClient(app)
 
 
-def test_list_errors(client_with_errors):
-    r = client_with_errors.get("/api/errors")
+def test_list_diagnostics(client_with_errors):
+    r = client_with_errors.get("/api/diagnostics")
     assert r.status_code == 200
     data = r.json()
     assert data["total"] == 2
@@ -580,8 +580,8 @@ def test_list_errors(client_with_errors):
     assert files == {"a.srw", "b.srw"}
 
 
-def test_list_errors_filter_by_message(client_with_errors):
-    r = client_with_errors.get("/api/errors", params={"q": "Invalid"})
+def test_list_diagnostics_filter_by_message(client_with_errors):
+    r = client_with_errors.get("/api/diagnostics", params={"q": "Invalid"})
     assert r.status_code == 200
     data = r.json()
     assert data["total"] == 1

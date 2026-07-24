@@ -1,7 +1,7 @@
 // app/state.ts — App state: the single state tree shape.
 
 import { type JobPollState } from "@pb/core";
-import { type NavState, type DashboardState, type ObjectsState, type DatawindowsState, type DiagramsState, type QueriesState, type SearchState, type ExploreState, type TablesState, type ErrorsState, type AnalysisState, type DiagramKind, type CfgDiagramResponse } from "@pb/platform";
+import { type NavState, type DashboardState, type ObjectsState, type DatawindowsState, type DiagramsState, type QueriesState, type SearchState, type ExploreState, type TablesState, type DiagnosticsState, type AnalysisState, type DiagramKind, type CfgDiagramResponse } from "@pb/platform";
 import { type RuntimeState, type WindowManagerState, type LaunchState } from "@pb/windowing";
 
 export type { ViewName } from "@pb/platform";
@@ -34,7 +34,7 @@ export interface AppState {
   queries: QueriesState;
   search: SearchState;
   explore: ExploreState;
-  errors: ErrorsState;
+  diagnostics: DiagnosticsState;
   analysis: AnalysisState;
   inlineDiagrams: Record<string, InlineDiagramEntry>;
   cfgDiagrams: Record<string, CfgDiagramEntry>;

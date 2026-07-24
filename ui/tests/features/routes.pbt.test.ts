@@ -8,7 +8,7 @@ import type { Route, ViewName } from "@pb/platform";
 const viewNames: ViewName[] = [
   "dashboard", "objects", "objectDetail", "procedureDetail",
   "datawindows", "dwDetail", "tables", "tableDetail",
-  "diagrams", "queries", "search", "explore", "errors",
+  "diagrams", "queries", "search", "explore", "diagnostics",
 ];
 
 describe("routes — property-based", () => {
@@ -35,7 +35,7 @@ describe("routes — property-based", () => {
       { view: "queries" },
       { view: "search" },
       { view: "explore" },
-      { view: "errors" },
+      { view: "diagnostics" },
     ];
     for (const route of simpleRoutes) {
       expect(parse(print(route))).toEqual(route);

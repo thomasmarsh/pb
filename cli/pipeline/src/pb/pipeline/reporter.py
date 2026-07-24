@@ -406,6 +406,7 @@ class DiagnosticsCollector:
         self._worker_intervals: list[_WorkerInterval] = []
         self._lock = threading.Lock()
         self._finished = False
+        self._frozen_snapshot: dict[str, Any] | None = None
         self._seq = 0
         self._subscribers: list[queue.Queue] = []
 
@@ -479,11 +480,28 @@ class DiagnosticsCollector:
     def _steps(self) -> list[_ReportStep]:
         return list(self._steps_by_label.values())
 
+    def _compute_elapsed_ms(self, now_ms: float) -> float:
+        """Total elapsed time derived from step durations, not wall-clock time.
+
+        Uses max(start + elapsed_ms) across completed steps.  Falls back to
+        now_ms when steps are still in flight (live progress view).
+        """
+        in_flight = any(s.elapsed_ms is None for s in self._steps if s.start_since_start_ms is not None)
+        completed_finishes = [
+            s.start_since_start_ms + s.elapsed_ms
+            for s in self._steps
+            if s.completed_seq is not None and s.start_since_start_ms is not None and s.elapsed_ms is not None
+        ]
+        if completed_finishes and not in_flight:
+            return float(max(completed_finishes))
+        return round(now_ms, 1)
+
     def generate_json(self, *, now_ms: float | None = None) -> dict:
         with self._lock:
-            total_ms = (time.monotonic() - self._start) * 1000
+            fallback = round((time.monotonic() - self._start) * 1000, 1) if now_ms is None else now_ms
+            total_ms = self._compute_elapsed_ms(fallback)
             return {
-                "total_elapsed_ms": round(total_ms, 1),
+                "total_elapsed_ms": round(total_ms, 1) if isinstance(total_ms, float) else total_ms,
                 "steps": [
                     {
                         "label": s.label,
@@ -512,6 +530,10 @@ class DiagnosticsCollector:
     def generate_html(self, *, now_ms: float | None = None) -> str:
         with self._lock:
             total_ms = (time.monotonic() - self._start) * 1000
+            # After finish(), cap at the frozen elapsed so the HTML report
+            # and its embedded SVG never show a duration beyond the actual run.
+            if self._frozen_snapshot is not None:
+                total_ms = min(total_ms, self._frozen_snapshot["elapsed_ms"])
 
             phases_html = (
                 "<h2>Phases</h2><ul>"
@@ -554,6 +576,12 @@ class DiagnosticsCollector:
     def finish(self) -> None:
         with self._lock:
             self._finished = True
+            # Freeze the entire snapshot so it never changes after the job
+            # completes.  Without this, _snapshot_locked recomputes from
+            # time.monotonic() (advances forever) or from step data (can
+            # change if late events arrive), causing the timeline to show
+            # different durations on page reload.
+            self._frozen_snapshot = self._snapshot_locked()
             subscribers = list(self._subscribers)
         for q in subscribers:
             try:
@@ -571,6 +599,8 @@ class DiagnosticsCollector:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
+            if self._frozen_snapshot is not None:
+                return self._frozen_snapshot
             return self._snapshot_locked()
 
     def _snapshot_locked(self) -> dict[str, Any]:
@@ -582,9 +612,10 @@ class DiagnosticsCollector:
             [s for s in self._steps if s.completed_seq is not None],
             key=lambda s: s.completed_seq or 0,
         )
+        elapsed_ms = self._compute_elapsed_ms(now_ms)
         return {
             "status": "complete" if self._finished else "running",
-            "elapsed_ms": round(now_ms, 1),
+            "elapsed_ms": round(elapsed_ms, 1) if isinstance(elapsed_ms, float) else elapsed_ms,
             "timeline_html": self._render_timeline_svg(now_ms=now_ms),
             "steps": [
                 {
@@ -602,7 +633,7 @@ class DiagnosticsCollector:
                 "elapsed_ms": round(now_ms - current_start, 1) if current_start is not None else 0,
                 "input_rows": current.input_rows,
                 "derived_rows": current.derived_rows,
-                "residency_mb": current.peak_residency_mb,
+                "peak_residency_mb": current.peak_residency_mb,
             } if current is not None else None,
             "workers": [
                 {
@@ -634,13 +665,16 @@ class DiagnosticsCollector:
     # worker contributions on the common case (a handful of workers).
     _MAX_WORKER_LANES = 16
 
-    def _render_timeline_svg(self, *, now_ms: float | None = None) -> str:
+    def _render_timeline_svg(self, *, now_ms: float | None = None, plot_width: float = 1200.0) -> str:
         """Swim-lane timeline positioned by each event's absolute
         since_start_ms offset rather than its own duration alone -- the only
         representation that stays meaningful once Phase A's concurrent
         per-file workers and every other sequential step contribute events
         to the same report. One lane per Phase A worker (or one aggregate
         lane past _MAX_WORKER_LANES), then one lane per step-kind category.
+
+        plot_width controls the horizontal scale in pixels; zooming changes
+        this value while keeping the label gutter and lane heights fixed.
         """
         steps_with_time = [s for s in self._steps if s.start_since_start_ms is not None]
         effective_workers = self._effective_worker_intervals(now_ms)
@@ -680,7 +714,6 @@ class DiagnosticsCollector:
         # "Scanning source directory" both start at/near the beginning)
         # can never paint over its own lane's label.
         label_gutter = 200.0
-        plot_width = 1200.0
         total_width = label_gutter + plot_width
         scale = plot_width / total_span_ms
 
@@ -813,6 +846,28 @@ class DiagnosticsCollector:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.with_suffix(".json").write_text(json.dumps(self.generate_json(), indent=2))
         p.with_suffix(".html").write_text(self.generate_html())
+
+    def generate_timeline_svg(self, *, zoom: float = 1.0) -> str:
+        """Generate just the timeline SVG at a given zoom level.
+
+        zoom=1.0 is the default 1200px plot width; zoom=2.0 doubles it, etc.
+        """
+        with self._lock:
+            now_ms = (time.monotonic() - self._start) * 1000
+            # After finish(), cap now_ms at the frozen elapsed so the SVG
+            # time axis never extends beyond the actual step data.
+            if self._frozen_snapshot is not None:
+                now_ms = min(now_ms, self._frozen_snapshot["elapsed_ms"])
+            pw = 1200.0 * zoom
+            svg = self._render_timeline_svg(now_ms=now_ms, plot_width=pw)
+            if not svg:
+                return ""
+            # Wrap in the same viz-root structure the frontend expects
+            return (
+                '<div class="viz-root">'
+                f'<div class="timeline">{svg}</div>'
+                '</div>'
+            )
 
     @staticmethod
     def _fmt_ms(ms: float) -> str:

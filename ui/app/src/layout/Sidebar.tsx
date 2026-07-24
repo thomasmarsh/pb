@@ -53,7 +53,7 @@ const UTIL_NAV: { label: string; view: string; icon: IconComp }[] = [
   { label: "Dashboard",    view: "dashboard", icon: LayoutDashboard },
   { label: "Ask",          view: "queries",   icon: MessageSquare },
   { label: "Search",       view: "search",    icon: Search },
-  { label: "Diagnostics",  view: "errors",    icon: AlertTriangle },
+  { label: "Diagnostics",  view: "diagnostics",    icon: AlertTriangle },
 ];
 
 const RUNTIME_NAV: { label: string; view: string; icon: IconComp }[] = [
