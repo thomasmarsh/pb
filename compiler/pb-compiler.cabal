@@ -232,6 +232,7 @@ test-suite pb-compiler-test
     , TypeCheckTest
     , ControlHierarchyTest
     , DwParamBindingTest
+    , DwBuiltinsTest
     , CallClassifyTest
     , CloneDetectTest
     , ClosureTest

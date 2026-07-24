@@ -21,7 +21,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig)
+import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig, mkIdent)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText, parseTypeTextAt)
@@ -35,7 +35,8 @@ import PB.Analysis.CallClassify (ProcUnit (..), forProcedures)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, withDwTables,
-                                 withDwParamBindings, procEnv)
+                                 withDwControls, withDwParamBindings, procEnv)
+import PB.Analysis.DwBuiltins  (classifyDwControlKind)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.SchemaCategory
@@ -829,9 +830,26 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
         | PsDw fp _ dw <- outcomes0
         , Just tbl <- [dwTable dw]
         ]
+      -- Every parsed DataWindow's own placed-control name -> kind index,
+      -- keyed the same way as 'allDwTables' -- feeds the '.Object.<control>.
+      -- <property>' chain resolution (Plan 201 Track B1 Slice D). Only
+      -- named controls with a recognized 'dwcType' are indexed; an unnamed
+      -- control or an unrecognized control keyword simply isn't a
+      -- resolution target.
+      allDwControls = Map.fromList
+        [ (T.toLower (T.pack (takeBaseName fp)), ctrls)
+        | PsDw fp _ dw <- outcomes0
+        , let ctrls = Map.fromList
+                [ (identCanon (mkIdent nm), k)
+                | c <- dwControls dw
+                , Just nm <- [dwcName c]
+                , Just k  <- [classifyDwControlKind (dwcType c)]
+                ]
+        , not (Map.null ctrls)
+        ]
   wsEnv0 <- Progress.timedStep "Building workspace type env" $ do
-    let wsEnv' = withDwTables allDwTables (buildWorkspaceEnv allParsedSrFiles)
-    _ <- evaluate (Map.size (weGlobals wsEnv') + Map.size (weHierarchy wsEnv') + Map.size (weDwTables wsEnv'))
+    let wsEnv' = withDwControls allDwControls (withDwTables allDwTables (buildWorkspaceEnv allParsedSrFiles))
+    _ <- evaluate (Map.size (weGlobals wsEnv') + Map.size (weHierarchy wsEnv') + Map.size (weDwTables wsEnv') + Map.size (weDwControls wsEnv'))
     pure wsEnv'
 
   -- Plan 164 Phase C: workspace-wide control/object hierarchy index, built

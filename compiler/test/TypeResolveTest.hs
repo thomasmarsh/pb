@@ -10,6 +10,7 @@ import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.DataWindow   (DwTable (..), DwColumn (..))
+import PB.AST.DwPropertySchema (DwControlKind (..))
 import PB.AST.Expr
 import PB.AST.Ident        (mkIdent, mkIdentAt, identMapEmpty, identMapFromList, identMapLookup,
                              identSetEmpty, identSetFromList, identSetMember, identSetSingleton)
@@ -22,7 +23,7 @@ import PB.Lexing.Splitter  (Statement (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (mkLogicalLine)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
-import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv, withDwTables, withDwParamBindings)
+import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv, withDwTables, withDwControls, withDwParamBindings)
 import PB.Analysis.TypeResolve
 
 -- ---------------------------------------------------------------------------
@@ -855,6 +856,117 @@ tests = testGroup "TypeResolve"
               (rvrKind objSeg, rvrDeclaredType objSeg) @?= ("builtin_property", Just "d_test")
               (rvrKind colSeg, rvrDeclaredType colSeg, rvrConfidence colSeg) @?= ("dw_column", Just "string", "high")
             other -> assertFailure ("expected 3 refs, got " ++ show (length other))
+
+      , testCase "dotted: .Object.<control>.<property> on a statically-bound DW resolves via weDwControls (graph control, real corpus shape gr_1.graphtype)" $ do
+          -- Plan 201 Track B1 Slice D: 'gr_1' is a placed control (a graph),
+          -- not a data column -- the DwColumnsNamespace branch must check
+          -- weDwControls, not just dtColumns, and thread DwEkControl
+          -- forward so the *next* hop ('graphtype') resolves against
+          -- dwPropertyCatalog's real control:graph bucket.
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test"))
+                        [ Located 1 (BsLocalVar [] (PtPrimitive "string") "dataobject" (Just (ExStr "d_test"))) ]
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing
+                        , LvSegment "gr_1" Nothing, LvSegment "graphtype" Nothing ])))) ] ]
+                }
+              wsEnv = withDwControls (Map.fromList [("d_test", Map.fromList [("gr_1", DwCkGraph)])])
+                        (withDwTables (Map.fromList [("d_test", mkDwTable [])]) (buildWorkspaceEnv [sf]))
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, objSeg, ctrlSeg, propSeg] -> do
+              rvrDeclaredType objSeg @?= Just "d_test"
+              (rvrKind ctrlSeg, rvrConfidence ctrlSeg) @?= ("dw_control", "high")
+              (rvrKind propSeg, rvrConfidence propSeg) @?= ("dw_property", "high")
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
+
+      , testCase "dotted: .Object.<name>.<property> where <name> is neither a known column nor a known control stays unresolved (regression parity)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test"))
+                        [ Located 1 (BsLocalVar [] (PtPrimitive "string") "dataobject" (Just (ExStr "d_test"))) ]
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing
+                        , LvSegment "unknown_ctrl" Nothing, LvSegment "prop" Nothing ])))) ] ]
+                }
+              wsEnv = withDwTables (Map.fromList [("d_test", mkDwTable [])]) (buildWorkspaceEnv [sf])
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, _objSeg, nameSeg, propSeg] -> do
+              (rvrKind nameSeg, rvrConfidence nameSeg) @?= ("dw_column", "low")
+              (rvrKind propSeg, rvrConfidence propSeg) @?= ("unresolved", "unresolved")
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
+
+      , testCase "dotted: .Object.DataWindow.<property> resolves the object-level property bucket (single-segment key)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing
+                        , LvSegment "DataWindow" Nothing, LvSegment "color" Nothing ])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, _objSeg, dwSeg, propSeg] -> do
+              (rvrKind dwSeg, rvrConfidence dwSeg) @?= ("builtin_property", "high")
+              (rvrKind propSeg, rvrConfidence propSeg) @?= ("dw_property", "high")
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
+
+      , testCase "dotted: .Object.DataWindow.<multi-segment property path> only resolves once the full dotted path accumulates" $ do
+          -- Real catalog key is the 3-segment "print.buttons.zoom" -- each
+          -- of the first two hops must stay low-confidence/pending (no
+          -- 1- or 2-segment prefix is itself a catalog key) and only the
+          -- 3rd hop, once the full path is assembled, resolves high.
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test")) []
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing, LvSegment "DataWindow" Nothing
+                        , LvSegment "print" Nothing, LvSegment "buttons" Nothing, LvSegment "zoom" Nothing ])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, _objSeg, _dwSeg, printSeg, buttonsSeg, zoomSeg] -> do
+              (rvrKind printSeg, rvrConfidence printSeg)     @?= ("dw_property", "low")
+              (rvrKind buttonsSeg, rvrConfidence buttonsSeg) @?= ("dw_property", "low")
+              (rvrKind zoomSeg, rvrConfidence zoomSeg)       @?= ("dw_property", "high")
+            other -> assertFailure ("expected 6 refs, got " ++ show (length other))
+
+      , testCase "dotted: .Object.<column>.<property> resolves dw_column then dw_property (column-level property chain)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks =
+                    [ mkTB "w_test" "window"
+                    , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_test"))
+                        [ Located 1 (BsLocalVar [] (PtPrimitive "string") "dataobject" (Just (ExStr "d_test"))) ]
+                    ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [ LvSegment "dw_1" Nothing, LvSegment "object" Nothing
+                        , LvSegment "kodfinal" Nothing, LvSegment "validation" Nothing ])))) ] ]
+                }
+              wsEnv = withDwTables (Map.fromList [("d_test", mkDwTable [mkDwCol "kodfinal" "string"])])
+                        (buildWorkspaceEnv [sf])
+              idx = buildControlIndex [sf]
+          case extractVarRefs wsEnv idx "test.srw" "w_test" sf of
+            [_ctrl, _objSeg, colSeg, propSeg] -> do
+              (rvrKind colSeg, rvrDeclaredType colSeg, rvrConfidence colSeg) @?= ("dw_column", Just "string", "high")
+              (rvrKind propSeg, rvrConfidence propSeg) @?= ("dw_property", "high")
+            other -> assertFailure ("expected 4 refs, got " ++ show (length other))
 
       , testCase "dotted: unresolvable receiver -> every segment unresolved, no guessing" $ do
           let sf = emptySrFile { srFunctions = [ mkFn "f_go" ""

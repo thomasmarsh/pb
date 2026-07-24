@@ -7,6 +7,7 @@ module PB.Analysis.TypeEnv
   , buildWorkspaceEnv
   , buildProcMap
   , withDwTables
+  , withDwControls
   , withDwParamBindings
   , procEnv
   , lookupScopedVar
@@ -18,6 +19,7 @@ module PB.Analysis.TypeEnv
 import PB.Prelude
 import PB.AST.BodyStmt (BodyStmt (..))
 import PB.AST.DataWindow (DwTable)
+import PB.AST.DwPropertySchema (DwControlKind)
 import PB.AST.Ident    (Ident, IdentMap, IdentSet, identCanon, identMapEmpty, identMapInsertWith,
                          identSetFromList, identSetUnion, mkIdent, mkIdentSynthetic)
 import PB.AST.Located  (Located (..))
@@ -60,6 +62,7 @@ data WorkspaceEnv = WorkspaceEnv
   , weHierarchy    :: Map.Map Ident Ident                        -- full inheritance map
   , weProcMap      :: IdentMap IdentSet                          -- object name → set of proc names (functions/subroutines/events/on-blocks)
   , weDwTables     :: Map.Map Text DwTable                       -- lowercased .srd base filename → parsed column schema (Plan 196 Phase 4 item 1)
+  , weDwControls   :: Map.Map Text (Map.Map Text DwControlKind)  -- lowercased .srd base filename → canon control name → placed-control kind (Plan 201 Track B1 Slice D)
   , weDwParamBindings :: Map.Map (Text, Text, Int) Text          -- (object, proc, param index) → inferred literal .srd binding (Plan 196 Phase 4 item 1)
   }
 
@@ -88,6 +91,7 @@ buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv
 buildWorkspaceEnv sfs = WorkspaceEnv
   { weGlobals      = foldl' (\m sf -> m <> extractWsGlobals sf)     Map.empty sfs
   , weDwTables     = Map.empty
+  , weDwControls   = Map.empty
   , weDwParamBindings = Map.empty
   , weInstanceVars = foldl' (\m sf -> Map.unionWith (<>) m (extractInstanceVars sf)) Map.empty sfs
   , weHierarchy    = foldl' (\m sf -> m <> extractTypeDecls sf)      Map.empty sfs
@@ -129,6 +133,14 @@ withDwParamBindings binds ws = ws { weDwParamBindings = binds }
 -- DataWindow column schemas (every unit test fixture) are unaffected.
 withDwTables :: Map.Map Text DwTable -> WorkspaceEnv -> WorkspaceEnv
 withDwTables tbls ws = ws { weDwTables = tbls }
+
+-- | Attach the workspace's placed-control name → kind index (Plan 201 Track
+-- B1 Slice D), mirroring 'withDwTables''s additive shape and the same
+-- reasoning for keeping it separate from 'buildWorkspaceEnv': the ~40
+-- existing 'buildWorkspaceEnv' call sites with no DataWindow input stay
+-- unaffected.
+withDwControls :: Map.Map Text (Map.Map Text DwControlKind) -> WorkspaceEnv -> WorkspaceEnv
+withDwControls ctrls ws = ws { weDwControls = ctrls }
 
 -- Globals: srGlobalInstances + forward instances + GlobalVars-scoped
 -- srVariables (NOT TypeVars-scoped srVariables, which are a class's own

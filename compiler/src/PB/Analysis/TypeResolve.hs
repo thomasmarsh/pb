@@ -64,6 +64,7 @@ module PB.Analysis.TypeResolve
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..), DwTable (..), DwColumn (..))
+import PB.AST.DwPropertySchema (DwElementKind (..))
 import PB.AST.Expr
 import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapLookup, identMapToList,
                            identOrig, identSetFromList, identSetLookup, identSpan, mkIdent,
@@ -73,6 +74,7 @@ import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeTextAt, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
 import PB.Analysis.CallClassify   (ProcUnit (..), forProcedures)
+import PB.Analysis.DwBuiltins     (dwPropertyCatalog)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
                                       resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
@@ -293,8 +295,8 @@ data ResolvedVarRef = ResolvedVarRef
   , rvrName         :: Text
   , rvrAccess       :: Text          -- "read" | "write"
   , rvrTargetObject :: Maybe Text
-  , rvrKind         :: Text   -- "local" | "param" | "instance" | "global" | "control" | "class" | "class_static" | "builtin_property" | "unresolved"
-  , rvrConfidence   :: Text   -- "high" | "unresolved"
+  , rvrKind         :: Text   -- "local" | "param" | "instance" | "global" | "control" | "class" | "class_static" | "builtin_property" | "dw_column" | "dw_control" | "dw_property" | "unresolved"
+  , rvrConfidence   :: Text   -- "high" | "low" | "unresolved"
   , rvrSpan         :: Maybe SourceSpan
     -- ^ The real source span of this occurrence's own identifier segment
     -- ('rvrName') -- distinct from 'rvrLine' (the enclosing statement's
@@ -757,11 +759,40 @@ classifyChainHops wsEnv env obj proc_ lv =
     -- 'literalExt' wins when both succeed, since it reflects the actually-
     -- declared chain rather than a same-named coincidence.
     classifyMemberOf Nothing _ = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
-    classifyMemberOf (Just (DwColumnsNamespace mDwName)) finalName =
-      let mCol = mDwName >>= \dwName -> Map.lookup (T.toLower dwName) (weDwTables wsEnv)
-                                     >>= find (\c -> identCanon (mkIdent (dcName c)) == identCanon finalName)
-                                     . dtColumns
-      in ("dw_column", Nothing, if isJust mCol then "high" else "low", dcType <$> mCol, Nothing)
+    -- | The hop immediately after @.Object@: either the literal @DataWindow@
+    -- pseudo-name (selects the object-level property bucket), a real data
+    -- column name, or a placed control's own name (Plan 201 Track B1 Slice
+    -- D -- real corpus grep confirms @.Object.gr_1.graphtype@-shaped chains
+    -- are common, not edge cases). Whichever wins threads its
+    -- 'DwElementKind' forward via 'DwPropertyNamespace' so the *next* hop
+    -- can resolve the actual property name against 'dwPropertyCatalog'.
+    classifyMemberOf (Just (DwColumnsNamespace mDwName)) finalName
+      | identCanon finalName == "datawindow" =
+          ("builtin_property", Nothing, "high", Nothing, Just (DwPropertyNamespace DwEkObject []))
+      | Just col <- mCol =
+          ("dw_column", Nothing, "high", Just (dcType col), Just (DwPropertyNamespace DwEkTableColumn []))
+      | Just ctrlKind <- mCtrl =
+          ("dw_control", Nothing, "high", Nothing, Just (DwPropertyNamespace (DwEkControl ctrlKind) []))
+      | otherwise = ("dw_column", Nothing, "low", Nothing, Nothing)
+      where
+        mCol = mDwName >>= \dwName -> Map.lookup (T.toLower dwName) (weDwTables wsEnv)
+                                    >>= find (\c -> identCanon (mkIdent (dcName c)) == identCanon finalName)
+                                    . dtColumns
+        mCtrl = mDwName >>= \dwName -> Map.lookup (T.toLower dwName) (weDwControls wsEnv)
+                                     >>= Map.lookup (identCanon finalName)
+    -- | Every hop after a resolved @.Object@ element (a control, column, or
+    -- the @DataWindow@ pseudo-object itself): accumulates the dotted
+    -- property-path segments seen so far and retries the lookup against
+    -- 'dwPropertyCatalog' on every hop, since catalog keys are themselves
+    -- multi-segment dotted paths (e.g. @column.count@, @title.dispattr.
+    -- fontproperty@) that don't necessarily match after just one hop.
+    classifyMemberOf (Just (DwPropertyNamespace ek path)) finalName =
+      let path'  = path <> [identCanon finalName]
+          dotted = T.intercalate "." path'
+          bucket = Map.findWithDefault Map.empty ek dwPropertyCatalog
+      in case Map.lookup dotted bucket of
+           Just _  -> ("dw_property", Nothing, "high", Nothing, Nothing)
+           Nothing -> ("dw_property", Nothing, "low", Nothing, Just (DwPropertyNamespace ek path'))
     classifyMemberOf (Just (OrdinaryRecv recvTy recvDwBinding ctrlAnchor)) finalName
       | identCanon finalName == "object" && isDwFamily recvTy =
           ("builtin_property", Nothing, "high", recvDwBinding, Just (DwColumnsNamespace recvDwBinding))
@@ -790,6 +821,7 @@ classifyChainHops wsEnv env obj proc_ lv =
 data ChainContinuation
   = OrdinaryRecv Text (Maybe Text) (Maybe (Text, [Text]))
   | DwColumnsNamespace (Maybe Text)
+  | DwPropertyNamespace DwElementKind [Text]
 
 -- | Read references to every named identifier appearing in an expression
 -- tree (RHS, conditions, call args, returns, ...) -- calls

@@ -7,6 +7,7 @@
 module PB.Analysis.DwBuiltins
   ( dwPropertyCatalog
   , dwExprFunctionCatalog
+  , classifyDwControlKind
   ) where
 
 import PB.Prelude
@@ -98,33 +99,50 @@ instance FromJSON DwBandCategory where
     other             -> fail ("unknown band category: " <> T.unpack other)
 
 instance FromJSON DwControlKind where
-  parseJSON = withText "DwControlKind" $ \t -> case t of
-    "column"    -> pure DwCkColumn
-    "text"      -> pure DwCkText
-    "compute"   -> pure DwCkCompute
-    "button"    -> pure DwCkButton
-    "bitmap"    -> pure DwCkBitmap
-    "graph"     -> pure DwCkGraph
-    "groupbox"  -> pure DwCkGroupBox
-    "line"      -> pure DwCkLine
-    "rectangle" -> pure DwCkRectangle
-    "report"    -> pure DwCkReport
-    "tableblob" -> pure DwCkTableBlob
-    "cssgen"    -> pure DwCkCssGen
-    "xmlgen"    -> pure DwCkXmlGen
-    "jsgen"     -> pure DwCkJsGen
-    "xhtmlgen"  -> pure DwCkXhtmlGen
-    "xsltgen"   -> pure DwCkXsltGen
-    other       -> fail ("unknown control kind: " <> T.unpack other)
+  parseJSON = withText "DwControlKind" $ \t ->
+    maybe (fail ("unknown control kind: " <> T.unpack t)) pure (classifyDwControlKind t)
+
+-- | The single source of truth mapping a raw control-block keyword -- either
+-- 'dw_properties.json''s survey-time @kind.control@ tag or a live-parsed
+-- 'PB.AST.DataWindow.DwControl''s own 'dwcType' -- to the closed
+-- 'DwControlKind' set. Case-insensitive: real @.srd@ control keywords are
+-- lowercase by grammar convention, but 'TypeResolve''s 'classifyMemberOf'
+-- reuses this against a live-parsed 'dwcType' rather than only the JSON
+-- decoder, so this must not assume its caller already normalized case.
+classifyDwControlKind :: Text -> Maybe DwControlKind
+classifyDwControlKind t = case T.toLower t of
+    "column"    -> Just DwCkColumn
+    "text"      -> Just DwCkText
+    "compute"   -> Just DwCkCompute
+    "button"    -> Just DwCkButton
+    "bitmap"    -> Just DwCkBitmap
+    "graph"     -> Just DwCkGraph
+    "groupbox"  -> Just DwCkGroupBox
+    "line"      -> Just DwCkLine
+    "rectangle" -> Just DwCkRectangle
+    "report"    -> Just DwCkReport
+    "tableblob" -> Just DwCkTableBlob
+    "cssgen"    -> Just DwCkCssGen
+    "xmlgen"    -> Just DwCkXmlGen
+    "jsgen"     -> Just DwCkJsGen
+    "xhtmlgen"  -> Just DwCkXhtmlGen
+    "xsltgen"   -> Just DwCkXsltGen
+    _           -> Nothing
 
 parsedCatalog :: Either String DwPropertiesJson
 parsedCatalog = eitherDecodeStrict dwPropertiesBytes
 
+-- | Keyed by the lowercased property path, matching every other lookup in
+-- this codebase against a PB-sourced name ('PB.AST.Ident.identCanon') --
+-- PB property paths are case-insensitive, and a handful of real survey
+-- entries (e.g. @HTMLDW@, @print.buttons.pageSetUp@) are recorded with
+-- their original mixed case, which would otherwise silently never match a
+-- canonicalized chain-hop lookup.
 dwPropertyCatalog :: Map.Map DwElementKind (Map.Map Text DwPropertyEntry)
 dwPropertyCatalog = case parsedCatalog of
   Left  _   -> Map.empty
   Right dpj -> Map.fromListWith Map.union
-    [ (dprElement row, Map.singleton (dwpeKey (dprEntry row)) (dprEntry row))
+    [ (dprElement row, Map.singleton (T.toLower (dwpeKey (dprEntry row))) (dprEntry row))
     | row <- dpjProperties dpj
     ]
 

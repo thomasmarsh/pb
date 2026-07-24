@@ -65,6 +65,8 @@ const VAR_KIND_COLORS: Record<ResolvedVarRefInfo["kind"], string> = {
   class_static: "#5B8DD9",
   builtin_property: "#dcdcaa",
   dw_column: "#4dd0e1",
+  dw_control: "#4dd0e1",
+  dw_property: "#80cbc4",
   unresolved: "#6b7280",
 };
 
@@ -78,6 +80,8 @@ const VAR_KIND_BADGES: Record<ResolvedVarRefInfo["kind"], string> = {
   class_static: `<span class="badge badge-class">class static</span>`,
   builtin_property: `<span class="badge badge-builtin">builtin</span>`,
   dw_column: `<span class="badge badge-dwcolumn">dw column</span>`,
+  dw_control: `<span class="badge badge-dwcolumn">dw control</span>`,
+  dw_property: `<span class="badge badge-dwproperty">dw property</span>`,
   unresolved: `<span class="badge">unresolved</span>`,
 };
 

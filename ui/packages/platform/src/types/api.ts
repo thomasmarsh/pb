@@ -108,8 +108,8 @@ export interface ResolvedVarRefInfo {
   name: string;
   access: "read" | "write";
   target_object: string | null;
-  kind: "local" | "param" | "instance" | "global" | "control" | "class" | "class_static" | "builtin_property" | "dw_column" | "unresolved";
-  confidence: "high" | "unresolved";
+  kind: "local" | "param" | "instance" | "global" | "control" | "class" | "class_static" | "builtin_property" | "dw_column" | "dw_control" | "dw_property" | "unresolved";
+  confidence: "high" | "low" | "unresolved";
   name_start_line: number | null;
   name_start_col: number | null;
   name_end_line: number | null;
