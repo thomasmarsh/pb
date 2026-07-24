@@ -345,7 +345,7 @@ taintWitnessLegsClosure (TaintClosure interner _rel srcIds reachSrc _reachSucc) 
 
 -- | Materialize @taint_reaches@\/@taint_confirmed@ from the shared closure
 -- ('taintReachesPairsClosure' / 'taintConfirmedClosure'). Takes the
--- prebuilt 'TaintClosure' 'PB.Pipeline.Passes.runPass67' constructs once,
+-- prebuilt 'TaintClosure' 'PB.Pipeline.Passes.buildCallGraphAndTaint' constructs once,
 -- so no relation is rebuilt and no extra DB round-trip is needed.
 materializeTaintClosure
   :: TaintClosure -> [Taint.TaintSource] -> [Taint.TaintSink] -> Handle -> IO ()

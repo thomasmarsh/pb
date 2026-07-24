@@ -226,7 +226,7 @@ tests = testGroup "Relations"
       -- cutover), not `dead_code` (Haskell) -- see 'initSchemaRelations'' doc comment.
       -- Every case here must run 'initDeadCodeRelations' +
       -- 'materializeDeadCodeClosure' before 'initSchemaRelations'/'materializeLiveProc',
-      -- mirroring the required 'PB.Pipeline.Passes.materializeAllRelationsViews'
+      -- mirroring the required 'PB.Pipeline.Passes.initDeadCodeInput'/'computeDeadCodeClosure'/'initSchemaInput'
       -- ordering, so the `dead` view has a `proc_dead` table to read (even an
       -- empty one) before it's queried.
       [ testCase "a stmt whose (object,proc) is not in proc_dead appears in live_proc" $

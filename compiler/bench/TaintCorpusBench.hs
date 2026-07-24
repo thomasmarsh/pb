@@ -36,7 +36,7 @@ import Options.Applicative
 -- source for @taint_reaches@\/@taint_confirmed@\/@taint_step_kind@ since
 -- the Plan 182 cutover. Runs the existing pipeline unmodified, then
 -- reconstructs the algebraic closure's raw inputs from the resulting
--- DuckDB tables the same way 'PB.Pipeline.Passes.runPass67' does, and
+-- DuckDB tables the same way 'PB.Pipeline.Passes.buildCallGraphAndTaint' does, and
 -- reports set sizes plus wall-clock. The Haskell BFS
 -- ('PB.Analysis.Taint.propagateTaint') is the reference closure this bench
 -- reports against; unit-level regression coverage for the closure's
@@ -77,7 +77,7 @@ main = do
 
   withHandle (Config (optDb opts)) $ \conn -> do
     -- Reconstruct the algebraic closure's raw inputs exactly as
-    -- PB.Pipeline.Passes.runPass67 does.
+    -- PB.Pipeline.Passes.buildCallGraphAndTaint does.
     gvs   <- queryGlobalVars conn
     defs  <- queryProcDefs conn
     uses  <- queryProcUses conn

@@ -53,8 +53,8 @@ import Data.Time.Clock        (getCurrentTime)
 -- | Phase B computes the relation materializers directly in DuckDB
 -- (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
 -- 'PB.Pipeline.DuckDb.materializeRiskCount',
--- 'PB.Pipeline.DuckDb.materializeLiveProc',
--- 'PB.Pipeline.DuckDb.materializeDeadCode'), invoked in 'runPhaseB' after
+-- 'PB.Pipeline.DuckDb.materializeLiveProc', 'PB.Pipeline.DuckDb.materializeDeadCode'),
+-- invoked in 'runPhaseB' after
 -- the input relation views are built. Per-relation progress is folded into the ordinary
 -- 'Progress.timedStep' events.
 
@@ -66,8 +66,8 @@ import Data.Time.Clock        (getCurrentTime)
 -- 'leg_source' has only ~3 distinct @kind@ buckets, so a group this size is
 -- almost certainly duplicate/near-duplicate extraction on one schema edge
 -- rather than legitimate diversity, and is worth an operator's attention.
-reportLegSourceFanout :: Handle -> IO ()
-reportLegSourceFanout conn = do
+diagnoseLegSourceFanout :: Handle -> IO ()
+diagnoseLegSourceFanout conn = do
   t0 <- getCurrentTime
   LegSourceFanout total keys maxGroup <- Relations.legSourceFanout conn
   t1 <- getCurrentTime
@@ -85,12 +85,12 @@ reportLegSourceFanout conn = do
 
 -- | Characterize @proc_defs@\/@proc_uses@ key fan-in (by (object, proc_name,
 -- line) and (object, proc_name) respectively) before the taint closure
--- runs -- mirrors 'reportLegSourceFanout' above, since a duplicate-key
+-- runs -- mirrors 'diagnoseLegSourceFanout' above, since a duplicate-key
 -- fan-in blowup is the established failure shape in this neighborhood
 -- (leg_source, taint_reaches both hit it previously; see
 -- compiler/CLAUDE.md's Code Index).
-reportTaintDefUseFanout :: Handle -> IO ()
-reportTaintDefUseFanout conn = do
+diagnoseTaintFanout :: Handle -> IO ()
+diagnoseTaintFanout conn = do
   t0 <- getCurrentTime
   defFo <- Relations.defLineFanout conn
   t1 <- getCurrentTime
@@ -113,7 +113,7 @@ reportTaintDefUseFanout conn = do
     (Progress.msBetween t1 t2) retFo
 
 -- | Time a single DB read and report its row count under 'label' -- splits
--- the "Load taint inputs (7 queries)" step (runPass67) so a private-corpus
+-- the "Load taint inputs (7 queries)" step (buildCallGraphAndTaint) so a private-corpus
 -- run can attribute that step's cost to a specific query/table instead of
 -- one opaque combined number (doc/plan/187-perf-hotspots.md §14).
 timedQueryRows :: Text -> IO [a] -> IO [a]
@@ -125,14 +125,15 @@ timedQueryRows label action = Progress.timedStepRows label (do
 -- Structured as two sub-phases:
 --
 -- * **B1 (Haskell + input relation materialization):** the analyses that can't be
---   expressed as pure SQL run here — type/call resolution
---   ('runPass5', populating @resolved_calls@), interproc-edge and taint
+--   expressed as pure SQL run here -- type/call resolution
+--   ('resolveTypesAndCalls', populating @resolved_calls@), interproc-edge and taint
 --   analysis, including the taint closure itself
---   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are materialized by 'TaintClosure.materializeTaintClosure'), and
+--   ('buildCallGraphAndTaint' -- @taint_reaches@\/@taint_confirmed@ are materialized by 'TaintClosure.materializeTaintClosure'), and
 --   schema-category construction
---   ('runPass9', populating @schema_objects@\/@schema_morphisms@). Then
---   'materializeAllRelationsViews' creates every input relation the
---   downstream materializers assume: the dead-code input relations
+--   ('buildSchemaCategory', populating @schema_objects@\/@schema_morphisms@). Then
+--   'initDeadCodeInput'\/'computeDeadCodeClosure'\/'initSchemaInput'\/'computeSchemaClosure'
+--   create every input relation the downstream materializers assume: the
+--   dead-code input relations
 --   ('Relations.initDeadCodeRelations', over @procedures@\/
 --   @resolved_calls@\/@objects@), @proc_dead@ itself
 --   ('DeadCodeReachability.materializeDeadCodeClosure'), and the
@@ -149,39 +150,35 @@ timedQueryRows label action = Progress.timedStepRows label (do
 --   straight from @proc_dead@\/@proc_meta@\/@call_ref@\/@resolved_call_edge@
 --   to @dead_code@ -- Plan 198 Phase A collapsed the prior 8-table
 --   intermediate chain). The only sequencing that remains
---   manual is the Phase A→B boundary enforced by B1 (the input relation views' source
+--   manual is the Phase A->B boundary enforced by B1 (the input relation views' source
 --   tables must be populated before the views are created), which is a
 --   genuine data dependency. Finally the schema materializer projects its
 --   derived output table into its API-facing shape (@path_leg_fwd@\/
---   @path_leg_back@→@decomposition_coslice@).
+--   @path_leg_back@->@decomposition_coslice@).
 runPhaseB :: Handle -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
-  _        <- runPass5  conn
-  procRows <- runPass67 conn
-  -- catalog_fks is read once here and threaded into both runPass9 (which
-  -- builds the schema category from it) and materializeAllRelationsViews's
-  -- initSchemaRelations (which builds the fk relation from it) -- the same
+  _        <- resolveTypesAndCalls conn
+  procRows <- buildCallGraphAndTaint conn
+  -- catalog_fks is read once here and threaded into both buildSchemaCategory
+  -- (which builds the schema category from it) and initSchemaInput (which
+  -- builds the fk relation from it) -- the same
   -- rows, nothing writes to catalog_fks between the two uses (Plan 187 §18
   -- tier 2).
   catFks <- queryCatFks conn
-  sch <- runPass9 conn mDefaultNamespace catFks
-  Progress.emitEvent (Progress.EvStep
-    ("Schema category built: " <> T.pack (show (Set.size (sgObjects sch)))
-      <> " objects, " <> T.pack (show (length (sgLegs sch))) <> " legs")
-    Nothing []
-    [ ("schema_objects", Set.size (sgObjects sch))
-    , ("schema_morphisms", length (sgLegs sch))
-    ]
-    Nothing)
-  materializeAllRelationsViews conn catFks
+  _   <- buildSchemaCategory conn mDefaultNamespace catFks
+  dcRows <- initDeadCodeInput conn
+  computeDeadCodeClosure dcRows conn
+  schRows <- initSchemaInput conn catFks
+  computeSchemaClosure schRows conn
+  diagnoseTaintFanout conn
   -- B2: the five SQL materializers run in dependency order. Characterize
   -- leg_source's key
-  -- fan-in first (see reportLegSourceFanout) -- cheap, and surfaces a
+  -- fan-in first (see diagnoseLegSourceFanout) -- cheap, and surfaces a
   -- pathological corpus shape before the materialization rather than only
   -- via its wall-clock/memory symptoms.
-  reportLegSourceFanout conn
+  diagnoseLegSourceFanout conn
   Progress.emitEvent (Progress.EvStep "Phase B analysis (SQL)" Nothing [] [] Nothing)
   materializeImpliedFkPairs conn
   materializeRiskCount conn
@@ -193,24 +190,36 @@ runPhaseB conn mDefaultNamespace = do
   materializeTaintPaths conn
   materializeTaintAnnotations procRows conn
 
--- | Materialize every input relation view the downstream SQL materializers assume
--- already exist. Each 'initXRelations' is idempotent (@CREATE OR
--- REPLACE VIEW@); together they cover the dead-code and schema input relation layers.
--- Must run after 'runPass5' (for @resolved_calls@) and 'runPass9' (for
--- @schema_objects@\/@schema_morphisms@).
---
--- @catFks@ is the same rows 'runPhaseB' already fetched for 'runPass9';
--- threaded here instead of re-querying @catalog_fks@ (Plan 187 §18 tier 2).
--- Each @init*Relations@ returns the rows it fetched, passed directly into its
--- paired closure materializer instead of that materializer re-querying the
--- same tables (tier 1).
-materializeAllRelationsViews :: Handle -> [CatFkRow] -> IO ()
-materializeAllRelationsViews conn catFks = do
-  dcRows <- Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn
+-- | Materialize the dead-code input relations view (@proc@\/@entry@\/
+-- @inherits@\/@call_ref@\/@resolved_call_edge@\/@calls@\/@proc_meta@).
+-- Idempotent (@CREATE OR REPLACE VIEW@). Must run after
+-- 'resolveTypesAndCalls' (for @resolved_calls@).
+initDeadCodeInput :: Handle -> IO Relations.DeadCodeInputRows
+initDeadCodeInput conn =
+  Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn
+
+-- | Dead-code reachability closure over 'initDeadCodeInput''s rows, writing
+-- @proc_dead@.
+computeDeadCodeClosure :: Relations.DeadCodeInputRows -> Handle -> IO ()
+computeDeadCodeClosure dcRows conn =
   Progress.timedStep "Dead-code closure" $ DeadCodeReachability.materializeDeadCodeClosure dcRows conn
-  schRows <- Progress.timedStep "Schema relations materialized" $ Relations.initSchemaRelations conn catFks
+
+-- | Materialize the schema input relations view (@leg_source@\/@stmt@\/
+-- @seed@\/@join_leg@\/@fk@). Idempotent (@CREATE OR REPLACE VIEW@). Must run
+-- after 'buildSchemaCategory' (for @schema_objects@\/@schema_morphisms@).
+--
+-- @catFks@ is the same rows 'runPhaseB' already fetched for
+-- 'buildSchemaCategory'; threaded here instead of re-querying @catalog_fks@
+-- (Plan 187 §18 tier 2).
+initSchemaInput :: Handle -> [CatFkRow] -> IO Relations.SchemaInputRows
+initSchemaInput conn catFks =
+  Progress.timedStep "Schema relations materialized" $ Relations.initSchemaRelations conn catFks
+
+-- | Schema transitive closure + coslice paths (@reaches@\/@path_leg_fwd@\/
+-- @path_leg_back@) over 'initSchemaInput''s rows.
+computeSchemaClosure :: Relations.SchemaInputRows -> Handle -> IO ()
+computeSchemaClosure schRows conn =
   Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure schRows conn
-  reportTaintDefUseFanout conn
 
 -- | The relation materializers run as direct DuckDB SQL, invoked in
 -- dependency order inside 'runPhaseB' (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
@@ -220,8 +229,8 @@ materializeAllRelationsViews conn catFks = do
 -- algebraically (Haskell or SQL); the schema/dead-code consumers read the
 -- same pre-materialized input tables they always did.
 
-runPass5 :: Handle -> IO (Map.Map Ident Ident)
-runPass5 conn = Progress.timedStep "Resolving types" $ do
+resolveTypesAndCalls :: Handle -> IO (Map.Map Ident Ident)
+resolveTypesAndCalls conn = Progress.timedStep "Resolving types" $ do
   lvs                              <- queryLocalVars  conn
   gvs                              <- queryGlobalVars conn
   css                              <- queryCallSites  conn
@@ -236,11 +245,11 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
   appendResolvedCalls conn rc
   pure inh
 
--- | Pass 6+7: compute interproc edges and taint classification ONCE
+-- | Interproc edges and taint classification ONCE
 -- corpus-wide, then the taint closure itself (@taint_reaches@\/
 -- @taint_confirmed@) and the witness-path table (@taint_step_kind@) via
 -- the algebraic closure ('TaintClosure.materializeTaintClosure'\/
--- 'TaintClosure.materializeTaintStepKind') — production's source for all
+-- 'TaintClosure.materializeTaintStepKind') -- production's source for all
 -- three tables. Neither depends on a DB round-trip: both read straight off
 -- the same in-memory rows this pass already built.
 --
@@ -248,8 +257,8 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 -- threaded by 'runPhaseB' into 'PB.Pipeline.DuckDb.materializeTaintAnnotations'
 -- (run much later in Phase B2) instead of it re-querying the same two
 -- tables (Plan 187 §18 tier 3).
-runPass67 :: Handle -> IO ProcRows
-runPass67 conn = Progress.timedStep "Building call graph" $ do
+buildCallGraphAndTaint :: Handle -> IO ProcRows
+buildCallGraphAndTaint conn = Progress.timedStep "Building call graph" $ do
   (gvs, defs, uses, allRC, tfis, intraEdges, returnRows) <-
     Progress.timedStep "Load taint inputs (7 queries)" $ do
       gvs  <- timedQueryRows "  queryGlobalVars"       (queryGlobalVars     conn)
@@ -290,10 +299,10 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
 -- @catFks@ is taken as a parameter rather than queried here: 'runPhaseB'
 -- fetches it once and passes the same rows to both this function and
 -- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations', which independently
--- needs it to build the @fk@ relation (Plan 187 §18 tier 2 — no re-query of
+-- needs it to build the @fk@ relation (Plan 187 §18 tier 2 -- no re-query of
 -- @catalog_fks@).
-runPass9 :: Handle -> Maybe Text -> [CatFkRow] -> IO SchGraph
-runPass9 conn mDefaultNamespace catFks = Progress.timedStep "Building schema category" $ do
+buildSchemaCategory :: Handle -> Maybe Text -> [CatFkRow] -> IO SchGraph
+buildSchemaCategory conn mDefaultNamespace catFks = Progress.timedStep "Building schema category" $ do
   drCols  <- queryDwRetrieveColumns  conn
   dwCols  <- queryDwWriteColumns     conn
   dwhCols <- queryDwWhereColumns     conn
@@ -314,4 +323,12 @@ runPass9 conn mDefaultNamespace catFks = Progress.timedStep "Building schema cat
         }
   appendSchemaObjects   conn (Set.toList (sgObjects sch))
   appendSchemaMorphisms conn (sgLegs sch)
+  Progress.emitEvent (Progress.EvStep
+    ("Schema category built: " <> T.pack (show (Set.size (sgObjects sch)))
+      <> " objects, " <> T.pack (show (length (sgLegs sch))) <> " legs")
+    Nothing []
+    [ ("schema_objects", Set.size (sgObjects sch))
+    , ("schema_morphisms", length (sgLegs sch))
+    ]
+    Nothing)
   pure sch

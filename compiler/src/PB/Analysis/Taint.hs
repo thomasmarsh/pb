@@ -523,7 +523,7 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
     -- covers a proc confirmed against itself without this self-loop's help.
     --
     -- Keyed/probed by 'Ident' (canonical Eq/Ord) -- globalVarNames is
-    -- already Ident-typed (PB.Pipeline.Passes.runPass67 mints it once), and
+    -- already Ident-typed (PB.Pipeline.Passes.buildCallGraphAndTaint mints it once), and
     -- PB variable names are case-insensitive, so a writer/reader pair
     -- spelling the same global with different casing must still collapse
     -- onto one hub here (else they'd never be connected at all).

@@ -9,7 +9,7 @@ module Main (main) where
 --
 -- Runs the existing pipeline unmodified (which now materializes @proc_dead@
 -- algebraically via 'PB.Analysis.DeadCodeReachability.materializeDeadCodeClosure'
--- in 'PB.Pipeline.Passes.materializeAllRelationsViews'), then re-reads the same raw
+-- in 'PB.Pipeline.Passes.computeDeadCodeClosure'), then re-reads the same raw
 -- input relations (procedures / resolved_calls / object ancestors / dw_objects)
 -- and recomputes 'deadReach' independently, asserting the two are
 -- content-exact -- a self-consistency check (determinism, no drift between

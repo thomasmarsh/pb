@@ -774,7 +774,7 @@ validateDdlNamespaceConfig ddlArgs mDefaultNamespace
 -- back to the PB_SQL_WORKER env var (lookupEnv, expected to hold a python
 -- interpreter path too) when the flag is omitted, for direct/manual
 -- `cabal run pbc --` invocations. The final 'Maybe Text' is
--- @--default-namespace@ (Plan 157): threaded into 'runPhaseB' -> 'runPass9'
+-- @--default-namespace@: threaded into 'runPhaseB' -> 'buildSchemaCategory'
 -- -> 'buildSchema', which resolves an unqualified SQL/DW-retrieve/DW-join
 -- table reference against it iff the DDL catalog defines the table under
 -- that namespace -- never guessed.

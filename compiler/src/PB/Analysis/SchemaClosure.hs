@@ -235,7 +235,7 @@ backForSeed s adjFwd revReach dist =
 -- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations' already fetched and
 -- passes in as 'SchemaInputRows' (Plan 187 §18 tier 1 — no re-query of
 -- @schema_morphisms@\/@schema_objects@). Called from
--- 'PB.Pipeline.Passes.materializeAllRelationsViews', immediately after
+-- 'PB.Pipeline.Passes.computeSchemaClosure', immediately after
 -- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations', before the downstream
 -- materializer that reads @reaches@ as an input relation
 -- ('PB.Pipeline.DuckDb.materializeRiskCount') runs and before

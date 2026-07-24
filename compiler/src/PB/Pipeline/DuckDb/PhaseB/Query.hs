@@ -293,7 +293,7 @@ queryProcUses conn = queryHandle conn
   \var_start_line, var_start_col, var_end_line, var_end_col \
   \FROM proc_uses"
 
--- | @proc_defs@\/@proc_uses@ rows 'PB.Pipeline.Passes.runPass67' already
+-- | @proc_defs@\/@proc_uses@ rows 'PB.Pipeline.Passes.buildCallGraphAndTaint' already
 -- fetched for interproc-edge building, threaded into
 -- 'PB.Pipeline.DuckDb.materializeTaintAnnotations' instead of it re-querying
 -- the same two tables (Plan 187 §18 tier 3).

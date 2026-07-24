@@ -8,7 +8,7 @@
 -- seeded single-source relaxation is near-linear).
 --
 -- 'materializeDeadCodeClosure' is called from
--- 'PB.Pipeline.Passes.materializeAllRelationsViews', writing @proc_dead@ as a real
+-- 'PB.Pipeline.Passes.computeDeadCodeClosure', writing @proc_dead@ as a real
 -- DuckDB table before the downstream materializers that consume it
 -- ('PB.Pipeline.DuckDb.Materialize.materializeDeadCode',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run — those read it as an ordinary
@@ -129,7 +129,7 @@ deadReach procs calls inherits dwObjs =
 -- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' already fetched and
 -- passes in as 'DeadCodeInputRows' (Plan 187 §18 tier 1 — no re-query of
 -- @procedures@\/@resolved_calls@\/@objects@\/@dw_objects@). Called from
--- 'PB.Pipeline.Passes.materializeAllRelationsViews', immediately after
+-- 'PB.Pipeline.Passes.computeDeadCodeClosure', immediately after
 -- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations', before the downstream
 -- materializers that read @proc_dead@ as an input relation
 -- ('PB.Pipeline.DuckDb.Materialize.materializeDeadCode',

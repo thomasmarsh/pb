@@ -94,7 +94,7 @@ data SchemaInputRows = SchemaInputRows
 --
 -- @catFks@ is taken as a parameter rather than queried here: 'runPhaseB'
 -- fetches it once and passes the same rows to both this function and
--- 'PB.Pipeline.Passes.runPass9' (which independently needs it to build the
+-- 'PB.Pipeline.Passes.buildSchemaCategory' (which independently needs it to build the
 -- schema category) — see Plan 187 §18. Returns the morphisms\/objects rows
 -- already fetched so 'PB.Analysis.SchemaClosure.materializeSchemaClosure'
 -- can reuse them instead of re-querying the same two tables.

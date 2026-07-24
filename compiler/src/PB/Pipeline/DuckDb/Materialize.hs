@@ -413,7 +413,7 @@ materializeTaintPaths conn =
 -- Reads @taint_sources@ and @taint_reaches@ (transitive closure) to
 -- rebuild the tainted set, then calls 'Taint.buildTaintAnnotations'
 -- (which needs @block_id@ from proc_defs/proc_uses — passed in as
--- 'ProcRows', already fetched by 'PB.Pipeline.Passes.runPass67' and threaded
+-- 'ProcRows', already fetched by 'PB.Pipeline.Passes.buildCallGraphAndTaint' and threaded
 -- through 'PB.Pipeline.Passes.runPhaseB' instead of re-querying the same two
 -- tables here; Plan 187 §18 tier 3).
 materializeTaintAnnotations :: ProcRows -> Handle -> IO ()
