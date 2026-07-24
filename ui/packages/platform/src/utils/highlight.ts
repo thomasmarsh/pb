@@ -248,9 +248,24 @@ export function highlightLine(
         i = j + 1;
         continue;
       }
+      // Try the identifier link *before* any static pronoun/keyword/type/
+      // builtin coloring. Some PowerScript words (open/close/create/destroy)
+      // are simultaneously reserved keywords AND legitimate identifiers --
+      // e.g. the event name in `call super::create` -- so a real
+      // resolved_calls/resolved_var_refs hit at this exact span must win
+      // over static coloring, not silently lose to it. A pure syntax word
+      // (if/then/end/...) never has a real span here (the compiler never
+      // emits identifier_tokens/resolved_calls/resolved_var_refs for a
+      // grammar keyword position), so this is a strict improvement, not a
+      // new risk of over-linking.
+      const linked = link && lineNum != null ? linkWord(word, lower, i, lineNum, link) : null;
+      if (linked) {
+        result += linked;
+        i = j;
+        continue;
+      }
       if (PS_PRONOUNS.has(lower)) {
-        const linked = link && lineNum != null ? linkWord(word, lower, i, lineNum, link) : null;
-        result += linked ?? `<span style="color:${COLORS.pronoun}">${escapeHtml(word)}</span>`;
+        result += `<span style="color:${COLORS.pronoun}">${escapeHtml(word)}</span>`;
         i = j;
         continue;
       }
@@ -258,13 +273,7 @@ export function highlightLine(
       if (PS_KEYWORDS.has(lower)) color = COLORS.keyword;
       else if (PS_TYPES.has(lower)) color = COLORS.type;
       else if (PS_BUILTINS.has(lower)) color = COLORS.builtin;
-      if (color) {
-        result += `<span style="color:${color}">${escapeHtml(word)}</span>`;
-      } else if (link && lineNum != null && !PB_KEYWORDS.has(lower)) {
-        result += linkWord(word, lower, i, lineNum, link) ?? escapeHtml(word);
-      } else {
-        result += escapeHtml(word);
-      }
+      result += color ? `<span style="color:${color}">${escapeHtml(word)}</span>` : escapeHtml(word);
       i = j;
       continue;
     }

@@ -485,14 +485,45 @@ pbCallReceiverType :: ScopedTypeEnv -> Text -> Ident -> Maybe Text
 pbCallReceiverType env obj anc =
   case T.splitOn "`" (identOrig anc) of
     [ancPart, ctrlPart] ->
-      resolveMemberChainType (steControlIndex env) (steHierarchy env) (resolveAncestorText ancPart) [ctrlPart]
-    [ancPart] -> Just (resolveAncestorText ancPart)
+      resolveAncestorText ancPart >>= \a ->
+        resolveMemberChainType (steControlIndex env) (steHierarchy env) a [ctrlPart]
+    [ancPart] -> resolveAncestorText ancPart
     _         -> Nothing
   where
+    -- 'super' resolves through the enclosing object's own declared ancestor
+    -- ('Nothing' if @obj@ itself has none -- never falls back to the
+    -- literal string "super", which would silently mislabel it as a real
+    -- class). A bare named ancestor must itself be a declared class (same
+    -- 'steHierarchy' membership test 'classifyChainHops''s 'classifyRoot'
+    -- uses for a bare class-qualified receiver in expression position) --
+    -- otherwise it's a typo or a builtin root with no corpus declaration,
+    -- and reporting it as resolved would be a dead link.
     resolveAncestorText ancPart
       | T.toLower ancPart == "super" =
-          maybe ancPart identOrig (Map.lookup (mkIdent obj) (steHierarchy env))
-      | otherwise = ancPart
+          identOrig <$> Map.lookup (mkIdent obj) (steHierarchy env)
+      | Map.member (mkIdent ancPart) (steHierarchy env) = Just ancPart
+      | otherwise = Nothing
+
+-- | The @ancestor@ token itself in @CALL ancestor[`control]::event@ gets no
+-- 'ResolvedVarRef' any other way -- it's a plain 'Ident' field on 'PbCall',
+-- never wrapped in an 'Expr', so it never reaches 'varRefsExpr'\/
+-- 'classifyLvalueChain'. Reuses 'pbCallReceiverType' as the single source of
+-- truth for what the token resolves to (the same value 'pbCallSite' already
+-- gives 'csReceiverObject'), reported as @kind = "class_static"@ to match
+-- 'classifyRoot''s convention for a bare @super@\/class-qualified receiver
+-- in expression position. For the backtick-qualified form the whole
+-- compound token (@ancestor\`control@) is treated as one span pointing at
+-- the control's resolved type -- there is no separate token to split the
+-- ancestor and control names into independent links.
+pbCallAncestorVarRef :: ScopedTypeEnv -> Text -> Text -> Text -> Int -> PbCall -> ResolvedVarRef
+pbCallAncestorVarRef env file obj proc_ line (PbCall anc _) =
+  case pbCallReceiverType env obj anc of
+    Just tgt -> ResolvedVarRef file obj proc_ (Just line) (identOrig anc) "read"
+                  (Just tgt) "class_static" "high"
+                  (provenanceSpan (identSpan anc)) (Just (T.toLower tgt))
+    Nothing  -> ResolvedVarRef file obj proc_ (Just line) (identOrig anc) "read"
+                  Nothing "unresolved" "unresolved"
+                  (provenanceSpan (identSpan anc)) Nothing
 
 -- | Resolve an 'ExMethodCall' receiver's declared type for 'csReceiverObject',
 -- reusing 'classifyChainHops' -- the same per-hop fold 'classifyLvalueChain'
@@ -911,6 +942,7 @@ walkBodyVarRefs wsEnv env file obj proc_ = foldStmts classify
       BsDestroy lv                                   -> readRef line lv
       BsAssignExpr l rhs                             -> lhsRefs line l <> readsIn line rhs
       BsThrow e                                      -> readsIn line e
+      BsPbCall pbc                                   -> [pbCallAncestorVarRef env file obj proc_ line pbc]
       _                                              -> []
 
     readsIn line = varRefsExpr wsEnv env file obj proc_ (Just line)

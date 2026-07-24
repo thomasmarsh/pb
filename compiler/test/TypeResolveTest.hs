@@ -447,10 +447,28 @@ tests = testGroup "TypeResolve"
                 { srTypeBlocks = [ mkTB "w_test" "window" ]
                 , srFunctions  = [ mkFn "f_go" "" body ]
                 }
+              -- 'w_ancestor' must itself be a real declared class (any
+              -- object with its own ancestor) for this to resolve -- a bare
+              -- named ancestor that never appears anywhere in the workspace
+              -- is a typo, not a real receiver (see the "no such declared
+              -- ancestor" test below).
+              sfAncestor = emptySrFile { srTypeBlocks = [ mkTB "w_ancestor" "window" ] }
+              wsEnv = buildWorkspaceEnv [sf, sfAncestor]
+              idx   = buildControlIndex [sf, sfAncestor]
+          case extractCallSites wsEnv idx "test.srw" "w_test" sf of
+            [s] -> csReceiverObject s @?= Just "w_ancestor"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "BsPbCall (call w_nonexistent::event) with no such declared ancestor -> unresolved receiver, not a dead link" $ do
+          let body = [ Located 8 (BsPbCall (PbCall "w_nonexistent" "of_reset")) ]
+              sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" body ]
+                }
               wsEnv = buildWorkspaceEnv [sf]
               idx   = buildControlIndex [sf]
           case extractCallSites wsEnv idx "test.srw" "w_test" sf of
-            [s] -> csReceiverObject s @?= Just "w_ancestor"
+            [s] -> csReceiverObject s @?= Nothing
             other -> assertFailure ("expected 1 site, got " ++ show (length other))
 
       , testCase "BsPbCall (call ancestor`control::event) resolves the control's own type, rooted at the named ancestor" $ do
@@ -535,6 +553,50 @@ tests = testGroup "TypeResolve"
   , testGroup "extractVarRefs"
       [ testCase "empty SrFile -> []" $
           extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" emptySrFile @?= []
+
+      , testCase "BsPbCall (call super::create) ancestor token gets its own class_static var-ref (issue: no tooltip for 'super')" $ do
+          -- 'super' in a BsPbCall is a plain Ident field, never wrapped in an
+          -- Expr, so it never reaches varRefsExpr/classifyLvalueChain the
+          -- way an expression-position 'super' does -- this was the actual
+          -- reason 'super' still showed no tooltip after the ExCall-site
+          -- fix landed.
+          let body = [ Located 6 (BsPbCall (PbCall "super" "create")) ]
+              sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> do
+              rvrName         r @?= "super"
+              rvrKind         r @?= "class_static"
+              rvrConfidence   r @?= "high"
+              rvrTargetObject r @?= Just "window"
+              rvrDeclaredType r @?= Just "window"
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "BsPbCall (call w_nonexistent::event) with no such declared ancestor -> unresolved var-ref, not a dead link" $ do
+          let body = [ Located 6 (BsPbCall (PbCall "w_nonexistent" "of_reset")) ]
+              sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" body ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> (rvrKind r, rvrConfidence r) @?= ("unresolved", "unresolved")
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+
+      , testCase "BsPbCall (call super::create) with no declared ancestor at all (root class) -> unresolved, not the literal string \"super\"" $ do
+          -- Guards the specific bug this fix's own Stage 0 review caught:
+          -- 'super' must resolve through a real Map.lookup, never fall back
+          -- to the literal token text when the enclosing object itself has
+          -- no declared ancestor.
+          let body = [ Located 6 (BsPbCall (PbCall "super" "create")) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] } -- no srTypeBlocks at all
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [r] -> (rvrKind r, rvrConfidence r, rvrTargetObject r) @?= ("unresolved", "unresolved", Nothing)
+            other -> assertFailure ("expected 1 ref, got " ++ show (length other))
 
       , testCase "local var: write then read" $ do
           let body = [ localVarStmt "ll_x" (PtPrimitive "long") 5

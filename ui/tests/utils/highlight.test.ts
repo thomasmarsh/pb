@@ -5,6 +5,7 @@ import { highlightPowerScript } from "@pb/platform";
 import type { IdentifierLinkContext, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 
 const COMMENT = "#6a9955";
+const KEYWORD = "#c586c0";
 
 function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
   return {
@@ -142,20 +143,28 @@ describe("highlightPowerScript — identifier linking", () => {
     expect(html).toContain('data-link-type="procedure"');
   });
 
-  it("skips PB keywords even when they collide with a span key", () => {
-    // "if" has no color of its own, so without the PB_KEYWORDS guard it would fall
-    // through to the link-lookup branch.
-    const call = makeCall({ to_name: "if" });
-    const link = linkCtx({ callSpans: new Map([["1:1", call]]) });
-    const html = highlightPowerScript("if true then", link);
-    expect(html).not.toContain("data-link-type");
+  it("links a builtin-keyword-shaped word (create) when a call span is present at its position", () => {
+    // Real corpus shape (found live-broken): "create"/"destroy"/"open"/
+    // "close" are simultaneously reserved PS_KEYWORDS AND legitimate
+    // identifiers -- the event name in `call super::create`. A real
+    // resolved_calls hit at that exact span must win over the static
+    // keyword color, not silently lose to it (the bug: PS_KEYWORDS colored
+    // the word before ever attempting the link).
+    const call = makeCall({ to_name: "create" });
+    // "call super :: create" -- "create" starts at 0-based index 14, so its
+    // key is "1:15" (linkWord's key is 1-based, col + 1).
+    const link = linkCtx({ callSpans: new Map([["1:15", call]]) });
+    const html = highlightPowerScript("call super :: create", link);
+    expect(html).toContain('data-link-type="procedure"');
   });
 
-  it("does not link a true keyword even when a var span collides with its position", () => {
-    const ref = makeVarRef({ kind: "local", name: "if" });
-    const link = linkCtx({ varSpans: new Map([["1:1", ref]]) });
-    const html = highlightPowerScript("if true then", link);
+  it("still colors a pure keyword as a keyword when no span is present at its position", () => {
+    // "if"/"then" never get a real resolved_calls/resolved_var_refs row
+    // (they're grammar keywords, never identifiers), so with no link
+    // context data for them the static keyword color still applies.
+    const html = highlightPowerScript("if true then", linkCtx());
     expect(html).not.toContain("data-link-type");
+    expect(html).toContain(`color:${KEYWORD}`);
   });
 
   it("links a pronoun (this) when a var span is present at its position", () => {
