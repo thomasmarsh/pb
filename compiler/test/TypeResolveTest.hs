@@ -1170,6 +1170,27 @@ tests = testGroup "TypeResolve"
           identSetMember "f_go" (maybe identSetEmpty snd (identMapLookup "w_test" pm)) @?= True
       ]
 
+  , testGroup "buildCallableProcMap"
+      [ testCase "includes function names" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" [] ]
+                }
+              pm = buildCallableProcMap [sf]
+          identSetMember "f_go" (maybe identSetEmpty snd (identMapLookup "w_test" pm)) @?= True
+
+      , testCase "excludes event names -- an event is never callable via bare name(...) syntax" $ do
+          -- Real corpus shape: every window declares an 'open'/'close' event,
+          -- which 'buildProcMap' folds in but 'buildCallableProcMap' must
+          -- not -- see 'PB.Analysis.TypeResolve.resolveOne''s ExCall branch.
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srEvents     = [ mkEv "open" "" [] ]
+                }
+              pm = buildCallableProcMap [sf]
+          identSetMember "open" (maybe identSetEmpty snd (identMapLookup "w_test" pm)) @?= False
+      ]
+
   , testGroup "resolveVirtual"
       [ testCase "recovers the ancestor's own declared casing as target_object even when the child's inherits-map value spells it differently" $ do
           let sf = emptySrFile
@@ -1272,7 +1293,7 @@ tests = testGroup "TypeResolve"
                 , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
@@ -1296,7 +1317,7 @@ tests = testGroup "TypeResolve"
                       , ("w_parent", identSetSingleton "f_base")
                       ]
               inh = Map.singleton "w_child" "w_parent"
-          case resolveCalls [site] pm inh Set.empty Set.empty of
+          case resolveCalls [site] pm pm inh Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "inherited"
               rcTargetObject rc @?= Just "w_parent"
@@ -1313,7 +1334,7 @@ tests = testGroup "TypeResolve"
                 , csReceiverObject = Nothing
                 , csToNameSpan     = Nothing
                 }
-          case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
+          case resolveCalls [site] identMapEmpty identMapEmpty Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc       @?= "unresolved"
               rcConfidence rc @?= "low"
@@ -1336,7 +1357,7 @@ tests = testGroup "TypeResolve"
                      [ ("w_main", identSetEmpty)
                      , ("trn",    identSetSingleton "trn")
                      ]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
@@ -1361,7 +1382,7 @@ tests = testGroup "TypeResolve"
                      , ("w_other", identSetSingleton "f_helper")
                      , ("w_third", identSetSingleton "f_helper")
                      ]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
@@ -1383,7 +1404,7 @@ tests = testGroup "TypeResolve"
                      [ ("w_t",     identSetEmpty)
                      , ("w_other", identSetSingleton "f_method")
                      ]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
@@ -1407,7 +1428,7 @@ tests = testGroup "TypeResolve"
                      , ("w_parent", identSetSingleton "f_method")
                      ]
               inh = Map.singleton "w_child" "w_parent"
-          case resolveCalls [site] pm inh Set.empty Set.empty of
+          case resolveCalls [site] pm pm inh Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "inherited"
               rcTargetObject rc @?= Just "w_parent"
@@ -1424,7 +1445,7 @@ tests = testGroup "TypeResolve"
                 , csReceiverObject = Nothing
                 , csToNameSpan     = Nothing
                 }
-          case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
+          case resolveCalls [site] identMapEmpty identMapEmpty Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
@@ -1440,7 +1461,7 @@ tests = testGroup "TypeResolve"
                 , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_other", identSetEmpty)]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
@@ -1456,7 +1477,7 @@ tests = testGroup "TypeResolve"
                 , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_t", identSetFromList ["f_helper"])]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
@@ -1478,7 +1499,7 @@ tests = testGroup "TypeResolve"
                      [ ("w_t",     identSetEmpty)
                      , ("w_other", identSetFromList ["f_method"])
                      ]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
@@ -1499,7 +1520,59 @@ tests = testGroup "TypeResolve"
                 , csReceiverObject = Nothing
                 , csToNameSpan     = Nothing
                 }
-          case resolveCalls [site] identMapEmpty Map.empty (Set.singleton "messagebox") Set.empty of
+          case resolveCalls [site] identMapEmpty identMapEmpty Map.empty (Set.singleton "messagebox") Set.empty of
+            [rc] -> do
+              rcKind rc         @?= "builtin"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Nothing
+              rcTargetProc   rc @?= Nothing
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare ExCall matching free_function_names, but the calling object's own callable proc map also declares it → local function wins, not builtin" $ do
+          -- Same precedence 'ExMethodCall' already gives a receiver's own
+          -- procMap entry over a builtin method name: a real corpus
+          -- function/subroutine sharing a name with a builtin free function
+          -- (a local helper shadowing it) must win.
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "trim"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
+                }
+              pm = identMapFromList [("w_t", identSetSingleton "trim")]
+          case resolveCalls [site] pm pm Map.empty (Set.singleton "trim") Set.empty of
+            [rc] -> do
+              rcKind rc         @?= "virtual"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Just "w_t"
+              rcTargetProc   rc @?= Just "trim"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare ExCall matching free_function_names, calling object's own EVENT of the same name does NOT shadow the builtin" $ do
+          -- Real corpus shape (grounded against pb.duckdb): every window
+          -- declares an 'open'/'close' event -- present in the full procMap
+          -- ('buildProcMap' folds srEvents/srOnBlocks in) but absent from
+          -- callableProcMap, since an event is never callable via bare
+          -- name(...) syntax. If this dispatch used the full procMap for
+          -- its ancestor-chain check, a call to the builtin 'Open' function
+          -- made from inside any window's own script would be misattributed
+          -- to that window's own 'open' event instead.
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "open"
+                , csToName   = "Open"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                , csReceiverObject = Nothing
+                , csToNameSpan     = Nothing
+                }
+              fullPm = identMapFromList [("w_t", identSetSingleton "open")]
+          case resolveCalls [site] fullPm identMapEmpty Map.empty (Set.singleton "open") Set.empty of
             [rc] -> do
               rcKind rc         @?= "builtin"
               rcConfidence rc   @?= "high"
@@ -1518,7 +1591,7 @@ tests = testGroup "TypeResolve"
                 , csReceiverObject = Nothing
                 , csToNameSpan     = Nothing
                 }
-          case resolveCalls [site] identMapEmpty Map.empty Set.empty (Set.singleton "retrieve") of
+          case resolveCalls [site] identMapEmpty identMapEmpty Map.empty Set.empty (Set.singleton "retrieve") of
             [rc] -> do
               rcKind rc         @?= "builtin"
               rcConfidence rc   @?= "high"
@@ -1538,7 +1611,7 @@ tests = testGroup "TypeResolve"
                 , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
-          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+          case resolveCalls [site] pm pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "virtual"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
@@ -1559,7 +1632,7 @@ tests = testGroup "TypeResolve"
                 , csToNameSpan     = Nothing
                 }
               pm = identMapFromList [ ("window", identSetSingleton "SetFocus") ]
-          case resolveCalls [site] pm Map.empty Set.empty (Set.singleton "setfocus") of
+          case resolveCalls [site] pm pm Map.empty Set.empty (Set.singleton "setfocus") of
             [rc] -> do
               rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
@@ -1588,7 +1661,7 @@ tests = testGroup "TypeResolve"
                      [ ("string",  identSetEmpty)
                      , ("w_other", identSetSingleton "Pos")
                      ]
-          case resolveCalls [site] pm Map.empty Set.empty (Set.singleton "pos") of
+          case resolveCalls [site] pm pm Map.empty Set.empty (Set.singleton "pos") of
             [rc] -> do
               rcKind rc         @?= "builtin"
               rcConfidence rc   @?= "high"

@@ -19,6 +19,7 @@ import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb (Handle)
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
+  , queryCallableProcMap
   , queryProcDefs, queryProcUses, ProcRows (..), queryResolvedCalls
   , queryTaintInputs, queryTaintIntraEdges, queryTaintReturnRows
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
@@ -225,11 +226,12 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
   gvs                              <- queryGlobalVars conn
   css                              <- queryCallSites  conn
   (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
+  callableProcMap                  <- queryCallableProcMap conn
   let objIdents  = identSetFromList (map mkIdent (Set.toList objSet))
       userIdents = identSetFromList (map mkIdent (Set.toList usrTypes))
       rt  = resolveTypes lvs objIdents userIdents
       rtG = resolveGlobalTypes gvs objIdents userIdents
-      rc  = resolveCalls css procMap inh builtinFnNames builtinMethodNames
+      rc  = resolveCalls css procMap callableProcMap inh builtinFnNames builtinMethodNames
   appendResolvedTypes conn (rt <> rtG)
   appendResolvedCalls conn rc
   pure inh

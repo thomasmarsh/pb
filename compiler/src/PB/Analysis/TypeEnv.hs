@@ -6,6 +6,7 @@ module PB.Analysis.TypeEnv
   , ScopedTypeEnv (..)
   , buildWorkspaceEnv
   , buildProcMap
+  , buildCallableProcMap
   , withDwTables
   , withDwControls
   , withDwParamBindings
@@ -118,6 +119,24 @@ buildProcMap = foldl' addFile identMapEmpty
             <> map (ssName . sbSig) (srSubroutines sf)
             <> map (esName . evSig) (srEvents sf)
             <> map obEvent (srOnBlocks sf)
+      in identMapInsertWith identSetUnion objIdent names acc
+
+-- | Same shape as 'buildProcMap', restricted to proc kinds invocable via a
+-- bare @name(...)@ call -- excludes @srEvents@\/@srOnBlocks@. See
+-- 'PB.Pipeline.DuckDb.PhaseB.Query.queryCallableProcMap''s doc comment for
+-- why this must be a separate map from 'buildProcMap' rather than a filter
+-- applied everywhere: events are a real, PB-wide name collision risk with
+-- builtin free functions (@open@\/@close@ on every window object) that
+-- 'ExMethodCall'\/'ExCallArg' dispatch and the global call-site fallback
+-- must keep seeing, but a bare 'ExCall' never legitimately targets one.
+buildCallableProcMap :: [SrFile] -> IdentMap IdentSet
+buildCallableProcMap = foldl' addFile identMapEmpty
+  where
+    addFile acc sf =
+      let objIdent = fst (srPrimaryObject sf)
+          names = identSetFromList $
+            map (fnsName . fbSig) (srFunctions sf)
+            <> map (ssName . sbSig) (srSubroutines sf)
       in identMapInsertWith identSetUnion objIdent names acc
 
 -- | Attach the workspace's inferred @ref datawindow@ parameter bindings

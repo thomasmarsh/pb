@@ -4,6 +4,7 @@ module PB.Pipeline.DuckDb.PhaseB.Query
   , queryCallSites
   , queryGlobalVars
   , queryObjInfo
+  , queryCallableProcMap
   , queryProcDefs
   , queryProcUses
   , ProcRows (..)
@@ -260,6 +261,25 @@ queryObjInfo conn = do
     , identMapFromListWith identSetUnion
         [(mkIdent o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
     )
+
+-- | Same shape as 'queryObjInfo''s proc map, restricted to proc kinds
+-- actually invocable via a bare @name(...)@ call. @event@\/@on@-block
+-- declarations (PowerScript event handlers) share 'queryObjInfo''s full
+-- map so 'ExMethodCall'\/'ExCallArg' dispatch and the global fallback keep
+-- seeing them, but a bare 'ExCall' can never legitimately target one --
+-- events fire via @TriggerEvent@\/@PostEvent@\/the @Event@ keyword, never a
+-- direct call. Real corpus evidence for why this must be a separate map,
+-- not a filter applied uniformly: every window object registers an
+-- @open@\/@close@ event, which would otherwise shadow the builtin
+-- @Open@\/@Close@ free functions for any bare call made from inside that
+-- window's own script.
+queryCallableProcMap :: Handle -> IO (IdentMap IdentSet)
+queryCallableProcMap conn = do
+  procRows <- queryHandle conn
+    "SELECT object, proc_name FROM procedures \
+    \WHERE proc_type IN ('function', 'subroutine')" :: IO [TwoText]
+  pure $ identMapFromListWith identSetUnion
+    [(mkIdent o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
 
 queryProcDefs :: Handle -> IO [Taint.DefRow]
 queryProcDefs conn = queryHandle conn

@@ -7,7 +7,7 @@
 --   extractCallSites  :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [CallSite]
 --   extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 --   resolveTypes      :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
---   resolveCalls      :: [CallSite] -> IdentMap IdentSet -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
+--   resolveCalls      :: [CallSite] -> IdentMap IdentSet -> IdentMap IdentSet -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 --   resolveVirtual    :: Ident -> Text -> IdentMap IdentSet -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
 --   buildObjectSet    :: [SrFile] -> IdentSet
 --   buildUserTypeSet  :: [SrFile] -> IdentSet
@@ -43,6 +43,7 @@ module PB.Analysis.TypeResolve
   , resolveAncestorChain
   , ancestorChain
   , buildProcMap
+  , buildCallableProcMap
   , buildObjectSet
   , buildUserTypeSet
   -- exposed for testing and Church spike
@@ -78,7 +79,8 @@ import PB.Analysis.DwBuiltins     (dwPropertyCatalog, classifyDwBandKeyword)
 import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
                                       resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
-                                    buildProcMap, isDescendantOf, lookupInstanceVarOwner, procEnv)
+                                    buildProcMap, buildCallableProcMap, isDescendantOf,
+                                    lookupInstanceVarOwner, procEnv)
 
 import Data.Aeson         (ToJSON (..), (.=))
 import Data.Foldable      (find)
@@ -1122,22 +1124,24 @@ resolveVirtual toNameIdent objN procMap inherits =
 -- | Resolve all call sites to their targets using cross-file proc and inherits maps.
 resolveCalls
   :: [CallSite]
-  -> IdentMap IdentSet              -- proc_map: object → proc names
+  -> IdentMap IdentSet              -- proc_map: object → proc names (all kinds)
+  -> IdentMap IdentSet              -- callable_proc_map: object → proc names (function/subroutine only, see 'resolveOne')
   -> Map.Map Ident Ident            -- inherits: child → parent
   -> Set.Set Text                   -- builtin free-function names (lowercase)
   -> Set.Set Text                   -- builtin method names (lowercase)
   -> [ResolvedCall]
-resolveCalls sites procMap inherits builtinFns builtinMethods =
-  map (resolveOne procMap inherits builtinFns builtinMethods) sites
+resolveCalls sites procMap callableProcMap inherits builtinFns builtinMethods =
+  map (resolveOne procMap callableProcMap inherits builtinFns builtinMethods) sites
 
 resolveOne
   :: IdentMap IdentSet
+  -> IdentMap IdentSet
   -> Map.Map Ident Ident
   -> Set.Set Text
   -> Set.Set Text
   -> CallSite
   -> ResolvedCall
-resolveOne procMap inherits builtinFns builtinMethods cs =
+resolveOne procMap callableProcMap inherits builtinFns builtinMethods cs =
   let (tObj, tProc, kind, conf) = dispatch cs
   in ResolvedCall
        { rcFile         = csFile cs
@@ -1158,11 +1162,26 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
       -- (Plan 195 Phase B: a receiver-qualified 'receiver.method()' always
       -- parses as 'ExMethodCall', never a dotted 'ExCall.callee') -- no
       -- dotted-name special case needed here.
+      -- A bare call's own object (and its ancestors) is checked first via
+      -- 'callableProcMap' -- restricted to function/subroutine proc kinds,
+      -- since a real corpus function/subroutine sharing a name with a
+      -- builtin free function (a local helper shadowing it) must win, the
+      -- same precedence 'ExMethodCall' below already gives a receiver's own
+      -- procMap entry over a builtin method name. This must NOT use the
+      -- full 'procMap': every window object registers an 'open'\/'close'
+      -- event, which would otherwise falsely shadow the builtin 'Open'\/
+      -- 'Close' free functions for any bare call made from inside that
+      -- window's own script -- events are never callable via bare
+      -- @name(...)@ syntax in the first place.
       "ExCall" ->
         let toNameIdent = mkIdent (csToName site)
-        in if identCanon toNameIdent `Set.member` builtinFns
-             then (Nothing, Nothing, "builtin", "high")
-             else resolveVirtual toNameIdent (mkIdent (csObject site)) procMap inherits
+            objN        = mkIdent (csObject site)
+        in case resolveAncestorChain toNameIdent objN callableProcMap inherits of
+             Just (tObj, tProc, kind) -> (Just tObj, Just tProc, kind, "high")
+             Nothing
+               | identCanon toNameIdent `Set.member` builtinFns ->
+                   (Nothing, Nothing, "builtin", "high")
+               | otherwise -> resolveVirtual toNameIdent objN procMap inherits
       "ExCallArg"    -> resolveVirtual (mkIdent (csToName cs)) (mkIdent (csObject cs)) procMap inherits
       "ExMethodCall" ->
         case csReceiverObject site of
