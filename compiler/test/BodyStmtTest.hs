@@ -678,6 +678,7 @@ tag (BsDo        _)     = "do"
 tag (BsChoose    _)     = "choose"
 tag BsExit              = "exit"
 tag BsContinue          = "continue"
+tag (BsHalt _)          = "halt"
 tag (BsDestroy    _)    = "destroy"
 tag (BsAssignExpr _ _)  = "assign_expr"
 tag (BsTry        _)    = "try"
@@ -723,6 +724,7 @@ isValidBodyStmt stmt = case stmt of
   BsChoose    _     -> True
   BsExit            -> True
   BsContinue        -> True
+  BsHalt _          -> True
   BsDestroy    _    -> True
   BsAssignExpr _ _  -> True
   BsTry        _    -> True
@@ -845,6 +847,7 @@ genLeafBodyStmt = Gen.choice
   , BsReturn     <$> Gen.maybe genSimpleExpr
   , pure BsExit
   , pure BsContinue
+  , BsHalt     <$> Gen.bool
   , BsDestroy    <$> genSimpleLvalue
   , BsThrow      <$> genSimpleExpr
   , BsAssignExpr <$> genComplexLhsExpr <*> genSimpleExpr

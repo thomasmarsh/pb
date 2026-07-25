@@ -114,6 +114,7 @@ data BodyStmt
   | BsChoose    ChooseStmt
   | BsExit
   | BsContinue
+  | BsHalt      { haltClose :: Bool }  -- HALT [CLOSE]
   | BsDestroy   Lvalue
   | BsAssignExpr Expr Expr            -- complex LHS = rhs (method-call chain . property)
   | BsTry        TryStmt

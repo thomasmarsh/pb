@@ -402,6 +402,18 @@ tests = testGroup "Grammar.Body.Parser"
     , testCase "continue becomes BsContinue" $
         runBodyStmts [mkStmt [(TkControlKw,"continue")]]
           @?= Right [loc1 BsContinue]
+
+    , testCase "halt becomes BsHalt False" $
+        runBodyStmts [mkStmt [(TkControlKw,"halt")]]
+          @?= Right [loc1 (BsHalt False)]
+
+    , testCase "halt close becomes BsHalt True" $
+        runBodyStmts [mkStmt [(TkControlKw,"halt"),(TkSqlKw,"close")]]
+          @?= Right [loc1 (BsHalt True)]
+
+    , testCase "halt with unrecognized trailing token falls back to BsRaw" $
+        runBodyStmts [mkStmtSrc True "halt foo" [(TkControlKw,"halt"),(TkIdent,"foo")]]
+          @?= Right [loc1 (BsRaw "halt foo")]
     ]
 
   , testGroup "SQL body statement joining"

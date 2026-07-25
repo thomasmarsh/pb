@@ -67,6 +67,8 @@ leafBodyStmts =
   , BsReturn     (Just simpleExpr)
   , BsExit
   , BsContinue
+  , BsHalt False
+  , BsHalt True
   , BsDestroy    simpleLvalue
   , BsThrow      simpleExpr
   , BsAssignExpr complexLhsExpr simpleExpr

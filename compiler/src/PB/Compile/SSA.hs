@@ -298,6 +298,7 @@ stmtToAssigns (BsDo {})     = []
 stmtToAssigns (BsChoose {}) = []
 stmtToAssigns (BsReturn _)  = []
 stmtToAssigns BsExit        = []
+stmtToAssigns (BsHalt _)    = []
 stmtToAssigns BsContinue    = []
 -- BsTry/BsThrow: try/catch is not yet lowered into the CFG (CfgBuild treats
 -- it as one opaque leaf statement — see BACKLOG's try/catch CFG-modeling
@@ -340,6 +341,7 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
     Just (BsReturn mExpr) ->
       SsaReturn (fmap exprToSsaVal mExpr)
     Just BsExit     -> SsaBreak
+    Just (BsHalt _) -> SsaReturn Nothing  -- HALT never resumes; same terminator as a void return
     Just BsContinue -> SsaContinue
     -- This block has no control statement of its own, but it may still be a
     -- loop *header* whose condition-check lives one block back (see
@@ -394,6 +396,7 @@ findControlStmt (Located _ s : rest)
     isCtrl BsChoose {} = True
     isCtrl (BsReturn _) = True
     isCtrl BsExit      = True
+    isCtrl (BsHalt _)  = True
     isCtrl BsContinue  = True
     -- Enumerated explicitly (not a wildcard) so a future BodyStmt constructor
     -- trips -Wincomplete-patterns here.

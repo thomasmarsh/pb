@@ -326,6 +326,7 @@ sqlKws =
   , "commit", "rollback", "connect", "disconnect"
   , "declare", "cursor", "execute", "fetch", "prepare"
   , "describe", "descriptor", "open", "close"
+  , "first", "last", "prior"
   ]
 
 declKws :: [Text]
@@ -335,6 +336,7 @@ declKws =
   , "external", "intrinsic", "library", "alias"
   , "from", "within", "throws", "enumerated"
   , "autoinstantiate"
+  , "native"
   ]
 
 controlKws :: [Text]

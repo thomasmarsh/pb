@@ -422,6 +422,10 @@ classifyBodyStmt s = case stmtTokens s of
           "return"   -> BsReturn (if null rest then Nothing else Just (parseExpr rest))
           "exit"     -> BsExit
           "continue" -> BsContinue
+          "halt"     -> case rest of
+            []                                                -> BsHalt False
+            (closeT:_) | T.toLower (tkText closeT) == "close" -> BsHalt True
+            _                                                 -> BsRaw (llText (stmtSource s))
           "throw"    -> BsThrow (parseExpr rest)
           _          -> BsRaw (llText (stmtSource s))
     | tkKind t `elem` [TkSqlKw, TkDeclKw] ->

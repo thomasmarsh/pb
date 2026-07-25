@@ -138,6 +138,12 @@ lower stmts currentId loopHead = go stmts currentId []
         bid' <- newBlock
         go rest bid' []
 
+      BsHalt _ -> do
+        flush bid (pending ++ [s])
+        addExit bid
+        bid' <- newBlock
+        go rest bid' []
+
       BsContinue -> do
         flush bid (pending ++ [s])
         case loopHead of { Just lh -> addEdge bid lh "loop"; Nothing -> pure () }

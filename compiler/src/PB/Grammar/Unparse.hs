@@ -151,6 +151,8 @@ unparseBodyStmt stmt = case stmt of
     "choose case " <> unparseExpr e <> "\n" <> foldMap unparseCaseClause clauses <> "end choose"
   BsExit                -> "exit"
   BsContinue            -> "continue"
+  BsHalt False          -> "halt"
+  BsHalt True           -> "halt close"
   BsDestroy lv          -> "destroy " <> unparseLvalue lv
   BsAssignExpr lhs rhs  -> unparseExpr lhs <> " = " <> unparseExpr rhs
   BsTry (TryStmt body catches) ->
