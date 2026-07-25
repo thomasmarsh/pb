@@ -533,6 +533,12 @@ renderBandKind (Just (BkTreeLevel n))  = "tree_level_" <> T.pack (show n)
 jsonText :: Value -> Text
 jsonText = TE.decodeUtf8 . BSL.toStrict . encode
 
+-- | SQL operations that are declarations/cursors, not data-manipulation statements.
+-- Filtered from BsRaw extraction to avoid sending PB control flow to sqlglot.
+skipOps :: Set.Set Text
+skipOps = Set.fromList
+  ["DECLARE","OPEN","FETCH","CLOSE","COMMIT","ROLLBACK","CONNECT","DISCONNECT"]
+
 -- | Build SqlStmtRows from BsRaw nodes without a SQL bridge (no tables/columns).
 rawSqlRow :: Text -> Text -> (Text, [Located BodyStmt]) -> [SqlStmtRow]
 rawSqlRow fpT obj (pName, body) =
@@ -540,17 +546,20 @@ rawSqlRow fpT obj (pName, body) =
   | (ln, rawTxt) <- extractBsRawNodes body
   , let op = Taint.classifyOperation rawTxt
   , not (T.null op)
-  , op `Set.notMember` _skipOps
+  , op `Set.notMember` skipOps
   ]
-  where
-    _skipOps = Set.fromList
-      ["DECLARE","OPEN","FETCH","CLOSE","COMMIT","ROLLBACK","CONNECT","DISCONNECT"]
 
 extractProcSql
   :: (TableRef -> TableRef) -> SqlBridgePool -> Int -> Text -> Text -> (Text, [Located BodyStmt])
   -> IO ([SqlStmtRow], [SqlStmtColumnRow], [SqlStmtFilterRow], [SqlStmtTableRow])
 extractProcSql resolve pool k fp obj (pName, body) = do
-  quads <- mapM parseNode (extractBsRawNodes body)
+  let rawNodes = extractBsRawNodes body
+      sqlNodes = [ (ln, txt) | (ln, txt) <- rawNodes
+                 , let op = Taint.classifyOperation txt
+                 , not (T.null op)
+                 , op `Set.notMember` skipOps
+                 ]
+  quads <- mapM parseNode sqlNodes
   pure ( map (\(row,_,_,_) -> row) quads
        , concatMap (\(_,cols,_,_) -> cols) quads
        , concatMap (\(_,_,filts,_) -> filts) quads
