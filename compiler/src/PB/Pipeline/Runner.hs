@@ -199,7 +199,7 @@ data CompiledDw = CompiledDw
 data CompiledFile
   = CFPs    CompiledPs
   | CFDw    CompiledDw
-  | CFError FilePath Text
+  | CFError FilePath ParseError
   | CFSkip
 
 -- | Convert one 'foldSchFootprintEff'-produced 'SchMorphism' into the same

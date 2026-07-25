@@ -3,6 +3,7 @@ module RunnerTest (tests) where
 import PB.Prelude
 import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, runModeDb, CompiledFile (..), CompiledPs (..), CompiledDw (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
+import PB.AST.SourceFile   (ParseError (..))
 import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Pipeline.DuckDb.PhaseA
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
@@ -371,7 +372,7 @@ tests = testGroup "Pipeline.Runner"
             , "end function"
             ]
       in case parsePowerScriptFile src of
-        Left err -> testCase "fixture parses" (assertFailure ("fixture failed to parse: " <> T.unpack err))
+        Left err -> testCase "fixture parses" (assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err)))
         Right (sf, spans, _) ->
           let ws           = buildWorkspaceEnv [sf]
               (objNameIdent, _) = srPrimaryObject sf
@@ -661,7 +662,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_dw_copy.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
@@ -695,7 +696,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
@@ -718,7 +719,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
@@ -753,7 +754,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
@@ -777,7 +778,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
@@ -804,7 +805,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src, pfTokens = [] }
@@ -830,7 +831,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
@@ -861,7 +862,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
@@ -888,7 +889,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
@@ -912,7 +913,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
@@ -946,7 +947,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             let ws  = buildWorkspaceEnv [sf]
                 tcw = buildTypeCheckWorkspace ws [sf]
@@ -968,7 +969,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             script <- installMockSqlWorkerWithRefs
             pool   <- startSqlBridgePool 1 script [] "oracle"
@@ -992,7 +993,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             script <- installMockSqlWorkerWithRefs
             pool   <- startSqlBridgePool 1 script [] "oracle"
@@ -1020,7 +1021,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, spans, _) -> do
             script <- installMockSqlWorkerWithTableRefs
             pool   <- startSqlBridgePool 1 script [] "oracle"
@@ -1318,7 +1319,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         case parsePowerScriptFile src of
-          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack (peMessage err))
           Right (sf, _, _) -> force sf @?= sf
     ]
 

@@ -10,6 +10,7 @@ import PB.AST.Type               (PbType (..))
 import PB.Analysis.ControlHierarchy
 import PB.Analysis.TypeEnv       (buildWorkspaceEnv, weHierarchy)
 import PB.Pipeline.Emit          (parsePowerScriptFile)
+import PB.AST.SourceFile         (ParseError (..))
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
@@ -338,7 +339,7 @@ withFyloFixture check = do
     else do
       parsed <- traverse (\p -> parsePowerScriptFile <$> readFile p) paths
       case sequence parsed of
-        Left e     -> assertFailure ("failed to parse fylo fixture: " <> T.unpack e)
+        Left e     -> assertFailure ("failed to parse fylo fixture: " <> T.unpack (peMessage e))
         Right triples ->
           let sfs = [ sf | (sf, _, _) <- triples ]
               idx = buildControlIndex sfs

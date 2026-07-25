@@ -45,6 +45,8 @@ export interface SourceViewProps {
   // Lines to keep bright during a slice highlight; every other line dims.
   // null means slice-dim mode is inactive (nothing dims).
   dimLines?: Set<number> | null;
+  // Absolute (1-based) source line numbers inside unparsed/raw (BsRaw) regions.
+  rawRanges?: Set<number> | null;
   onLineClick?: (line: number) => void;
   onLinkClick?: (linkType: "object" | "procedure" | "var", linkName: string, target: SourceLinkTarget) => void;
   onLinkContextMenu?: (
@@ -85,6 +87,7 @@ export function SourceView(props: SourceViewProps): JSX.Element {
   const isError = (i: number) => props.highlightLines?.has(base() + i) ?? false;
   const isRange = (i: number) => props.rangeLines?.has(base() + i) ?? false;
   const isDim = (i: number) => props.dimLines != null && !props.dimLines.has(base() + i);
+  const isRaw = (i: number) => props.rawRanges?.has(base() + i) ?? false;
 
   function findLink(e: MouseEvent): HTMLElement | null {
     return (e.target as HTMLElement).closest("[data-link-type]") as HTMLElement | null;
@@ -194,6 +197,7 @@ export function SourceView(props: SourceViewProps): JSX.Element {
               classList={{
                 "source-gutter-line--error": isError(i()),
                 "source-gutter-line--range": isRange(i()),
+                "source-gutter-line--raw": isRaw(i()),
                 "source-gutter-line--clickable": props.onLineClick != null,
               }}
               style={proc ? {
@@ -234,6 +238,7 @@ export function SourceView(props: SourceViewProps): JSX.Element {
                 "source-code-line--error": isError(i()),
                 "source-code-line--range": isRange(i()),
                 "source-code-line--dim": isDim(i()),
+                "source-code-line--raw": isRaw(i()),
               }}
               innerHTML={line}
             />

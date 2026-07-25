@@ -15,6 +15,7 @@ export function SourceCard(props: {
   sourceDetail: ObjectSourceResponse | { error: string } | null;
   selectedProcName?: string;
   contextActions?: ContextActions;
+  scrollToLine?: number | null;
 }) {
   const snap = props.store.getState();
 
@@ -30,6 +31,20 @@ export function SourceCard(props: {
     const dir = sh.direction === "forward" ? "Forward" : "Backward";
     const count = sh.steps.length;
     return { lines, label: `${dir} slice from ${sh.proc}:${sh.origin.line} — ${count} statement${count === 1 ? "" : "s"}` };
+  };
+
+  // Compute line ranges for unparsed SQL (BsRaw) regions from sql_statements.
+  const rawRanges = (): Set<number> | null => {
+    const s = props.sourceDetail;
+    if (!s || !("sqlStatements" in s) || !s.sqlStatements) return null;
+    const result = new Set<number>();
+    for (const stmt of s.sqlStatements) {
+      const start = stmt.line;
+      const raw = stmt.raw_sql ?? "";
+      const lineCount = (raw.match(/\n/g) ?? []).length + 1;
+      for (let n = start; n < start + lineCount; n++) result.add(n);
+    }
+    return result.size > 0 ? result : null;
   };
 
   return (
@@ -60,6 +75,8 @@ export function SourceCard(props: {
           selectedProcName={props.selectedProcName}
           contextActions={props.contextActions}
           sliceHighlight={sliceHighlight()}
+          rawRanges={rawRanges()}
+          scrollToLine={props.scrollToLine ?? null}
           onClearSliceHighlight={() => props.store.dispatch({ tag: "objects", action: { tag: "clear-slice-highlight" } })}
         />
       </Show>

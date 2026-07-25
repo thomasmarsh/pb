@@ -17,12 +17,12 @@ def conn_with_errors(db_path, tmp_path_factory):
 
     conn = duckdb.connect(db_copy)
     conn.execute(
-        "INSERT INTO parse_errors VALUES (?,?)",
-        ["a.srw", "lex error at line 3"],
+        "INSERT INTO parse_errors VALUES (?,?,?)",
+        ["a.srw", "lex error at line 3", 3],
     )
     conn.execute(
-        "INSERT INTO parse_errors VALUES (?,?)",
-        ["b.srw", "Invalid expression in SELECT"],
+        "INSERT INTO parse_errors VALUES (?,?,?)",
+        ["b.srw", "Invalid expression in SELECT", None],
     )
     yield conn
     conn.close()

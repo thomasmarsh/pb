@@ -7,6 +7,7 @@ import qualified Data.ByteString   as BS
 import qualified Data.Text         as T
 import qualified Data.Text.Encoding as TE
 import PB.Pipeline.Emit (ParsedFile (..), parsePowerScriptFile, stripBom)
+import PB.AST.SourceFile (ParseError (..))
 import System.FilePath  (takeFileName)
 
 -- Embedded at compile time from runtime/ at the repo root (../runtime relative to compiler/).
@@ -22,7 +23,7 @@ parseStdlibFiles = mapM parseOne stdlibBytes
       let virtualPath = "__stdlib__/" <> takeFileName path
           src         = stripBom (TE.decodeUtf8 bytes)
       in case parsePowerScriptFile src of
-           Left  err           -> error ("stdlib: " <> virtualPath <> ": " <> T.unpack err)
+           Left err          -> error ("stdlib: " <> virtualPath <> ": " <> T.unpack (peMessage err))
            Right (sf, sp, tks) -> pure ParsedFile
              { pfPath     = virtualPath
              , pfSrFile   = sf

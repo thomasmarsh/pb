@@ -30,14 +30,14 @@ import PB.AST.SourceFile
   , Param (..)
   , FnSig (..), SubSig (..), EventSig (..)
   , FunctionBlock (..), SubroutineBlock (..), EventBlock (..), OnBlock (..)
-  , SrFile (..)
+  , SrFile (..), ParseError (..)
   )
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText, tkSpan)
 import PB.Pipeline.Preprocess (llStartLine, llText)
 
-import Text.Megaparsec (many, manyTill, lookAhead, try, parse, getInput)
-import Text.Megaparsec.Error (errorBundlePretty)
+import Text.Megaparsec (many, manyTill, lookAhead, try, parse, getInput, bundlePosState, reachOffset, sourceLine, unPos, pstateSourcePos)
+import Text.Megaparsec.Error (errorBundlePretty, errorOffset, bundleErrors)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
 
@@ -434,12 +434,20 @@ pAnyTopLevelBlock =
   <|> (\(s,e,b) -> TLSub  s e b) <$>     pSubroutineBlockSpanned_
 
 parseSrFile :: [Text] -> [Statement] -> Either Text SrFile
-parseSrFile headers stmts = fmap fst (parseSrFileWithSpans headers stmts)
+parseSrFile headers stmts = case parseSrFileWithSpans headers stmts of
+  Left err -> Left (peMessage err)
+  Right (sf, _) -> Right sf
 
-parseSrFileWithSpans :: [Text] -> [Statement] -> Either Text (SrFile, SrSpans)
+parseSrFileWithSpans :: [Text] -> [Statement] -> Either ParseError (SrFile, SrSpans)
 parseSrFileWithSpans headers stmts = case parse pSrFile "" (StmtStream stmts) of
   Right (f, spans) -> Right (f { srHeaders = headers }, spans)
-  Left err         -> Left (T.pack (errorBundlePretty err))
+  Left err         ->
+    let errMsg = T.pack (errorBundlePretty err)
+        posState = bundlePosState err
+        errOff = errorOffset (NE.head (bundleErrors err))
+        (_, newPos) = reachOffset errOff posState
+        errLine = Just (unPos (sourceLine (pstateSourcePos newPos)))
+    in Left (ParseError errMsg errLine)
 
 pSrFile :: FileParser (SrFile, SrSpans)
 pSrFile = do

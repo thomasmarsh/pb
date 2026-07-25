@@ -35,6 +35,7 @@ export const initialObjectsState: ObjectsState = {
   wiringDiagram: null, wiringDiagramLoading: false,
   footprint: null, footprintLoading: false,
   sliceHighlight: null, sliceHighlightLoading: false,
+  scrollToLine: null,
 };
 
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
@@ -87,6 +88,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     draft.astData = null;
     draft.layout = null;
     draft.selectedProcName = null;
+    draft.scrollToLine = action.scrollToLine ?? null;
     env.navigate({ tag: "navigate", route: { view: "objectDetail", name: action.name } });
     return Effect.merge<ObjectsAction>(
       env.getObject(action.name)

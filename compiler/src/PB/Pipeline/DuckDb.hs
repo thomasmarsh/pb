@@ -259,7 +259,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \(file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT, \
         \x INTEGER, y INTEGER, width INTEGER, height INTEGER, expression TEXT)"
       , "CREATE TABLE IF NOT EXISTS parse_errors \
-        \(file TEXT, error TEXT)"
+        \(file TEXT, error TEXT, line INTEGER)"
       , "CREATE TABLE IF NOT EXISTS source_files \
         \(file TEXT PRIMARY KEY, lines TEXT)"
       -- Plan 201 Phase 5a: one row per lexed token whose kind is

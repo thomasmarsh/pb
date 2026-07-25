@@ -124,6 +124,7 @@ export interface ObjectSourceResponse {
   knownObjects: { name: string; kind: string }[];
   resolvedCalls: ResolvedCallInfo[];
   resolvedVarRefs: ResolvedVarRefInfo[];
+  sqlStatements?: { line: number; raw_sql: string; operation: string; parse_ok: boolean }[];
   loading?: boolean;
 }
 

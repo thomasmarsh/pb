@@ -17,7 +17,7 @@ WITH all_errors AS (
         error            AS message,
         NULL             AS object,
         NULL             AS proc_name,
-        NULL             AS line,
+        line,
         NULL             AS snippet
     FROM parse_errors
     UNION ALL
@@ -80,4 +80,12 @@ def get_error_source(
     file: str,
 ) -> dict[str, Any]:
     """Return the full source text for a file, used to show SQL error context."""
+    try:
+        src_row = conn.execute(
+            "SELECT lines FROM source_files WHERE file = ?", [file]
+        ).fetchone()
+        if src_row and src_row[0]:
+            return {"lines": src_row[0].splitlines()}
+    except Exception:
+        pass
     return {"lines": []}

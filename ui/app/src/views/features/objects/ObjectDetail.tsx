@@ -364,7 +364,7 @@ function ObjectDetailContent(props: {
 
       <div class="detail-body">
         <Show when={o.file} fallback={<p class="muted-note">No source file available.</p>}>
-          <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} selectedProcName={selectedProcName()} contextActions={contextActions} />
+          <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} selectedProcName={selectedProcName()} contextActions={contextActions} scrollToLine={snap().objects.scrollToLine} />
         </Show>
         <Show when={(o.procedures?.length ?? 0) > 0}>
           <ProceduresCard store={store} objectName={o.name} procedures={o.procedures!} />

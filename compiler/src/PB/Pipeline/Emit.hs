@@ -44,6 +44,7 @@ import qualified Data.Set           as Set
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
 import Data.Char           (intToDigit, toLower)
+import Data.Bifunctor      (first)
 import Data.Either         (lefts)
 import Data.Word           (Word8)
 import System.FilePath     (takeBaseName, takeExtension, makeRelative)
@@ -111,7 +112,7 @@ runProject path _src = Right $ object
 
 runPowerScript :: FilePath -> Text -> Either Text Value
 runPowerScript path src = do
-  (srFile, spans, _toks) <- parsePowerScriptFile src
+  (srFile, spans, _toks) <- first peMessage (parsePowerScriptFile src)
   let ws = buildWorkspaceEnv [srFile]
   Right (wrapSrFile False path srFile spans ws)
 
@@ -120,12 +121,12 @@ runPowerScript path src = do
 --   'parseSrFileWithSpans' already consumes -- returned here (not re-lexed)
 --   so callers needing raw lexical coverage (e.g. 'PB.Pipeline.DuckDb.PhaseA.identifierTokenRows')
 --   don't duplicate the lex/split pipeline.
-parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans, [Token])
+parsePowerScriptFile :: Text -> Either ParseError (SrFile, SrSpans, [Token])
 parsePowerScriptFile src = do
   let logicalLines         = normalizeText src
       (headers, bodyLines) = stripHeaders logicalLines
       lexLines             = tokenize bodyLines
-  stmts <- collectStatements lexLines
+  stmts <- first (\e -> ParseError e Nothing) (collectStatements lexLines)
   (sf, spans) <- parseSrFileWithSpans headers stmts
   pure (sf, spans, concatMap stmtTokens stmts)
 
@@ -282,7 +283,7 @@ data ParsedFile = ParsedFile
 data ParseOutcome
   = PsParsed ParsedFile
   | PsDw     FilePath Text DataWindowFile
-  | PsFailed FilePath Text
+  | PsFailed FilePath ParseError
   | OtherFile FilePath
 
 -- | Attempt to parse one file. @root@ is the ingestion root (the @-i@
@@ -295,17 +296,17 @@ parseOutcome root src = case fileKind src of
   PowerScript -> do
     readResult <- try (readFile src) :: IO (Either SomeException Text)
     pure $ case readResult of
-      Left  ex -> PsFailed rel (T.pack (show ex))
+      Left  ex -> PsFailed rel (ParseError (T.pack (show ex)) Nothing)
       Right contents ->
         case parsePowerScriptFile (stripBom contents) of
-          Left  err           -> PsFailed rel err
+          Left err    -> PsFailed rel err
           Right (sf, sp, tks) -> PsParsed (ParsedFile rel sf sp contents tks)
   DataWindow -> do
     readResult <- try (readFile src) :: IO (Either SomeException Text)
     pure $ case readResult of
-      Left  ex       -> PsFailed rel (T.pack (show ex))
+      Left  ex       -> PsFailed rel (ParseError (T.pack (show ex)) Nothing)
       Right contents -> case parseDataWindow (stripBom contents) of
-        Left  err -> PsFailed rel err
+        Left  err -> PsFailed rel (ParseError err Nothing)
         Right dw  -> PsDw rel contents dw
   _ -> pure (OtherFile rel)
   where

@@ -58,6 +58,7 @@ module PB.Pipeline.DuckDb.PhaseA
 
 import PB.Prelude
 import PB.AST.Ident             (identOrig, identSpan, provenanceSpan)
+import PB.AST.SourceFile        (ParseError (..))
 import PB.AST.Type              (pbTypeSpan)
 import PB.Grammar.Body          (isSegmentName)
 import PB.Lexing.Token          (Token (..), SourceSpan (..))
@@ -635,12 +636,13 @@ appendCatalogChecks pool rows = appendRow pool "catalog_checks" $ \app ->
     aText      app (cckrTableName      r)
     aText      app (cckrPredicate      r)
 
-appendParseErrors :: AppenderPool -> [(FilePath, Text)] -> IO ()
+appendParseErrors :: AppenderPool -> [(FilePath, ParseError)] -> IO ()
 appendParseErrors _    [] = pure ()
 appendParseErrors pool errs = appendRow pool "parse_errors" $ \app ->
-  forEachRow app errs $ \_ (path, msg) -> do
+  forEachRow app errs $ \_ (path, pe) -> do
     aText app (T.pack path)
-    aText app msg
+    aText app (peMessage pe)
+    aMaybeInt app (peLine pe)
 
 appendSourceFiles :: AppenderPool -> [SourceFileRow] -> IO ()
 appendSourceFiles _    [] = pure ()

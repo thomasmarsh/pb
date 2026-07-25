@@ -19,6 +19,7 @@ import PB.Analysis.TypeEnv    (ScopedTypeEnv (..), WorkspaceEnv (..), buildWorks
 import PB.Analysis.TypeResolve (extractDwControlBindings)
 import PB.Grammar.DataWindow  (parseDataWindow)
 import PB.Pipeline.Emit       (parsePowerScriptFile)
+import PB.AST.SourceFile      (ParseError (..))
 import PB.Pipeline.SqlParse   (TableRef (..))
 
 import qualified Prelude        as P
@@ -299,7 +300,7 @@ tests = testGroup "SchFootprint"
             srwSrc <- readFile fullSrwPath
             srdSrc <- readFile fullSrdPath
             case (parsePowerScriptFile srwSrc, parseDataWindow srdSrc) of
-              (Left e, _) -> assertFailure ("failed to parse w_dw_copy.srw: " <> T.unpack e)
+              (Left e, _) -> assertFailure ("failed to parse w_dw_copy.srw: " <> T.unpack (peMessage e))
               (_, Left e) -> assertFailure ("failed to parse d_items.srd: " <> T.unpack e)
               (Right (sf, _spans, _toks), Right dwFile) ->
                 case [ ev | ev <- srEvents sf, esName (evSig ev) == "clicked", evOwner ev == Just "cb_getitem" ] of
@@ -365,7 +366,7 @@ tests = testGroup "SchFootprint"
             parsed <- traverse (\p -> parsePowerScriptFile <$> readFile p) fullPaths
             srdSrc <- readFile fullSrdPath
             case (sequence parsed, parseDataWindow srdSrc) of
-              (Left e, _)  -> assertFailure ("failed to parse fylo fixture: " <> T.unpack e)
+              (Left e, _)  -> assertFailure ("failed to parse fylo fixture: " <> T.unpack (peMessage e))
               (_, Left e)  -> assertFailure ("failed to parse dw_misth_fylo_epidom_list.srd: " <> T.unpack e)
               (Right triples, Right dwFile) ->
                 case [ sf | (sf, _, _) <- triples ] of

@@ -226,6 +226,14 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         )
     )
 
+    sql_stmts = rows(
+        conn.execute(
+            "SELECT line, raw_sql, operation, parse_ok "
+            "FROM sql_statements WHERE object = ? ORDER BY line",
+            [name],
+        )
+    )
+
     return {
         "file": file_path,
         "lines": lines,
@@ -234,6 +242,7 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         "knownObjects": get_known_objects(conn, name),
         "resolvedCalls": get_resolved_calls(conn, name),
         "resolvedVarRefs": get_resolved_var_refs(conn, name),
+        "sqlStatements": sql_stmts,
     }
 
 

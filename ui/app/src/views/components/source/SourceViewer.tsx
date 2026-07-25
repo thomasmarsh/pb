@@ -24,6 +24,8 @@ interface SourceViewerProps {
   onProcBarClick?: (proc: ProcedureInfo) => void;
   contextActions?: ContextActions;
   sliceHighlight?: { lines: Set<number>; label: string } | null;
+  rawRanges?: Set<number> | null;
+  scrollToLine?: number | null;
   onClearSliceHighlight?: () => void;
 }
 
@@ -98,11 +100,12 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
         rangeLines={rangeLines()}
         procFirstLine={procFirstLine()}
         dimLines={dimLines()}
+        rawRanges={props.rawRanges ?? null}
         selectedProcName={props.selectedProcName}
         onProcBarClick={props.onProcBarClick}
         onLinkClick={handleLinkClick}
         onLinkContextMenu={handleLinkContextMenu}
-        scrollToLine={selectedRange()?.start ?? null}
+        scrollToLine={props.scrollToLine ?? selectedRange()?.start ?? null}
       />
       <SourceContextMenu
         target={menuTarget()}

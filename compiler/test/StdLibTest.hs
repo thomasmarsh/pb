@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.Pipeline.DuckDb
 import PB.Pipeline.DuckDb.Appender (withAppenderPool)
 import PB.Pipeline.Emit    (ParsedFile (..), ParseOutcome (..), parsePowerScriptFile, stripBom)
+import PB.AST.SourceFile   (ParseError (..))
 import PB.Pipeline.Runner  (compileOne, appendToDb)
 import PB.Analysis.TypeEnv (WorkspaceEnv (..), buildWorkspaceEnv)
 import PB.Analysis.TypeCheck (buildTypeCheckWorkspace)
@@ -122,7 +123,7 @@ testUserConfirmed = withHandle inMemory $ \conn -> do
   initSchema conn
   let src = "HA$PBExportHeader$w_test.srw\n\nglobal type w_test from window\nend type\n"
   case parsePowerScriptFile (stripBom src) of
-    Left  err           -> error ("parse: " <> T.unpack err)
+    Left  err           -> error ("parse: " <> T.unpack (peMessage err))
     Right (sf, sp, tks) -> do
       let wsEnv = buildWorkspaceEnv [sf]
           pf    = ParsedFile "w_test.srw" sf sp src tks

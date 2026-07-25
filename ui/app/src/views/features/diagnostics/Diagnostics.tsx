@@ -400,8 +400,8 @@ export function Diagnostics(props: { store: Store<AppState, AppAction> }) {
     store.dispatch({ tag: "diagnostics", action: { tag: "select", row } });
   }
 
-  function openSource(object: string) {
-    store.dispatch({ tag: "objects", action: { tag: "select", name: object } });
+  function openSource(object: string, line?: number | null) {
+    store.dispatch({ tag: "objects", action: { tag: "select", name: object, scrollToLine: line ?? undefined } });
   }
 
   const totalPages = () => Math.max(1, Math.ceil(e().total / PAGE_SIZE));
@@ -454,8 +454,8 @@ export function Diagnostics(props: { store: Store<AppState, AppAction> }) {
                     >
                       <button
                         class="link-btn"
-                        onClick={(ev) => { ev.stopPropagation(); openSource(row.object!); }}
-                        title="Open source face"
+                        onClick={(ev) => { ev.stopPropagation(); openSource(row.object!, row.line); }}
+                        title="Open source at error line"
                       >
                         {row.file}
                       </button>

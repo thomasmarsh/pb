@@ -1,6 +1,7 @@
 {-# LANGUAGE StrictData #-}
 module PB.AST.SourceFile
   ( SrFile (..)
+  , ParseError (..)
   , ForwardBlock (..)
   , PrototypesBlock (..)
   , ProtoDecl (..)
@@ -34,6 +35,12 @@ import PB.Lexing.Token    (SourceSpan)
 import Control.DeepSeq    (NFData)
 import GHC.Generics       (Generic)
 import qualified Data.Text as T
+
+-- | A parse error with its message and optional source line number.
+data ParseError = ParseError
+  { peMessage :: Text
+  , peLine    :: Maybe Int
+  } deriving (Eq, Show, Generic)
 
 data SrFile = SrFile
   { srHeaders         :: [Text]

@@ -599,6 +599,10 @@ body {
 .source-gutter-line--range, .source-code-line--range {
     background: rgba(108, 140, 255, 0.07);
 }
+.source-gutter-line--raw, .source-code-line--raw {
+    background: rgba(128, 128, 128, 0.18);
+}
+.source-gutter-line--raw { color: var(--text-muted); }
 .source-gutter-line--clickable { cursor: pointer; }
 .source-gutter-line--clickable:hover { color: var(--phase-p3); background: rgba(245, 158, 11, 0.1); }
 

@@ -35,4 +35,6 @@ export interface ObjectsState {
   proceduresListKind: string;
   proceduresListSort: "name" | "object" | "cyclomatic" | "caller_count";
   proceduresListOrder: "asc" | "desc";
+  // Line to scroll to after navigation (e.g. from diagnostics error click)
+  scrollToLine: number | null;
 }
