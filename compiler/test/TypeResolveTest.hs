@@ -87,6 +87,8 @@ mkFn nm params body = FunctionBlock
       , fnsName           = mkIdent nm
       , fnsParams         = mkParams params
       , fnsThrows         = Nothing
+      , fnsLibrary        = Nothing
+      , fnsAliasFor       = Nothing
       }
   , fbBody = body
   }
@@ -265,7 +267,8 @@ tests = testGroup "TypeResolve"
           let stmt = Located 15 (BsTry (TryStmt
                 [ localVarStmt "li_try" (PtPrimitive "integer") 16 ]
                 [ CatchClause "Exception" "e"
-                    [ localVarStmt "li_catch" (PtPrimitive "integer") 17 ] ]))
+                    [ localVarStmt "li_catch" (PtPrimitive "integer") 17 ] ]
+                Nothing))
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" [stmt] ] }
           case extractLocalVars "test.srw" "w_test" sf of
             [a, b] -> do
@@ -336,7 +339,8 @@ tests = testGroup "TypeResolve"
       , testCase "calls extracted from try-body and catch-body" $ do
           let body = [ Located 10 (BsTry (TryStmt
                 [ callStmt "f_try" 11 ]
-                [ CatchClause "Exception" "e" [ callStmt "f_catch" 12 ] ])) ]
+                [ CatchClause "Exception" "e" [ callStmt "f_catch" 12 ] ]
+                Nothing)) ]
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
           case extractCallSites emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [s1, s2] -> do

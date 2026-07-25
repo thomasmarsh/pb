@@ -291,6 +291,31 @@ warnings" report at face value.
 - **End with an explicit "Stop" section**: report build status, test
   count, verification-gate result, and files touched, then stop. Don't
   ask it to suggest what's next.
+- **"Mirror the sibling's tests" only covers the dimensions the sibling
+  actually has — say so explicitly when the new construct has one the
+  sibling doesn't.** Observed 2026-07-25 (Plan 203, `BsHalt` AST node): the
+  spec said to mirror `BsExit`/`BsContinue`'s existing parser tests, which
+  are pure positive cases (those constructors take no trailing tokens, so
+  there's no fallback path to test). `BsHalt` has an extra dimension its
+  siblings don't — malformed trailing tokens after `HALT` fall back to
+  `BsRaw` — and mimo faithfully mirrored the sibling's test *shape*, which
+  meant it added the two positive cases and nothing else. This project's
+  own `compiler/AGENTS.md` states a triangulation rule for new parsers
+  (positive/negative/property, all three required), which would have
+  caught this if the spec had named it — instead the spec only said
+  "positive parse tests" in its own Tests section, so the omission wasn't
+  mimo's error, it was the spec under-specifying relative to the project's
+  own stated convention. Build and tests both passed cleanly regardless —
+  a missing test produces no failure for the gate to catch, so this is not
+  a self-correcting gap the way a build error is. **The lesson: when a
+  project has an explicit test-shape convention (this repo's
+  Positive/Negative/Property triangulation, or an analogous rule
+  elsewhere), name each required shape explicitly in the spec's Tests
+  section for the *new* construct's own behavior — not just "mirror
+  sibling X" — whenever the new construct isn't a strict structural subset
+  of the sibling being mirrored.** Caught on review (not by any gate);
+  fixed by adding the missing negative-case test directly rather than
+  re-delegating for one test case.
 
 ## mimo reads this project's AGENTS.md/CLAUDE.md too — account for that
 

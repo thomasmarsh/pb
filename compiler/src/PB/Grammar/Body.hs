@@ -598,16 +598,19 @@ pCaseClause = do
 pTryStmt :: FileParser BodyStmt
 pTryStmt = do
   _ <- satisfyStmt (leadingCtrl "try")
-  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTryOrFinally))
   catches <- many (try pCatchClause)
+  finallyBody <- optional $ do
+    _ <- satisfyStmt (leadingCtrl "finally")
+    concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "end try")))
   _ <- satisfyStmt (leadingCtrl "end try")
-  return (BsTry (TryStmt body catches))
+  return (BsTry (TryStmt body catches finallyBody))
 
 pCatchClause :: FileParser CatchClause
 pCatchClause = do
   s <- satisfyStmt (leadingCtrl "catch")
   let (exnType, exnVar) = parseCatchSig (stmtTokens s)
-  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
+  body <- concat <$> manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTryOrFinally))
   return (CatchClause exnType exnVar body)
 
 -- | Parse the exception type and variable name from a catch statement's tokens.
@@ -621,10 +624,10 @@ parseCatchSig ts =
        (typT : _)        -> (tkText typT, "")
        []                -> ("", "")
 
-isCatchOrEndTry :: Statement -> Bool
-isCatchOrEndTry s = case stmtTokens s of
+isCatchOrEndTryOrFinally :: Statement -> Bool
+isCatchOrEndTryOrFinally s = case stmtTokens s of
   (t:_) -> tkKind t == TkControlKw
-        && T.toLower (tkText t) `elem` ["catch", "end try"]
+        && T.toLower (tkText t) `elem` ["catch", "end try", "finally"]
   _ -> False
 
 -- ---------------------------------------------------------------------------

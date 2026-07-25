@@ -49,13 +49,15 @@ localVarStmt nm = Located 1 (BsLocalVar [] (PtPrimitive "string") (mkIdent nm) N
 fnUnit :: Text -> FunctionBlock
 fnUnit nm = FunctionBlock
   { fbSig = FnSig { fnsMods = [], fnsReturnType = "integer", fnsReturnTypeSpan = SourceSpan 1 1 1 1
-                  , fnsName = mkIdent nm, fnsParams = [mkParam "ai_p"], fnsThrows = Nothing }
+                  , fnsName = mkIdent nm, fnsParams = [mkParam "ai_p"], fnsThrows = Nothing
+                  , fnsLibrary = Nothing, fnsAliasFor = Nothing }
   , fbBody = [localVarStmt "ls_local"]
   }
 
 subUnit :: Text -> SubroutineBlock
 subUnit nm = SubroutineBlock
-  { sbSig = SubSig { ssMods = [], ssName = mkIdent nm, ssParams = [], ssThrows = Nothing }
+  { sbSig = SubSig { ssMods = [], ssName = mkIdent nm, ssParams = [], ssThrows = Nothing
+                    , ssLibrary = Nothing, ssAliasFor = Nothing }
   , sbBody = []
   }
 

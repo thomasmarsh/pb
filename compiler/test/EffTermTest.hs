@@ -1136,7 +1136,8 @@ tests = testGroup "EffTerm"
         let body = [ Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "0"))
                    , Located 2 (BsTry (TryStmt
                        [Located 3 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "1"))]
-                       [CatchClause "Exception" "e" [Located 4 (BsAssign (Lvalue [LvSegment "y" Nothing]) (ExInt "99"))]]))
+                       [CatchClause "Exception" "e" [Located 4 (BsAssign (Lvalue [LvSegment "y" Nothing]) (ExInt "99"))]]
+                       Nothing))
                    , Located 5 (BsAssign (Lvalue [LvSegment "z" Nothing]) (ExInt "2"))
                    ]
             expectedTrace = ( Map.fromList [("x", VInt 1), ("z", VInt 2)]
@@ -1153,7 +1154,8 @@ tests = testGroup "EffTerm"
     , testCase "try-body nodes appear in graph shape (canonicalize)" $
         let body = [ Located 1 (BsTry (TryStmt
                        [Located 2 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "1"))]
-                       []))
+                       []
+                       Nothing))
                    ]
             shape = canonicalize (compileProcedureViaEffTerm emptyEnv Set.empty body)
         in shape @?= [SAsgn 1, SRet]

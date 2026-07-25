@@ -32,7 +32,7 @@ mkSf fns subs evs obs = SrFile
 mkFn :: Text -> [Text] -> Text -> [Located BodyStmt] -> FunctionBlock
 mkFn name params ret body = FunctionBlock
   { fbSig = FnSig [] ret (SourceSpan 1 1 1 1) (mkIdent name)
-      [Param [] "any" (SourceSpan 1 1 1 1) (mkIdent p) | p <- params] Nothing
+      [Param [] "any" (SourceSpan 1 1 1 1) (mkIdent p) | p <- params] Nothing Nothing Nothing
   , fbBody = body
   }
 
@@ -387,7 +387,8 @@ tests = testGroup "Taint"
                         [ at 1 (BsTry (TryStmt
                             [ at 2 (BsRaw "SELECT col INTO :ls_val FROM tbl") ]
                             [ CatchClause "Exception" "e"
-                                [ at 3 (BsRaw "SELECT col2 INTO :ls_val2 FROM tbl2") ] ]))
+                                [ at 3 (BsRaw "SELECT col2 INTO :ls_val2 FROM tbl2") ] ]
+                            Nothing))
                         ]] [] [] []
             tfi = extractTaintInputs "w.srf" sf
         in length (tfiSqlStmts tfi) @?= 2

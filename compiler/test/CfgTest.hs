@@ -210,7 +210,7 @@ tests = testGroup "CfgBuild"
     -- block chain like ordinary statements, and each catch body lowers into
     -- its own fresh, disconnected block never reached from cfgEntry.
     [ testCase "try-body assign is real CFG content, reachable from cfgEntry" $ do
-        let stmt = at 1 (BsTry (TryStmt [at 2 (BsAssign (lv1 "x") (ExInt "1"))] []))
+        let stmt = at 1 (BsTry (TryStmt [at 2 (BsAssign (lv1 "x") (ExInt "1"))] [] Nothing))
             g    = buildCfg [stmt]
             reachable = reachableFrom g
             isTryAssign blk = cbId blk `Set.member` reachable
@@ -220,7 +220,7 @@ tests = testGroup "CfgBuild"
 
     , testCase "catch-body assign exists in the CFG but is unreachable from cfgEntry" $ do
         let catches = [CatchClause "Exception" "e" [at 3 (BsAssign (lv1 "y") (ExInt "2"))]]
-            stmt    = at 1 (BsTry (TryStmt [at 2 (BsAssign (lv1 "x") (ExInt "1"))] catches))
+            stmt    = at 1 (BsTry (TryStmt [at 2 (BsAssign (lv1 "x") (ExInt "1"))] catches Nothing))
             g       = buildCfg [stmt]
             reachable = reachableFrom g
             hasCatchAssign blk = any (\l -> locNode l == BsAssign (lv1 "y") (ExInt "2")) (cbStmts blk)
@@ -232,10 +232,21 @@ tests = testGroup "CfgBuild"
 
     , testCase "nested if inside a try-body still lowers with real branch edges" $ do
         let thenS = [at 3 (BsAssign (lv1 "x") (ExInt "1"))]
-            stmt  = at 1 (BsTry (TryStmt [at 2 (BsIf (IfStmt (ExBool True) thenS [] Nothing))] []))
+            stmt  = at 1 (BsTry (TryStmt [at 2 (BsIf (IfStmt (ExBool True) thenS [] Nothing))] [] Nothing))
             g     = buildCfg [stmt]
             edgeLabels = map ceLabel (cfgEdges g)
         elem "T" edgeLabels @?= True
         elem "F" edgeLabels @?= True
+
+    , testCase "finally-body assign is real CFG content, reachable from cfgEntry (normal path, not exceptional)" $ do
+        let catches = [CatchClause "Exception" "e" [at 3 (BsAssign (lv1 "y") (ExInt "2"))]]
+            fin     = [at 4 (BsAssign (lv1 "z") (ExInt "3"))]
+            stmt    = at 1 (BsTry (TryStmt [at 2 (BsAssign (lv1 "x") (ExInt "1"))] catches (Just fin)))
+            g       = buildCfg [stmt]
+            reachable = reachableFrom g
+            isFinallyAssign blk = cbId blk `Set.member` reachable
+                                && any (\l -> locNode l == BsAssign (lv1 "z") (ExInt "3")) (cbStmts blk)
+        assertBool "expected the finally-body's own assign in a block reachable from cfgEntry"
+          (any isFinallyAssign (cfgBlocks g))
     ]
   ]

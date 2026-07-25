@@ -300,11 +300,12 @@ stmtToAssigns (BsReturn _)  = []
 stmtToAssigns BsExit        = []
 stmtToAssigns (BsHalt _)    = []
 stmtToAssigns BsContinue    = []
--- BsTry/BsThrow: try/catch is not yet lowered into the CFG (CfgBuild treats
--- it as one opaque leaf statement — see BACKLOG's try/catch CFG-modeling
--- note), so any assigns nested inside tryBody/catchBody are invisible here
--- by design, not a gap in this function specifically. BsThrow has no
--- assignable value of its own.
+-- BsTry/BsThrow: this per-statement SSA pass does not recurse into
+-- try/catch/finally's nested body statements (unlike 'PB.Analysis.Cfg's
+-- 'lowerTry', which does lower them into real CFG blocks), so any assigns
+-- nested inside tryBody/catchBody/tryFinally are invisible here by design,
+-- not a gap in this function specifically. BsThrow has no assignable value
+-- of its own.
 stmtToAssigns (BsTry {})   = []
 stmtToAssigns (BsThrow _)  = []
 -- BsRaw: unparsed source text (embedded SQL, unclassified statements) — no

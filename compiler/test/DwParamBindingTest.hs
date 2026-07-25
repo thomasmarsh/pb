@@ -65,13 +65,15 @@ mkParams raw
 mkFn :: T.Text -> T.Text -> [Located BodyStmt] -> FunctionBlock
 mkFn nm params body = FunctionBlock
   { fbSig = FnSig { fnsMods = [], fnsReturnType = "integer", fnsReturnTypeSpan = SourceSpan 1 1 1 1
-                  , fnsName = mkIdent nm, fnsParams = mkParams params, fnsThrows = Nothing }
+                  , fnsName = mkIdent nm, fnsParams = mkParams params, fnsThrows = Nothing
+                  , fnsLibrary = Nothing, fnsAliasFor = Nothing }
   , fbBody = body
   }
 
 mkSub :: T.Text -> T.Text -> [Located BodyStmt] -> SubroutineBlock
 mkSub nm params body = SubroutineBlock
-  { sbSig = SubSig { ssMods = [], ssName = mkIdent nm, ssParams = mkParams params, ssThrows = Nothing }
+  { sbSig = SubSig { ssMods = [], ssName = mkIdent nm, ssParams = mkParams params, ssThrows = Nothing
+                    , ssLibrary = Nothing, ssAliasFor = Nothing }
   , sbBody = body
   }
 

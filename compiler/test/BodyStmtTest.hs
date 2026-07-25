@@ -616,8 +616,15 @@ tests = testGroup "Body"
         let body = [at 1 (BsRaw "a")]
             cat1 = CatchClause "Exception" "e1" [at 2 (BsRaw "b")]
             cat2 = CatchClause "Error"     "e2" [at 3 (BsRaw "c")]
-        in stmtChildren (BsTry (TryStmt body [cat1, cat2]))
+        in stmtChildren (BsTry (TryStmt body [cat1, cat2] Nothing))
              @?= [body, catchBody cat1, catchBody cat2]
+
+    , testCase "BsTry with a catch and a finally -> [body, cat body, finally body] (3 groups)" $
+        let body = [at 1 (BsRaw "a")]
+            cat1 = CatchClause "Exception" "e1" [at 2 (BsRaw "b")]
+            fin  = [at 3 (BsRaw "c")]
+        in stmtChildren (BsTry (TryStmt body [cat1] (Just fin)))
+             @?= [body, catchBody cat1, fin]
     ]
 
   , testGroup "foldStmts"
@@ -630,18 +637,18 @@ tests = testGroup "Body"
           @?= ["inner"]
 
     , testCase "BsRaw inside BsTry try-body found via recursion" $
-        rawTexts [at 1 (BsTry (TryStmt [at 2 (BsRaw "in try")] []))]
+        rawTexts [at 1 (BsTry (TryStmt [at 2 (BsRaw "in try")] [] Nothing))]
           @?= ["in try"]
 
     , testCase "BsRaw inside BsTry catch-body found via recursion" $
-        rawTexts [at 1 (BsTry (TryStmt [] [CatchClause "Exception" "e" [at 2 (BsRaw "in catch")]]))]
+        rawTexts [at 1 (BsTry (TryStmt [] [CatchClause "Exception" "e" [at 2 (BsRaw "in catch")]] Nothing))]
           @?= ["in catch"]
 
     , testCase "BsRaw inside BsIf-then inside BsFor inside BsTry, found at depth 3" $
         let deep = BsTry (TryStmt
               [ at 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing]) (ExInt "1") (ExInt "10") Nothing
                   [ at 2 (BsIf (IfStmt (ExBool True) [at 3 (BsRaw "deepest")] [] Nothing)) ]))
-              ] [])
+              ] [] Nothing)
         in rawTexts [at 0 deep] @?= ["deepest"]
 
     , testCase "visits every node exactly once (no dup, no miss)" $
@@ -651,7 +658,7 @@ tests = testGroup "Body"
                   [at 3 (BsRaw "b")]
                   [ElseIf (ExBool False) [at 4 (BsRaw "c")]]
                   (Just [at 5 (BsRaw "d")])))
-              , at 6 (BsTry (TryStmt [at 7 (BsRaw "e")] [CatchClause "Exception" "x" [at 8 (BsRaw "f")]]))
+              , at 6 (BsTry (TryStmt [at 7 (BsRaw "e")] [CatchClause "Exception" "x" [at 8 (BsRaw "f")]] Nothing))
               ]
             visited = foldStmts (const [()]) tree
         in length visited @?= 8
@@ -763,7 +770,7 @@ normalizeBodyStmt stmt = case stmt of
   BsFor (ForStmt lv from to step body) -> BsFor (ForStmt lv from to step (normBody body))
   BsDo (DoStmt cond body loop) -> BsDo (DoStmt cond (normBody body) loop)
   BsChoose (ChooseStmt e clauses) -> BsChoose (ChooseStmt e (map normClause clauses))
-  BsTry (TryStmt body catches) -> BsTry (TryStmt (normBody body) (map normCatch catches))
+  BsTry (TryStmt body catches mFin) -> BsTry (TryStmt (normBody body) (map normCatch catches) (fmap normBody mFin))
   other -> other
   where
     zeroSpan t = t { tkSpan = SourceSpan 0 0 0 0 }
@@ -958,8 +965,9 @@ genCaseClause depth =
 
 genTryStmt :: Int -> Gen BodyStmt
 genTryStmt depth =
-  (\body catches -> BsTry (TryStmt body catches))
+  (\body catches fin -> BsTry (TryStmt body catches fin))
     <$> genLocatedBody depth <*> Gen.list (Range.linear 0 2) (genCatchClause depth)
+    <*> Gen.maybe (genLocatedBody depth)
 
 -- | Exception type/var are generated as single-token idents only, since
 -- parseCatchSig extracts them by raw token text -- same "flat generator

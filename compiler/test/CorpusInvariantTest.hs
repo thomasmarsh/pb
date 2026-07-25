@@ -537,8 +537,9 @@ collectLocalVarLines = concatMap go
         BsFor (ForStmt _ _ _ _ body)      -> collectLocalVarLines body
         BsDo (DoStmt _ body _)            -> collectLocalVarLines body
         BsChoose (ChooseStmt _ clauses)   -> concatMap (collectLocalVarLines . ccBody) clauses
-        BsTry (TryStmt body catches)      ->
+        BsTry (TryStmt body catches mFin) ->
             collectLocalVarLines body ++ concatMap (collectLocalVarLines . catchBody) catches
+            ++ maybe [] collectLocalVarLines mFin
         _ -> []
 
 -- | Sum of extracted 'BsLocalVar' names, restricted to lines that produced

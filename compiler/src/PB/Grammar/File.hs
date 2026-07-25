@@ -199,15 +199,13 @@ isEvDecl s =
 -- @mods* type name (array-brackets)?@; leftover tokens after the last
 -- recognized (mods, type, name) triple -- i.e. dimension brackets -- carry
 -- no further dimension expression in a signature, so they are discarded.
-parseParamsAndThrows :: [Token] -> ([Param], Maybe Text)
+parseParamsAndThrows :: [Token] -> ([Param], Maybe Text, Maybe Text, Maybe Text)
 parseParamsAndThrows more =
   let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
       params = mapMaybe paramFor (splitArgs paramToks)
-      throws = case afterParams of
-        (_rparen : throwsKw : exName : _)
-          | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
-        _ -> Nothing
-  in (params, throws)
+      rest = drop 1 afterParams  -- skip the ')'
+      (throws, library, aliasFor) = extractTrailingClauses rest
+  in (params, throws, library, aliasFor)
   where
     paramFor toks = case span isModifierToken toks of
       (mods, typeT : nameT : _) | tkKind nameT == TkIdent ->
@@ -218,14 +216,40 @@ parseParamsAndThrows more =
           , paramName     = mkIdentAt (tkSpan nameT) (tkText nameT)
           }
       _ -> Nothing
+    -- Scan the trailing token span after ')' for THROWS, LIBRARY, and ALIAS FOR
+    -- clauses.  These can appear in any order; each keyword is prefixed and the
+    -- parser is lenient — a malformed clause is silently ignored.
+    extractTrailingClauses :: [Token] -> (Maybe Text, Maybe Text, Maybe Text)
+    extractTrailingClauses = go Nothing Nothing Nothing
+      where
+        go t l a [] = (t, l, a)
+        go t l a (tok : rest)
+          | T.toLower (tkText tok) == "throws"
+          = case rest of
+              (name : _) | tkKind name == TkIdent -> go (Just (tkText name)) l a (drop 1 rest)
+              _ -> go t l a rest
+          | T.toLower (tkText tok) == "library"
+          = case rest of
+              (libStr : _) | tkKind libStr `elem` [TkStringDouble, TkStringSingle] -> go t (Just (unquote libStr)) a (drop 1 rest)
+              _ -> go t l a rest
+          | T.toLower (tkText tok) == "alias"
+          = case rest of
+              (forKw : aliasStr : more')
+                | T.toLower (tkText forKw) == "for"
+                , tkKind aliasStr `elem` [TkStringDouble, TkStringSingle] -> go t l (Just (unquote aliasStr)) more'
+              _ -> go t l a rest
+          | otherwise = go t l a rest
+        -- Strip the surrounding quote delimiters, matching how 'ExStr' converts
+        -- a string-literal token's raw text elsewhere in the grammar.
+        unquote tok = T.dropEnd 1 (T.drop 1 (tkText tok))
 
 extractFnSig :: Statement -> Maybe FnSig
 extractFnSig s =
   let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
       finish retTy name more =
-        let (params, throws) = parseParamsAndThrows more
-        in Just (FnSig mods (tkText retTy) (tkSpan retTy) (mkIdentAt (tkSpan name) (tkText name)) params throws)
+        let (params, throws, library, aliasFor) = parseParamsAndThrows more
+        in Just (FnSig mods (tkText retTy) (tkSpan retTy) (mkIdentAt (tkSpan name) (tkText name)) params throws library aliasFor)
   in case rest of
     (_kw : retTy : name : lparen : more)
       | tkKind lparen == TkLParen -> finish retTy name more
@@ -239,8 +263,8 @@ extractSubSig s =
   let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
       finish name more =
-        let (params, throws) = parseParamsAndThrows more
-        in Just (SubSig mods (mkIdentAt (tkSpan name) (tkText name)) params throws)
+        let (params, throws, library, aliasFor) = parseParamsAndThrows more
+        in Just (SubSig mods (mkIdentAt (tkSpan name) (tkText name)) params throws library aliasFor)
   in case rest of
     (_kw : name : lparen : more)
       | tkKind lparen == TkLParen -> finish name more
@@ -258,7 +282,7 @@ extractEvSig s =
   in case rest of
     (_kw : name : remainder) ->
         let params = case remainder of
-              (lp : more) | tkKind lp == TkLParen -> fst (parseParamsAndThrows more)
+              (lp : more) | tkKind lp == TkLParen -> let (ps, _, _, _) = parseParamsAndThrows more in ps
               _ -> []
         in Just (EventSig (mkIdentAt (tkSpan name) (tkText name)) params)
     _ -> Nothing

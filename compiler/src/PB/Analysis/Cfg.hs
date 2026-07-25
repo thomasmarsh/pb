@@ -256,20 +256,22 @@ lowerDo stmt@(BsDo (DoStmt mCond bodyStmts mLoop)) currentId _loopHead = do
 lowerDo _ currentId _ = pure currentId
 
 
--- | try/catch: the try body has no branching semantics of its own, so it
--- lowers as ordinary sequential code continuing the current block chain
--- (matching 'PB.Analysis.InstrGraph.compileStmts's 'BsTry' case: "compile
--- try body sequentially"). Each catch body is lowered starting from a fresh,
--- disconnected block — no edge is ever added from the main flow into it —
--- so it exists in the CFG (its own statements are real 'CfgBlock' content,
--- reachable by 'buildSsa' if anything ever points to it) but is genuinely
--- unreachable from 'cfgEntry', mirroring the old compiler's own "compile
--- each catch body, discard its entry pc" behavior exactly: exception
--- dispatch is runtime-only, with no static edge in either compiler.
+-- | try/catch/finally: the try body and finally block have no branching
+-- semantics of their own, so they lower as ordinary sequential code
+-- continuing the current block chain. Each catch body is lowered starting
+-- from a fresh, disconnected block — no edge is ever added from the main
+-- flow into it — so it exists in the CFG (its own statements are real
+-- 'CfgBlock' content, reachable by 'buildSsa' if anything ever points to
+-- it) but is genuinely unreachable from 'cfgEntry', mirroring the old
+-- compiler's own "compile each catch body, discard its entry pc" behavior
+-- exactly: exception dispatch is runtime-only, with no static edge in
+-- either compiler. The finally block, when present, continues sequentially
+-- from the try body's exit on the normal path.
 lowerTry :: BodyStmt -> Text -> Maybe Text -> B Text
-lowerTry (BsTry (TryStmt body catches)) currentId loopHead = do
+lowerTry (BsTry (TryStmt body catches mFin)) currentId loopHead = do
   mapM_ (\c -> newBlock >>= \catchId -> lower (catchBody c) catchId loopHead) catches
-  lower body currentId loopHead
+  bodyExit <- lower body currentId loopHead
+  maybe (pure bodyExit) (\fin -> lower fin bodyExit loopHead) mFin
 lowerTry _ currentId _ = pure currentId
 
 lowerChoose :: BodyStmt -> Text -> Maybe Text -> B Text

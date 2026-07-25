@@ -355,6 +355,7 @@ tests = testGroup "Grammar.Body.Parser"
             [ loc1 (BsTry (TryStmt
                 { tryBody    = [loc1 assignY1]
                 , tryCatches = [ CatchClause "RuntimeError" "e" [loc1 assignZ2] ]
+                , tryFinally = Nothing
                 })) ]
 
     , testCase "multiple catch clauses" $
@@ -373,6 +374,7 @@ tests = testGroup "Grammar.Body.Parser"
                 , tryCatches = [ CatchClause "TypeA" "ea" [loc1 assignZ2]
                                , CatchClause "TypeB" "eb" [loc1 assignY1]
                                ]
+                , tryFinally = Nothing
                 })) ]
 
     , testCase "try with no catch clauses" $
@@ -385,6 +387,66 @@ tests = testGroup "Grammar.Body.Parser"
             [ loc1 (BsTry (TryStmt
                 { tryBody    = [loc1 assignY1]
                 , tryCatches = []
+                , tryFinally = Nothing
+                })) ]
+
+    , testCase "try with finally, no catch clauses" $
+        -- try / y = 1 / finally / z = 2 / end try
+        runBodyStmts
+          [ mkStmt [(TkControlKw,"try")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"finally")]
+          , stmtZ2
+          , mkStmt [(TkControlKw,"end try")] ]
+          @?= Right
+            [ loc1 (BsTry (TryStmt
+                { tryBody    = [loc1 assignY1]
+                , tryCatches = []
+                , tryFinally = Just [loc1 assignZ2]
+                })) ]
+
+    , testCase "try with catch and finally" $
+        -- try / y = 1 / catch (RuntimeError e) / z = 2 / finally / y = 1 / end try
+        runBodyStmts
+          [ mkStmt [(TkControlKw,"try")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"catch"),(TkLParen,"("),(TkIdent,"RuntimeError"),(TkIdent,"e"),(TkRParen,")")]
+          , stmtZ2
+          , mkStmt [(TkControlKw,"finally")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"end try")] ]
+          @?= Right
+            [ loc1 (BsTry (TryStmt
+                { tryBody    = [loc1 assignY1]
+                , tryCatches = [ CatchClause "RuntimeError" "e" [loc1 assignZ2] ]
+                , tryFinally = Just [loc1 assignY1]
+                })) ]
+
+    , testCase "finally before catch: the catch clause is absorbed into the finally body as raw content, not recognized as tryCatches" $
+        -- try / y = 1 / finally / z = 2 / catch (RuntimeError e) / y = 1 / end try
+        -- PB's real grammar never places FINALLY before CATCH. Once the
+        -- parser commits to FINALLY (no catches precede it), it scans the
+        -- finally body up to "end try" via the ordinary pBodyStmt
+        -- dispatcher -- a mid-scan "catch (...)" statement doesn't match
+        -- any recognized statement shape there, so it degrades to BsRaw
+        -- and is folded into the finally body alongside the real
+        -- statements around it. tryCatches stays empty: the catch clause's
+        -- structure (exception type/var) is not recovered, but the parse
+        -- doesn't crash and doesn't silently claim a catch that was never
+        -- structurally recognized.
+        runBodyStmts
+          [ mkStmt [(TkControlKw,"try")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"finally")]
+          , stmtZ2
+          , mkStmt [(TkControlKw,"catch"),(TkLParen,"("),(TkIdent,"RuntimeError"),(TkIdent,"e"),(TkRParen,")")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"end try")] ]
+          @?= Right
+            [ loc1 (BsTry (TryStmt
+                { tryBody    = [loc1 assignY1]
+                , tryCatches = []
+                , tryFinally = Just [loc1 assignZ2, loc1 (BsRaw ""), loc1 assignY1]
                 })) ]
 
     , testCase "throw statement" $

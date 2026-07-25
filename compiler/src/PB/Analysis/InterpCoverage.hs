@@ -104,8 +104,9 @@ stmtSites (BsDo (DoStmt cond body loopCond)) =
   maybe [] doCondSite cond <> collectCoverage body <> maybe [] doCondSite loopCond
 stmtSites (BsChoose (ChooseStmt switchExpr clauses)) =
   branchCondSite switchExpr <> concatMap (collectCoverage . ccBody) clauses
-stmtSites (BsTry (TryStmt tryBody catches)) =
+stmtSites (BsTry (TryStmt tryBody catches mFin)) =
   collectCoverage tryBody <> concatMap (collectCoverage . catchBody) catches
+    <> maybe [] collectCoverage mFin
 stmtSites (BsReturn (Just e)) = assignRhsSite e
 stmtSites (BsThrow e) = assignRhsSite e
 stmtSites _ = []

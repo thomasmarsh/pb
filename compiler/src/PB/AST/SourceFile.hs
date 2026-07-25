@@ -157,13 +157,17 @@ data FnSig = FnSig
   , fnsName           :: Ident
   , fnsParams         :: [Param]
   , fnsThrows         :: Maybe Text
+  , fnsLibrary        :: Maybe Text  -- ^ @LIBRARY "libname"@ clause on external function declarations
+  , fnsAliasFor       :: Maybe Text  -- ^ @ALIAS FOR "extname"@ clause on external function declarations
   } deriving (Eq, Show, Generic)
 
 data SubSig = SubSig
-  { ssMods   :: [Text]
-  , ssName   :: Ident
-  , ssParams :: [Param]
-  , ssThrows :: Maybe Text
+  { ssMods     :: [Text]
+  , ssName     :: Ident
+  , ssParams   :: [Param]
+  , ssThrows   :: Maybe Text
+  , ssLibrary  :: Maybe Text  -- ^ @LIBRARY "libname"@ clause on external subroutine declarations
+  , ssAliasFor :: Maybe Text  -- ^ @ALIAS FOR "extname"@ clause on external subroutine declarations
   } deriving (Eq, Show, Generic)
 
 data EventSig = EventSig

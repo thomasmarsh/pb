@@ -88,10 +88,11 @@ data CatchClause = CatchClause
   , catchBody    :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
--- | try … catch … end try
+-- | try … catch … finally … end try
 data TryStmt = TryStmt
   { tryBody    :: [Located BodyStmt]
   , tryCatches :: [CatchClause]
+  , tryFinally :: Maybe [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 data BodyStmt
@@ -133,7 +134,8 @@ stmtChildren (BsIf (IfStmt _ th eis mel)) =
 stmtChildren (BsFor    (ForStmt _ _ _ _ body)) = [body]
 stmtChildren (BsDo     (DoStmt _ body _))       = [body]
 stmtChildren (BsChoose (ChooseStmt _ clauses)) = map ccBody clauses
-stmtChildren (BsTry    (TryStmt body catches)) = body : map catchBody catches
+stmtChildren (BsTry (TryStmt body catches mFin)) =
+  body : map catchBody catches <> maybe [] pure mFin
 stmtChildren _                                  = []
 
 -- | Monoidal pre-order fold over every node in a statement tree. Applies f

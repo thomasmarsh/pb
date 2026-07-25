@@ -155,8 +155,9 @@ unparseBodyStmt stmt = case stmt of
   BsHalt True           -> "halt close"
   BsDestroy lv          -> "destroy " <> unparseLvalue lv
   BsAssignExpr lhs rhs  -> unparseExpr lhs <> " = " <> unparseExpr rhs
-  BsTry (TryStmt body catches) ->
-    "try\n" <> unparseBody body <> foldMap unparseCatchClause catches <> "end try"
+  BsTry (TryStmt body catches mFin) ->
+    "try\n" <> unparseBody body <> foldMap unparseCatchClause catches
+      <> maybe "" (\fin -> "finally\n" <> unparseBody fin) mFin <> "end try"
   BsThrow e             -> "throw " <> unparseExpr e
   BsRaw t               -> t
 
