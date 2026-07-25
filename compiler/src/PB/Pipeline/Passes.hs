@@ -1,17 +1,22 @@
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE RecordWildCards #-}
 module PB.Pipeline.Passes
   ( runPhaseB
   ) where
 
 import PB.Prelude
-import PB.AST.Ident            (Ident, identSetFromList, mkIdent)
+import PB.AST.Ident            (Ident, IdentMap, IdentSet, identSetFromList, mkIdent)
 import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
+import PB.Analysis.TaintEdges  qualified as TaintEdges
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
-  ( SchemaInputs (..), SchGraph (..), buildSchema, CatFkRow )
+  ( SchemaInputs (..), SchGraph (..), buildSchema, CatFkRow
+  , SchObject (..), SchMorphism (..)
+  , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..), CatColumnRow (..)
+  )
 import PB.Pipeline.DuckDb.Relations qualified as Relations
-import PB.Pipeline.DuckDb.Relations (LegSourceFanout (..))
+import PB.Pipeline.DuckDb.Relations (LegSourceFanout (..), SchemaInputRows (..))
 import PB.Analysis.DeadCodeReachability qualified as DeadCodeReachability
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Analysis.TaintClosure qualified as TaintClosure
@@ -26,6 +31,7 @@ import PB.Pipeline.DuckDb.PhaseB.Query
   , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
   , queryCatColumns, queryCatFks
+  , DeadCodeClosureReady (..), SchemaClosureReady (..), CallGraphAndTaintReady (..)
   )
 import PB.Pipeline.DuckDb.PhaseB.Append
   ( appendResolvedTypes, appendResolvedCalls
@@ -50,6 +56,66 @@ import qualified Data.Set        as Set
 import qualified Data.Text       as T
 import Data.Time.Clock        (getCurrentTime)
 
+-- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
+-- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
+-- 'initDeadCodeInput'. Constructor NOT exported from this module.
+newtype ResolvedCallsReady = ResolvedCallsReady ()
+
+-- | All DuckDB rows 'resolveTypesAndCalls' fetches before its pure transform.
+data ResolveInputs = ResolveInputs
+  { riLocalVars       :: ![LocalVar]
+  , riGlobalVars      :: ![GlobalVar]
+  , riCallSites       :: ![CallSite]
+  , riObjSet          :: !(Set.Set Text)
+  , riUsrTypes        :: !(Set.Set Text)
+  , riInherits        :: !(Map.Map Ident Ident)
+  , riProcMap         :: !(IdentMap IdentSet)
+  , riCallableProcMap :: !(IdentMap IdentSet)
+  }
+
+-- | The two row lists 'resolveTypesAndCalls' produces for its sink.
+data ResolvedOutput = ResolvedOutput
+  { roResolvedTypes :: ![ResolvedType]
+  , roResolvedCalls :: ![ResolvedCall]
+  }
+
+-- | All DuckDB rows 'buildCallGraphAndTaint' fetches before its pure transform.
+data CallGraphInputs = CallGraphInputs
+  { cgiGlobalVars    :: ![GlobalVar]
+  , cgiProcDefs      :: ![Taint.DefRow]
+  , cgiProcUses      :: ![Taint.UseRow]
+  , cgiResolvedCalls :: ![Taint.ResolvedCallRow]
+  , cgiTaintInputs   :: ![Taint.TaintFileInputs]
+  , cgiIntraEdges    :: ![TaintEdges.TaintIntraEdgeRow]
+  , cgiReturnRows    :: ![TaintEdges.TaintReturnRow]
+  }
+
+-- | Everything 'buildCallGraphAndTaint' pushes back into DuckDB.
+data CallGraphOutput = CallGraphOutput
+  { coInterprocEdges :: ![Taint.InterprocEdge]
+  , coProcSummaries  :: ![Taint.ProcedureSummary]
+  , coTaintSources   :: ![Taint.TaintSource]
+  , coTaintSinks     :: ![Taint.TaintSink]
+  , coTaintClosure   :: !TaintClosure.TaintClosure
+  }
+
+-- | All DuckDB rows 'buildSchemaCategory' fetches before its pure transform.
+data SchemaCategoryInputs = SchemaCategoryInputs
+  { sciDwRetrieveColumns :: ![DwRetrieveColRow]
+  , sciDwWriteColumns    :: ![DwRetrieveColRow]
+  , sciDwWhereColumns    :: ![DwRetrieveColRow]
+  , sciDwJoinLegs        :: ![DwJoinLegRow]
+  , sciSqlCols           :: ![SqlColRow]
+  , sciCatFootprintCols  :: ![SqlColRow]
+  , sciCatColumns        :: ![CatColumnRow]
+  }
+
+-- | Everything 'buildSchemaCategory' pushes back into DuckDB.
+data SchemaCategoryOutput = SchemaCategoryOutput
+  { scoObjects :: ![SchObject]
+  , scoLegs    :: ![SchMorphism]
+  }
+
 -- | Phase B computes the relation materializers directly in DuckDB
 -- (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
 -- 'PB.Pipeline.DuckDb.materializeRiskCount',
@@ -66,8 +132,8 @@ import Data.Time.Clock        (getCurrentTime)
 -- 'leg_source' has only ~3 distinct @kind@ buckets, so a group this size is
 -- almost certainly duplicate/near-duplicate extraction on one schema edge
 -- rather than legitimate diversity, and is worth an operator's attention.
-diagnoseLegSourceFanout :: Handle -> IO ()
-diagnoseLegSourceFanout conn = do
+diagnoseLegSourceFanout :: Handle -> SchemaInputRows -> IO ()
+diagnoseLegSourceFanout conn _schRows = do
   t0 <- getCurrentTime
   LegSourceFanout total keys maxGroup <- Relations.legSourceFanout conn
   t1 <- getCurrentTime
@@ -159,50 +225,140 @@ runPhaseB :: Handle -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
-  _        <- resolveTypesAndCalls conn
-  procRows <- buildCallGraphAndTaint conn
-  -- catalog_fks is read once here and threaded into both buildSchemaCategory
-  -- (which builds the schema category from it) and initSchemaInput (which
-  -- builds the fk relation from it) -- the same
-  -- rows, nothing writes to catalog_fks between the two uses (Plan 187 §18
-  -- tier 2).
+  (_inh, rcReady) <- resolveTypesAndCalls
+    (fetchResolveInputs conn)
+    (sinkResolvedOutput conn)
+  (procRows, cgReady) <- buildCallGraphAndTaint rcReady
+    (fetchCallGraphInputs conn)
+    (sinkCallGraphOutput conn)
   catFks <- queryCatFks conn
-  _   <- buildSchemaCategory conn mDefaultNamespace catFks
-  dcRows <- initDeadCodeInput conn
-  computeDeadCodeClosure dcRows conn
-  schRows <- initSchemaInput conn catFks
-  computeSchemaClosure schRows conn
+  schGraph <- buildSchemaCategory mDefaultNamespace catFks
+    (fetchSchemaCategoryInputs conn)
+    (sinkSchemaCategoryOutput conn)
+  dcRows  <- initDeadCodeInput conn rcReady
+  dcReady <- computeDeadCodeClosure conn dcRows
+  schRows <- initSchemaInput conn schGraph catFks
+  scReady <- computeSchemaClosure conn schRows
   diagnoseTaintFanout conn
-  -- B2: the five SQL materializers run in dependency order. Characterize
-  -- leg_source's key
-  -- fan-in first (see diagnoseLegSourceFanout) -- cheap, and surfaces a
-  -- pathological corpus shape before the materialization rather than only
-  -- via its wall-clock/memory symptoms.
-  diagnoseLegSourceFanout conn
+  diagnoseLegSourceFanout conn schRows
+  -- B2: the SQL materializers run in dependency order.
   Progress.emitEvent (Progress.EvStep "Phase B analysis (SQL)" Nothing [] [] Nothing)
-  materializeImpliedFkPairs conn
-  materializeRiskCount conn
-  materializeLiveProc conn
-  materializeDeadCode conn
-  materializeDecompositionCoslice conn
-  materializeImpliedFk conn
-  materializeColumnRisk conn
-  materializeTaintPaths conn
-  materializeTaintAnnotations procRows conn
+  fkPairsReady <- materializeImpliedFkPairs conn schRows
+  riskReady    <- materializeRiskCount conn scReady
+  materializeLiveProc conn dcReady schRows
+  materializeDeadCode conn dcReady
+  materializeDecompositionCoslice conn scReady schGraph
+  materializeImpliedFk conn fkPairsReady schGraph
+  materializeColumnRisk conn riskReady schGraph
+  materializeTaintPaths conn cgReady
+  materializeTaintAnnotations conn cgReady procRows
+
+-- ---------------------------------------------------------------------------
+-- Fetch/sink helpers for the shape-1 stages (constructed once in runPhaseB,
+-- closed over a real Handle)
+
+fetchResolveInputs :: Handle -> IO ResolveInputs
+fetchResolveInputs conn = do
+  lvs                              <- queryLocalVars  conn
+  gvs                              <- queryGlobalVars conn
+  css                              <- queryCallSites  conn
+  (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
+  callableProcMap                  <- queryCallableProcMap conn
+  pure ResolveInputs
+    { riLocalVars       = lvs
+    , riGlobalVars      = gvs
+    , riCallSites       = css
+    , riObjSet          = objSet
+    , riUsrTypes        = usrTypes
+    , riInherits        = inh
+    , riProcMap         = procMap
+    , riCallableProcMap = callableProcMap
+    }
+
+sinkResolvedOutput :: Handle -> ResolvedOutput -> IO ()
+sinkResolvedOutput conn ResolvedOutput{..} = do
+  appendResolvedTypes conn roResolvedTypes
+  appendResolvedCalls conn roResolvedCalls
+
+fetchCallGraphInputs :: Handle -> IO CallGraphInputs
+fetchCallGraphInputs conn =
+  Progress.timedStep "Load taint inputs (7 queries)" $ do
+    gvs        <- timedQueryRows "  queryGlobalVars"        (queryGlobalVars      conn)
+    defs       <- timedQueryRows "  queryProcDefs"          (queryProcDefs        conn)
+    uses       <- timedQueryRows "  queryProcUses"          (queryProcUses        conn)
+    allRC      <- timedQueryRows "  queryResolvedCalls"     (queryResolvedCalls   conn)
+    tfis       <- timedQueryRows "  queryTaintInputs"       (queryTaintInputs     conn)
+    intraEdges <- timedQueryRows "  queryTaintIntraEdges"   (queryTaintIntraEdges conn)
+    returnRows <- timedQueryRows "  queryTaintReturnRows"   (queryTaintReturnRows conn)
+    pure CallGraphInputs
+      { cgiGlobalVars    = gvs
+      , cgiProcDefs      = defs
+      , cgiProcUses      = uses
+      , cgiResolvedCalls = allRC
+      , cgiTaintInputs   = tfis
+      , cgiIntraEdges    = intraEdges
+      , cgiReturnRows    = returnRows
+      }
+
+sinkCallGraphOutput :: Handle -> CallGraphOutput -> IO ()
+sinkCallGraphOutput conn CallGraphOutput{..} = do
+  Progress.timedStep "Build interproc edges + summaries + classify" $ do
+    appendInterprocEdges conn coInterprocEdges
+    appendProcSummaries  conn coProcSummaries
+  Progress.timedStep "Taint classification" $ do
+    appendTaintSources   conn coTaintSources
+    appendTaintSinks     conn coTaintSinks
+  Progress.timedStep "Taint closure" $
+    TaintClosure.materializeTaintClosure coTaintClosure coTaintSources coTaintSinks conn
+  Progress.timedStep "Taint witness paths" $
+    TaintClosure.materializeTaintStepKind coTaintClosure coTaintSources coTaintSinks conn
+
+fetchSchemaCategoryInputs :: Handle -> IO SchemaCategoryInputs
+fetchSchemaCategoryInputs conn = do
+  drCols  <- queryDwRetrieveColumns   conn
+  dwCols  <- queryDwWriteColumns      conn
+  dwhCols <- queryDwWhereColumns      conn
+  djLegs  <- queryDwJoinLegs          conn
+  sqlCols <- querySqlCols             conn
+  cfCols  <- queryCatFootprintColumns conn
+  catCols <- queryCatColumns          conn
+  pure SchemaCategoryInputs
+    { sciDwRetrieveColumns = drCols
+    , sciDwWriteColumns    = dwCols
+    , sciDwWhereColumns    = dwhCols
+    , sciDwJoinLegs        = djLegs
+    , sciSqlCols           = sqlCols
+    , sciCatFootprintCols  = cfCols
+    , sciCatColumns        = catCols
+    }
+
+sinkSchemaCategoryOutput :: Handle -> SchemaCategoryOutput -> IO ()
+sinkSchemaCategoryOutput conn SchemaCategoryOutput{..} = do
+  appendSchemaObjects   conn scoObjects
+  appendSchemaMorphisms conn scoLegs
+  Progress.emitEvent (Progress.EvStep
+    ("Schema category built: " <> T.pack (show (length scoObjects))
+      <> " objects, " <> T.pack (show (length scoLegs)) <> " legs")
+    Nothing []
+    [ ("schema_objects", length scoObjects)
+    , ("schema_morphisms", length scoLegs)
+    ]
+    Nothing)
 
 -- | Materialize the dead-code input relations view (@proc@\/@entry@\/
 -- @inherits@\/@call_ref@\/@resolved_call_edge@\/@calls@\/@proc_meta@).
 -- Idempotent (@CREATE OR REPLACE VIEW@). Must run after
 -- 'resolveTypesAndCalls' (for @resolved_calls@).
-initDeadCodeInput :: Handle -> IO Relations.DeadCodeInputRows
-initDeadCodeInput conn =
+initDeadCodeInput :: Handle -> ResolvedCallsReady -> IO Relations.DeadCodeInputRows
+initDeadCodeInput conn _rcReady =
   Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn
 
 -- | Dead-code reachability closure over 'initDeadCodeInput''s rows, writing
 -- @proc_dead@.
-computeDeadCodeClosure :: Relations.DeadCodeInputRows -> Handle -> IO ()
-computeDeadCodeClosure dcRows conn =
-  Progress.timedStep "Dead-code closure" $ DeadCodeReachability.materializeDeadCodeClosure dcRows conn
+computeDeadCodeClosure :: Handle -> Relations.DeadCodeInputRows -> IO DeadCodeClosureReady
+computeDeadCodeClosure conn dcRows =
+  Progress.timedStep "Dead-code closure" (DeadCodeReachability.materializeDeadCodeClosure dcRows conn)
+    >> pure (DeadCodeClosureReady ())
 
 -- | Materialize the schema input relations view (@leg_source@\/@stmt@\/
 -- @seed@\/@join_leg@\/@fk@). Idempotent (@CREATE OR REPLACE VIEW@). Must run
@@ -211,15 +367,16 @@ computeDeadCodeClosure dcRows conn =
 -- @catFks@ is the same rows 'runPhaseB' already fetched for
 -- 'buildSchemaCategory'; threaded here instead of re-querying @catalog_fks@
 -- (Plan 187 §18 tier 2).
-initSchemaInput :: Handle -> [CatFkRow] -> IO Relations.SchemaInputRows
-initSchemaInput conn catFks =
+initSchemaInput :: Handle -> SchGraph -> [CatFkRow] -> IO Relations.SchemaInputRows
+initSchemaInput conn _schGraph catFks =
   Progress.timedStep "Schema relations materialized" $ Relations.initSchemaRelations conn catFks
 
 -- | Schema transitive closure + coslice paths (@reaches@\/@path_leg_fwd@\/
 -- @path_leg_back@) over 'initSchemaInput''s rows.
-computeSchemaClosure :: Relations.SchemaInputRows -> Handle -> IO ()
-computeSchemaClosure schRows conn =
-  Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure schRows conn
+computeSchemaClosure :: Handle -> Relations.SchemaInputRows -> IO SchemaClosureReady
+computeSchemaClosure conn schRows =
+  Progress.timedStep "Schema closure" (SchemaClosure.materializeSchemaClosure schRows conn)
+    >> pure (SchemaClosureReady ())
 
 -- | The relation materializers run as direct DuckDB SQL, invoked in
 -- dependency order inside 'runPhaseB' (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
@@ -229,21 +386,22 @@ computeSchemaClosure schRows conn =
 -- algebraically (Haskell or SQL); the schema/dead-code consumers read the
 -- same pre-materialized input tables they always did.
 
-resolveTypesAndCalls :: Handle -> IO (Map.Map Ident Ident)
-resolveTypesAndCalls conn = Progress.timedStep "Resolving types" $ do
-  lvs                              <- queryLocalVars  conn
-  gvs                              <- queryGlobalVars conn
-  css                              <- queryCallSites  conn
-  (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
-  callableProcMap                  <- queryCallableProcMap conn
-  let objIdents  = identSetFromList (map mkIdent (Set.toList objSet))
-      userIdents = identSetFromList (map mkIdent (Set.toList usrTypes))
-      rt  = resolveTypes lvs objIdents userIdents
-      rtG = resolveGlobalTypes gvs objIdents userIdents
-      rc  = resolveCalls css procMap callableProcMap inh builtinFnNames builtinMethodNames
-  appendResolvedTypes conn (rt <> rtG)
-  appendResolvedCalls conn rc
-  pure inh
+resolveTypesAndCalls
+  :: IO ResolveInputs
+  -> (ResolvedOutput -> IO ())
+  -> IO (Map.Map Ident Ident, ResolvedCallsReady)
+resolveTypesAndCalls fetchInputs sinkOutput = Progress.timedStep "Resolving types" $ do
+  ResolveInputs{..} <- fetchInputs
+  let objIdents  = identSetFromList (map mkIdent (Set.toList riObjSet))
+      userIdents = identSetFromList (map mkIdent (Set.toList riUsrTypes))
+      rt  = resolveTypes riLocalVars objIdents userIdents
+      rtG = resolveGlobalTypes riGlobalVars objIdents userIdents
+      rc  = resolveCalls riCallSites riProcMap riCallableProcMap riInherits builtinFnNames builtinMethodNames
+  sinkOutput ResolvedOutput
+    { roResolvedTypes = rt <> rtG
+    , roResolvedCalls = rc
+    }
+  pure (riInherits, ResolvedCallsReady ())
 
 -- | Interproc edges and taint classification ONCE
 -- corpus-wide, then the taint closure itself (@taint_reaches@\/
@@ -257,39 +415,29 @@ resolveTypesAndCalls conn = Progress.timedStep "Resolving types" $ do
 -- threaded by 'runPhaseB' into 'PB.Pipeline.DuckDb.materializeTaintAnnotations'
 -- (run much later in Phase B2) instead of it re-querying the same two
 -- tables (Plan 187 §18 tier 3).
-buildCallGraphAndTaint :: Handle -> IO ProcRows
-buildCallGraphAndTaint conn = Progress.timedStep "Building call graph" $ do
-  (gvs, defs, uses, allRC, tfis, intraEdges, returnRows) <-
-    Progress.timedStep "Load taint inputs (7 queries)" $ do
-      gvs  <- timedQueryRows "  queryGlobalVars"       (queryGlobalVars     conn)
-      defs <- timedQueryRows "  queryProcDefs"         (queryProcDefs       conn)
-      uses <- timedQueryRows "  queryProcUses"         (queryProcUses       conn)
-      allRC <- timedQueryRows "  queryResolvedCalls"   (queryResolvedCalls  conn)
-      tfis  <- timedQueryRows "  queryTaintInputs"     (queryTaintInputs    conn)
-      intraEdges <- timedQueryRows "  queryTaintIntraEdges" (queryTaintIntraEdges conn)
-      returnRows <- timedQueryRows "  queryTaintReturnRows" (queryTaintReturnRows conn)
-      pure (gvs, defs, uses, allRC, tfis, intraEdges, returnRows)
-  (allSources, allSinks, edges) <-
-    Progress.timedStep "Build interproc edges + summaries + classify" $ do
-      let globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
-          allProcMetas   = concatMap Taint.tfiProcMetas tfis
-          allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
-          edges          = Taint.buildInterprocEdges allRC defs uses globalVarNames allProcMetas
-          summaries      = Taint.buildProcedureSummaries edges defs uses globalVarNames allProcMetas
-          allSources     = Taint.classifySources allSqlStmts allProcMetas
-          allSinks       = Taint.classifySinks   allSqlStmts
-      appendInterprocEdges   conn edges
-      appendProcSummaries    conn summaries
-      pure (allSources, allSinks, edges)
-  Progress.timedStep "Taint classification" $ do
-    appendTaintSources     conn allSources
-    appendTaintSinks       conn allSinks
-  let taintClosure = TaintClosure.buildTaintClosure intraEdges returnRows edges allSources
-  Progress.timedStep "Taint closure" $
-    TaintClosure.materializeTaintClosure taintClosure allSources allSinks conn
-  Progress.timedStep "Taint witness paths" $
-    TaintClosure.materializeTaintStepKind taintClosure allSources allSinks conn
-  pure ProcRows { prDefs = defs, prUses = uses }
+buildCallGraphAndTaint
+  :: ResolvedCallsReady
+  -> IO CallGraphInputs
+  -> (CallGraphOutput -> IO ())
+  -> IO (ProcRows, CallGraphAndTaintReady)
+buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Building call graph" $ do
+  CallGraphInputs{..} <- fetchInputs
+  let globalVarNames = Set.fromList (map (mkIdent . gvName) cgiGlobalVars)
+      allProcMetas   = concatMap Taint.tfiProcMetas cgiTaintInputs
+      allSqlStmts    = concatMap Taint.tfiSqlStmts  cgiTaintInputs
+      edges          = Taint.buildInterprocEdges cgiResolvedCalls cgiProcDefs cgiProcUses globalVarNames allProcMetas
+      summaries      = Taint.buildProcedureSummaries edges cgiProcDefs cgiProcUses globalVarNames allProcMetas
+      allSources     = Taint.classifySources allSqlStmts allProcMetas
+      allSinks       = Taint.classifySinks   allSqlStmts
+      taintClosure   = TaintClosure.buildTaintClosure cgiIntraEdges cgiReturnRows edges allSources
+  sinkOutput CallGraphOutput
+    { coInterprocEdges = edges
+    , coProcSummaries  = summaries
+    , coTaintSources   = allSources
+    , coTaintSinks     = allSinks
+    , coTaintClosure   = taintClosure
+    }
+  pure (ProcRows { prDefs = cgiProcDefs, prUses = cgiProcUses }, CallGraphAndTaintReady ())
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
@@ -301,34 +449,27 @@ buildCallGraphAndTaint conn = Progress.timedStep "Building call graph" $ do
 -- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations', which independently
 -- needs it to build the @fk@ relation (Plan 187 §18 tier 2 -- no re-query of
 -- @catalog_fks@).
-buildSchemaCategory :: Handle -> Maybe Text -> [CatFkRow] -> IO SchGraph
-buildSchemaCategory conn mDefaultNamespace catFks = Progress.timedStep "Building schema category" $ do
-  drCols  <- queryDwRetrieveColumns  conn
-  dwCols  <- queryDwWriteColumns     conn
-  dwhCols <- queryDwWhereColumns     conn
-  djLegs  <- queryDwJoinLegs         conn
-  sqlCols <- querySqlCols            conn
-  cfCols  <- queryCatFootprintColumns conn
-  catCols <- queryCatColumns         conn
+buildSchemaCategory
+  :: Maybe Text
+  -> [CatFkRow]
+  -> IO SchemaCategoryInputs
+  -> (SchemaCategoryOutput -> IO ())
+  -> IO SchGraph
+buildSchemaCategory mDefaultNamespace catFks fetchInputs sinkOutput = Progress.timedStep "Building schema category" $ do
+  SchemaCategoryInputs{..} <- fetchInputs
   let sch = buildSchema SchemaInputs
-        { inDwRetrieveColumns   = drCols
-        , inDwJoins             = djLegs
-        , inDwWriteColumns      = dwCols
-        , inDwWhereColumns      = dwhCols
-        , inSqlColumns          = sqlCols
-        , inCatFootprintColumns = cfCols
-        , inCatalogColumns      = catCols
+        { inDwRetrieveColumns   = sciDwRetrieveColumns
+        , inDwJoins             = sciDwJoinLegs
+        , inDwWriteColumns      = sciDwWriteColumns
+        , inDwWhereColumns      = sciDwWhereColumns
+        , inSqlColumns          = sciSqlCols
+        , inCatFootprintColumns = sciCatFootprintCols
+        , inCatalogColumns      = sciCatColumns
         , inCatalogFks          = catFks
         , inDefaultNamespace    = mDefaultNamespace
         }
-  appendSchemaObjects   conn (Set.toList (sgObjects sch))
-  appendSchemaMorphisms conn (sgLegs sch)
-  Progress.emitEvent (Progress.EvStep
-    ("Schema category built: " <> T.pack (show (Set.size (sgObjects sch)))
-      <> " objects, " <> T.pack (show (length (sgLegs sch))) <> " legs")
-    Nothing []
-    [ ("schema_objects", Set.size (sgObjects sch))
-    , ("schema_morphisms", length (sgLegs sch))
-    ]
-    Nothing)
+  sinkOutput SchemaCategoryOutput
+    { scoObjects = Set.toList (sgObjects sch)
+    , scoLegs    = sgLegs sch
+    }
   pure sch

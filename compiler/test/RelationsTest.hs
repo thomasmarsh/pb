@@ -34,6 +34,7 @@ import PB.Pipeline.DuckDb.PhaseB.Query
   ( SchMorphismRow (..), ProcSummaryRow (..), queryCatFks
   , queryProcedures, queryResolvedCalls, queryObjectAncestors, queryDwObjects
   , querySchemaMorphismRows, querySchemaObjects
+  , DeadCodeClosureReady (..), SchemaClosureReady (..)
   )
 import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphisms, appendResolvedCalls)
 import PB.Analysis.TypeResolve (ResolvedVarRef (..), ResolvedCall (..))
@@ -130,8 +131,8 @@ tests = testGroup "Relations"
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
-          _ <- initSchemaRelations conn []
-          materializeImpliedFkPairs conn
+          schRows <- initSchemaRelations conn []
+          materializeImpliedFkPairs conn schRows
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= [(schObjectKey colA, schObjectKey colB)]
 
@@ -143,8 +144,8 @@ tests = testGroup "Relations"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
           _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
           catFks <- queryCatFks conn
-          _ <- initSchemaRelations conn catFks
-          materializeImpliedFkPairs conn
+          schRows <- initSchemaRelations conn catFks
+          materializeImpliedFkPairs conn schRows
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
 
@@ -157,8 +158,8 @@ tests = testGroup "Relations"
           -- FK declared b.y -> a.x: the opposite orientation from the join edge.
           _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'b', 'y', NULL, 'a', 'x', 0)")
           catFks <- queryCatFks conn
-          _ <- initSchemaRelations conn catFks
-          materializeImpliedFkPairs conn
+          schRows <- initSchemaRelations conn catFks
+          materializeImpliedFkPairs conn schRows
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
 
@@ -167,8 +168,8 @@ tests = testGroup "Relations"
           initSchema conn
           _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
           catFks <- queryCatFks conn
-          _ <- initSchemaRelations conn catFks
-          materializeImpliedFkPairs conn
+          schRows <- initSchemaRelations conn catFks
+          materializeImpliedFkPairs conn schRows
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
     ]
@@ -191,7 +192,7 @@ tests = testGroup "Relations"
             ]
           schRows <- initSchemaRelations conn []
           SchemaClosure.materializeSchemaClosure schRows conn
-          materializeRiskCount conn
+          materializeRiskCount conn (SchemaClosureReady ())
           rows <- queryHandle conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
           Map.lookup (schObjectKey colA) byNode @?= Just "2"
@@ -212,7 +213,7 @@ tests = testGroup "Relations"
             ]
           schRows <- initSchemaRelations conn []
           SchemaClosure.materializeSchemaClosure schRows conn
-          materializeRiskCount conn
+          materializeRiskCount conn (SchemaClosureReady ())
           rows <- queryHandle conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
           Map.lookup (schObjectKey colA) byNode @?= Just "2"
@@ -237,8 +238,8 @@ tests = testGroup "Relations"
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5) ]
             -- initSchemaRelations now materializes stmt eagerly (Plan 175 Phase 1) --
             -- must run after appendSchemaObjects, not merely after initSchema.
-            _ <- initSchemaRelations conn []
-            materializeLiveProc conn
+            schRows <- initSchemaRelations conn []
+            materializeLiveProc conn (DeadCodeClosureReady ()) schRows
             rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj1,proc1) present" (("obj1", "proc1") `elem` rows)
 
@@ -253,8 +254,8 @@ tests = testGroup "Relations"
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
-            _ <- initSchemaRelations conn []
-            materializeLiveProc conn
+            schRows <- initSchemaRelations conn []
+            materializeLiveProc conn (DeadCodeClosureReady ()) schRows
             rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj2,proc2) absent" (("obj2", "proc2") `notElem` rows)
 
@@ -269,8 +270,8 @@ tests = testGroup "Relations"
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (DwRetrieveId "d.srd" "d_test") ]
-            _ <- initSchemaRelations conn []
-            materializeLiveProc conn
+            schRows <- initSchemaRelations conn []
+            materializeLiveProc conn (DeadCodeClosureReady ()) schRows
             rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "no dw_retrieve row leaks into live_proc" (null rows)
       ]
@@ -370,7 +371,7 @@ tests = testGroup "Relations"
                 [] Set.empty
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
-            materializeDeadCode conn
+            materializeDeadCode conn (DeadCodeClosureReady ())
             -- dead_code's counts are real INTEGER columns now -- no TRY_CAST
             -- round-trip through an intermediate TEXT relation.
             rows <- queryHandle conn
@@ -396,7 +397,7 @@ tests = testGroup "Relations"
               [] [] [] Set.empty
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
-            materializeDeadCode conn
+            materializeDeadCode conn (DeadCodeClosureReady ())
             rows <- queryHandle conn
               "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
               :: IO [Only Int]
@@ -418,7 +419,7 @@ tests = testGroup "Relations"
               [] [] [] Set.empty
             dcRows <- initDeadCodeRelations conn
             materializeDeadCodeClosure dcRows conn
-            materializeDeadCode conn
+            materializeDeadCode conn (DeadCodeClosureReady ())
             rows <- queryHandle conn
               "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
               :: IO [Only Int]
@@ -708,7 +709,7 @@ assertConfidence name procs calls resolved (obj, proc) expectedLevel =
     -- standalone table (Plan 198 Phase A collapsed it into 'dead_code'),
     -- so it's observed on the one dead_code row this produces.
     materializeDeadCodeClosure dcRows conn
-    materializeDeadCode conn
+    materializeDeadCode conn (DeadCodeClosureReady ())
     rows <- queryHandle conn
               (Query $ "SELECT confidence FROM dead_code WHERE object = '" <> obj <> "' AND proc_name = '" <> proc <> "'") :: IO [Only Text]
     [ lvl | Only lvl <- rows ] @?= [expectedLevel]

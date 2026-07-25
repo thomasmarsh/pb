@@ -8,19 +8,32 @@ module PB.Pipeline.DuckDb.Materialize
   , materializeImpliedFkPairs
   , materializeRiskCount
   , materializeLiveProc
+  , ImpliedFkPairsReady (..)
+  , RiskCountReady (..)
   ) where
 
 import PB.Prelude
 import PB.Analysis.Taint       qualified as Taint
+import PB.Analysis.SchemaCategory (SchGraph)
 import PB.Pipeline.DuckDb
   ( Handle, executeHandle, recreateTextTable, queryTextRows )
-import PB.Pipeline.DuckDb.PhaseB.Query  (ProcRows (..))
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( ProcRows (..), DeadCodeClosureReady, SchemaClosureReady, CallGraphAndTaintReady )
 import PB.Pipeline.DuckDb.PhaseB.Append (appendTaintAnnotations)
+import PB.Pipeline.DuckDb.Relations (SchemaInputRows)
 
 import Database.DuckDB.Simple  (Query (..))
 
 import qualified Data.Set  as Set
 import qualified Data.Text as T
+
+-- | Proof-of-completion token for 'materializeImpliedFkPairs': minted once
+-- @implied_fk_pairs@ is populated, consumed by 'materializeImpliedFk'.
+newtype ImpliedFkPairsReady = ImpliedFkPairsReady ()
+
+-- | Proof-of-completion token for 'materializeRiskCount': minted once
+-- @risk_count@ is populated, consumed by 'materializeColumnRisk'.
+newtype RiskCountReady = RiskCountReady ()
 
 -- | Run a list of single-statement SQL commands, one 'executeHandle' each.
 -- Kept separate (not a single multi-statement string) because the
@@ -31,8 +44,8 @@ runStatements conn = mapM_ (\s -> void $ executeHandle conn (Query s))
 
 -- | Materialize @implied_fk_pairs@ directly in DuckDB: a DataWindow join edge
 -- with no declared foreign key in EITHER direction.
-materializeImpliedFkPairs :: Handle -> IO ()
-materializeImpliedFkPairs conn = do
+materializeImpliedFkPairs :: Handle -> SchemaInputRows -> IO ImpliedFkPairsReady
+materializeImpliedFkPairs conn _schRows = do
   recreateTextTable conn "implied_fk_pairs" ["x", "y"]
   runStatements conn
     [ "INSERT INTO implied_fk_pairs (x, y) "
@@ -40,24 +53,26 @@ materializeImpliedFkPairs conn = do
       <> "WHERE NOT EXISTS (SELECT 1 FROM fk f WHERE f.x = j.x AND f.y = j.y) "
       <> "AND NOT EXISTS (SELECT 1 FROM fk f2 WHERE f2.x = j.y AND f2.y = j.x)"
     ]
+  pure (ImpliedFkPairsReady ())
 
 -- | Materialize @risk_count@ directly in DuckDB: each node's downstream
 -- footprint over the @reaches@ table — the same aggregate
 -- 'materializeDeadCode' uses for caller fan-in.
-materializeRiskCount :: Handle -> IO ()
-materializeRiskCount conn = do
+materializeRiskCount :: Handle -> SchemaClosureReady -> IO RiskCountReady
+materializeRiskCount conn _scReady = do
   recreateTextTable conn "risk_count" ["x", "n"]
   runStatements conn
     [ "INSERT INTO risk_count (x, n) "
       <> "SELECT x, CAST(COUNT(*) AS VARCHAR) FROM reaches GROUP BY x"
     ]
+  pure (RiskCountReady ())
 
 -- | Materialize @live_proc@ directly in DuckDB:
 -- @live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc)@.
 -- Consumed by the CLI's @/api/analysis/live-procedures@ endpoint
 -- ('cli/api/src/pb/api/services/analysis.py').
-materializeLiveProc :: Handle -> IO ()
-materializeLiveProc conn = do
+materializeLiveProc :: Handle -> DeadCodeClosureReady -> SchemaInputRows -> IO ()
+materializeLiveProc conn _dcReady _schRows = do
   recreateTextTable conn "live_proc" ["object", "proc"]
   runStatements conn
     [ "INSERT INTO live_proc (object, proc) "
@@ -110,8 +125,8 @@ materializeLiveProc conn = do
 -- depends on elsewhere, so it's spelled out here rather than left implicit.
 -- (Regression test: 'RelationsTest.hs'\'s "overloaded procedure with
 -- one unknown cyclomatic" case.)
-materializeDeadCode :: Handle -> IO ()
-materializeDeadCode conn = do
+materializeDeadCode :: Handle -> DeadCodeClosureReady -> IO ()
+materializeDeadCode conn _dcReady = do
   -- Drop the 8 intermediate tables the pre-Plan-198 chain used to
   -- materialize, in case this run is against a DB file written by an
   -- older binary -- initSchema's CREATE TABLE IF NOT EXISTS means an
@@ -203,8 +218,8 @@ materializeDeadCode conn = do
 -- ordinals (found via a real-corpus regression: a target's surviving rows
 -- had ordinals 0,4,5,6,7 from 'backward' interleaved with 1,2,3 from
 -- 'forward' -- neither a valid forward nor backward path).
-materializeDecompositionCoslice :: Handle -> IO ()
-materializeDecompositionCoslice conn =
+materializeDecompositionCoslice :: Handle -> SchemaClosureReady -> SchGraph -> IO ()
+materializeDecompositionCoslice conn _scReady _schGraph =
   void $ executeHandle conn (Query sql)
   where
     sql = T.unlines
@@ -274,8 +289,8 @@ materializeDecompositionCoslice conn =
 -- join-back on @schema_objects.object_key@ -- the same decoding
 -- 'materializeDecompositionCoslice' uses, since 'schObjectKey' has no inverse
 -- parser in this codebase. A pure rename\/join projection, no decision logic.
-materializeImpliedFk :: Handle -> IO ()
-materializeImpliedFk conn =
+materializeImpliedFk :: Handle -> ImpliedFkPairsReady -> SchGraph -> IO ()
+materializeImpliedFk conn _fkPairsReady _schGraph =
   void $ executeHandle conn (Query sql)
   where
     sql = T.unlines
@@ -298,8 +313,8 @@ materializeImpliedFk conn =
 -- question (what breaks if this column changes), so this filters to
 -- @kind = 'column'@ only, the same restriction 'seedRows' already applies
 -- to the coslice walk's own starting points.
-materializeColumnRisk :: Handle -> IO ()
-materializeColumnRisk conn =
+materializeColumnRisk :: Handle -> RiskCountReady -> SchGraph -> IO ()
+materializeColumnRisk conn _riskReady _schGraph =
   void $ executeHandle conn (Query sql)
   where
     sql = T.unlines
@@ -333,8 +348,8 @@ materializeColumnRisk conn =
 -- PERFORMANCE FIX: @taint_step_kind@ is written directly into a plain DuckDB
 -- table by 'PB.Analysis.TaintClosure.materializeTaintStepKind', a Haskell
 -- BFS-based reconstruction. This materializer reads that table.
-materializeTaintPaths :: Handle -> IO ()
-materializeTaintPaths conn =
+materializeTaintPaths :: Handle -> CallGraphAndTaintReady -> IO ()
+materializeTaintPaths conn _cgReady =
   void $ executeHandle conn (Query sql)
   where
     sql = T.unlines
@@ -416,8 +431,8 @@ materializeTaintPaths conn =
 -- 'ProcRows', already fetched by 'PB.Pipeline.Passes.buildCallGraphAndTaint' and threaded
 -- through 'PB.Pipeline.Passes.runPhaseB' instead of re-querying the same two
 -- tables here; Plan 187 §18 tier 3).
-materializeTaintAnnotations :: ProcRows -> Handle -> IO ()
-materializeTaintAnnotations ProcRows{prDefs, prUses} conn = do
+materializeTaintAnnotations :: Handle -> CallGraphAndTaintReady -> ProcRows -> IO ()
+materializeTaintAnnotations conn _cgReady ProcRows{prDefs, prUses} = do
   -- 1. Read sources/sinks as Haskell types for buildTaintAnnotations.
   srcRows <- queryTextRows conn "taint_sources"
                ["file","object","proc_name","var_name","source_type"]

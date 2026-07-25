@@ -8,6 +8,9 @@ module PB.Pipeline.DuckDb.PhaseB.Query
   , queryProcDefs
   , queryProcUses
   , ProcRows (..)
+  , CallGraphAndTaintReady (..)
+  , DeadCodeClosureReady (..)
+  , SchemaClosureReady (..)
   , queryResolvedCalls
   , queryTaintInputs
   , queryDwRetrieveColumns
@@ -301,6 +304,42 @@ data ProcRows = ProcRows
   { prDefs :: [Taint.DefRow]
   , prUses :: [Taint.UseRow]
   }
+
+-- | Proof-of-completion token for 'PB.Pipeline.Passes.buildCallGraphAndTaint':
+-- minted once that stage's writes (interproc edges, taint sources/sinks,
+-- taint closure tables) are done, consumed by
+-- 'PB.Pipeline.DuckDb.Materialize.materializeTaintPaths'\/'materializeTaintAnnotations'.
+-- Its constructor is exported from this module (Haskell has no
+-- "friend module" access control, and its one legitimate construction
+-- site, 'PB.Pipeline.Passes.buildCallGraphAndTaint', lives in a
+-- different module than this declaration) -- correctness rests on
+-- convention plus review: exactly one call site constructs it, and
+-- the @constraint-evasion@ skill's Step 5 is the mechanism that catches
+-- a future construction site appearing anywhere it shouldn't.
+newtype CallGraphAndTaintReady = CallGraphAndTaintReady ()
+
+-- | Proof-of-completion token for
+-- 'PB.Pipeline.Passes.computeDeadCodeClosure' (writes @proc_dead@),
+-- consumed by 'PB.Pipeline.DuckDb.Materialize.materializeLiveProc'\/
+-- 'materializeDeadCode'. No exported constructor at the type-class level,
+-- but this constructor MUST be exported from this module's export list
+-- (see module export list below) because its one legitimate construction
+-- site lives in 'PB.Pipeline.Passes', a different module than its
+-- declaration site. There is exactly one legitimate call site for this
+-- constructor in the whole codebase:
+-- 'PB.Pipeline.Passes.computeDeadCodeClosure'. Do not construct it
+-- anywhere else.
+newtype DeadCodeClosureReady = DeadCodeClosureReady ()
+
+-- | Proof-of-completion token for
+-- 'PB.Pipeline.Passes.computeSchemaClosure' (writes @reaches\/
+-- path_leg_fwd\/path_leg_back@), consumed by
+-- 'PB.Pipeline.DuckDb.Materialize.materializeRiskCount'\/
+-- 'materializeDecompositionCoslice'. Same cross-module export
+-- requirement and same one-legitimate-call-site rule as
+-- 'DeadCodeClosureReady' above: the one legitimate construction site is
+-- 'PB.Pipeline.Passes.computeSchemaClosure'.
+newtype SchemaClosureReady = SchemaClosureReady ()
 
 -- | Plan 182 Move 2: reads back 'PB.Pipeline.DuckDb.PhaseA.appendTaintIntraEdges''s output.
 queryTaintIntraEdges :: Handle -> IO [TaintEdges.TaintIntraEdgeRow]

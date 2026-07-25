@@ -4,9 +4,10 @@ import PB.Prelude
 import PB.Pipeline.DuckDb        (inMemory, withHandle, initSchema, executeHandle, queryHandle)
 import PB.Pipeline.DuckDb.Materialize
 import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphisms)
+import PB.Pipeline.DuckDb.PhaseB.Query (SchemaClosureReady (..))
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
-  , schObjectKey
+  , SchGraph (..), schObjectKey
   )
 import PB.Pipeline.SqlParse (TableRef (..))
 import Database.DuckDB.Simple           (Query (..))
@@ -15,6 +16,8 @@ import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (testCase, assertEqual)
 
 import qualified Data.Text as T
+import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 
 -- | Local row shape for reading back (leg_kind, leg_source) pairs raw.
 data KindSourceRow = KindSourceRow Text Text deriving (Eq, Show)
@@ -68,7 +71,7 @@ testMaterializeDecompositionCoslice = withHandle inMemory $ \conn -> do
   void $ executeHandle conn (Query ("INSERT INTO path_leg_fwd VALUES ('"
     <> colAKey <> "', '" <> stmtKey <> "', '0', '" <> colAKey <> "', '" <> stmtKey <> "', 'reads')"))
   void $ executeHandle conn (Query "CREATE TABLE path_leg_back (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
-  materializeDecompositionCoslice conn
+  materializeDecompositionCoslice conn (SchemaClosureReady ()) (SchGraph Set.empty [] Map.empty Map.empty)
 
   rows <- queryHandle conn "SELECT leg_kind, leg_source FROM decomposition_coslice"
   assertEqual "leg_source recovered via schema_morphisms join (Plan 161 Phase 2c)"
@@ -109,7 +112,7 @@ testMaterializeImpliedFk = withHandle inMemory $ \conn -> do
   void $ executeHandle conn (Query "CREATE TABLE implied_fk_pairs (x TEXT, y TEXT)")
   void $ executeHandle conn (Query ("INSERT INTO implied_fk_pairs VALUES ('"
     <> schObjectKey colA <> "', '" <> schObjectKey colB <> "')"))
-  materializeImpliedFk conn
+  materializeImpliedFk conn (ImpliedFkPairsReady ()) (SchGraph Set.empty [] Map.empty Map.empty)
 
   rows <- queryHandle conn
     "SELECT from_table, from_column, to_table, to_column FROM implied_fk"
@@ -138,7 +141,7 @@ testMaterializeColumnRisk = withHandle inMemory $ \conn -> do
   void $ executeHandle conn (Query "CREATE TABLE risk_count (x TEXT, n TEXT)")
   void $ executeHandle conn (Query ("INSERT INTO risk_count VALUES ('"
     <> schObjectKey colA <> "', '3'), ('" <> schObjectKey stmt <> "', '7')"))
-  materializeColumnRisk conn
+  materializeColumnRisk conn (RiskCountReady ()) (SchGraph Set.empty [] Map.empty Map.empty)
 
   rows <- queryHandle conn "SELECT table_name, column_name, downstream_count FROM column_risk"
   assertEqual "only the column-kind node is materialized, with its count"
