@@ -120,12 +120,13 @@ library
     , template-haskell
     , temporary     >= 1.3
     , deepseq
+    , parallel      >= 3.2
 
 executable pbc
   import: common-settings
   hs-source-dirs: app
   main-is: Main.hs
-  ghc-options: -rtsopts -threaded
+  ghc-options: -rtsopts -threaded -with-rtsopts=-N
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler
@@ -140,7 +141,7 @@ executable taint-corpus-bench
   import: common-settings
   hs-source-dirs: bench
   main-is: TaintCorpusBench.hs
-  ghc-options: -rtsopts -threaded
+  ghc-options: -rtsopts -threaded -with-rtsopts=-N
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler
@@ -154,7 +155,7 @@ executable deadcode-corpus-bench
   import: common-settings
   hs-source-dirs: bench
   main-is: DeadCodeCorpusBench.hs
-  ghc-options: -rtsopts -threaded
+  ghc-options: -rtsopts -threaded -with-rtsopts=-N
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler
@@ -169,7 +170,7 @@ executable schema-corpus-bench
   import: common-settings
   hs-source-dirs: bench
   main-is: SchemaCorpusBench.hs
-  ghc-options: -rtsopts -threaded
+  ghc-options: -rtsopts -threaded -with-rtsopts=-N
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler

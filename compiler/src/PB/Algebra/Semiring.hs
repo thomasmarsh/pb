@@ -20,6 +20,7 @@ module PB.Algebra.Semiring
   ) where
 
 import PB.Prelude
+import Control.DeepSeq (NFData (..))
 import Data.Semigroup (Sum (..))
 
 infixr 6 .+.
@@ -51,6 +52,9 @@ instance Semiring Boolean where
   one                      = Boolean True
   Boolean a .+. Boolean b = Boolean (a || b)
   Boolean a .*. Boolean b = Boolean (a && b)
+
+instance NFData Boolean where
+  rnf (Boolean b) = rnf b
 
 -- | Shortest-path semiring carrying a witness for reconstruction.
 --
@@ -84,6 +88,10 @@ instance Semiring (PathValue e) where
   _ .*. Unreachable = Unreachable
   Reachable hp _ _ .*. Reachable hq eq kq = Reachable (hp + hq) eq kq
 
+instance NFData e => NFData (PathValue e) where
+  rnf Unreachable = ()
+  rnf (Reachable h me p) = rnf h `seq` rnf me `seq` rnf p
+
 -- | Tropical / min-plus semiring with an arbitrary payload 'a'.
 --
 -- 'zero' is unreachable; 'one' is the 0-distance identity carrying 'mempty'.
@@ -103,3 +111,7 @@ instance Monoid a => Semiring (MinPlus a) where
   _ .*. MinPlus Nothing = MinPlus Nothing
   MinPlus (Just (d1, _)) .*. MinPlus (Just (d2, a2)) =
     MinPlus (Just (d1 <> d2, a2))
+
+instance NFData a => NFData (MinPlus a) where
+  rnf (MinPlus Nothing) = ()
+  rnf (MinPlus (Just (Sum d, a))) = d `seq` rnf a

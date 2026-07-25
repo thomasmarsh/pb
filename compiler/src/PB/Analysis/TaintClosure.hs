@@ -125,8 +125,8 @@ buildTaintSuccessors intraEdges returnRows edges = \triple -> successorsOf tripl
           ]
 
 -- | The shared taint closure: a single PathValue relation built once, plus
--- the interner and the two starred reachability relations the derived
--- outputs need. All three production outputs (@taint_reaches@ \/
+-- the interner and the starred reachability relation the derived outputs
+-- need. All three production outputs (@taint_reaches@ \/
 -- @taint_confirmed@ \/ @taint_step_kind@) are derived from this one
 -- structure (doc/plan/187-perf-hotspots.md §11.3), replacing the previous
 -- 3×-redundant Boolean 'taintRelation' builds. The PathValue relation
@@ -136,18 +136,16 @@ buildTaintSuccessors intraEdges returnRows edges = \triple -> successorsOf tripl
 -- Fields: (1) interner, (2) base PathValue relation (for direct-successor
 -- lookup), (3) source ids, (4) 'reachFrom' starred relation seeded from
 -- the sources directly (so a source that is also a sink keeps its 0-hop
--- membership), (5) 'reachFrom' starred relation seeded from each source's
--- direct successors (so a source stays out of its own @taint_reaches@ set
--- unless a real cycle returns to it).
+-- membership; a node's @pvHops@ in this relation distinguishes the trivial
+-- 0-hop self-membership from a real >= 1-hop path).
 data TaintClosure = TaintClosure
   (Interner TaintTriple)
   (Relation (PathValue (Text, Text, Text)))
   [Int]
   (Relation (PathValue (Text, Text, Text)))
-  (Relation (PathValue (Text, Text, Text)))
 
 -- | Build the shared 'TaintClosure' once: intern the PathValue relation and
--- precompute the two 'reachFrom' fixpoints the derived outputs consume.
+-- precompute the 'reachFrom' fixpoint the derived outputs consume.
 buildTaintClosure
   :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge] -> [TaintSource]
   -> TaintClosure
@@ -158,11 +156,8 @@ buildTaintClosure intraEdges returnRows edges sources =
                  [ i | s <- sources
                      , let t = (tsObject s, tsProcName s, tsVarName s)
                      , Just i <- [HM.lookup t idByVal] ])
-      directSucc i = IM.keys (IM.findWithDefault IM.empty i rel)
-      allSuccSeeds = Set.toList (Set.fromList (concatMap directSucc srcIds))
       reachSrc  = reachFrom rel srcIds
-      reachSucc = reachFrom rel allSuccSeeds
-  in TaintClosure interner rel srcIds reachSrc reachSucc
+  in TaintClosure interner rel srcIds reachSrc
 
 -- | Build the interned PathValue relation (carrying a witness label per
 -- edge) for the same taint problem — used for witness reconstruction
@@ -238,16 +233,41 @@ taintReachesPairs sources intraEdges returnRows edges =
   taintReachesPairsClosure (buildTaintClosure intraEdges returnRows edges sources)
 
 -- | 'taintReachesPairs' over a prebuilt 'TaintClosure' (no relation rebuild).
+-- A node y /= source counts as reached iff it has 'pvHops' >= 1 in the
+-- source's row of 'reachSrc' -- 'reachSrc' tracks the *shortest* path to
+-- every node, and for every node other than the source itself this
+-- correctly distinguishes "reached by a real edge" from "unreached".
+--
+-- The source itself is the one node this can't decide by hop-count alone:
+-- 'reachFrom' seeds every node with a 0-hop identity membership, and the
+-- shortest-path semiring's tie-break always keeps the lower hop count, so
+-- 'reachSrc'\'s entry for the source stays pinned at 0 hops forever even
+-- when a real cycle leads back to it -- @pvHops >= 1@ can never see that
+-- cycle. Recovered separately via 'predIndex': a real cycle source -> ...
+-- -> p -> source exists iff some direct predecessor p of the source (an
+-- edge p -> source in the base relation) is itself present in the
+-- source's own 'reachSrc' row (reached in >= 0 hops, i.e. p == source for
+-- a direct self-loop edge, or p reached via a real path otherwise) --
+-- composing that with the p -> source edge gives a real path back to the
+-- source. This reproduces the old reachSucc-seeded-at-direct-successors
+-- formulation's self-membership behavior exactly, without its second
+-- per-successor 'reachFrom' fixpoint: 'predIndex' is a single O(E) reverse
+-- pass over the already-built relation, not a BFS per successor.
 taintReachesPairsClosure :: TaintClosure -> [(TaintTriple, TaintTriple)]
-taintReachesPairsClosure (TaintClosure interner rel srcIds _reachSrc reachSucc) =
+taintReachesPairsClosure (TaintClosure interner rel srcIds reachSrc) =
   let decode i = unintern i interner
-      directSucc i = IM.keys (IM.findWithDefault IM.empty i rel)
-      reach1Hop srcId = Set.unions
-        [ Set.insert d (reachableSet reachSucc d) | d <- directSucc srcId ]
+      predIndex = IM.fromListWith (++)
+        [ (dst, [srcNode]) | (srcNode, outs) <- IM.toList rel, dst <- IM.keys outs ]
+      rowOf srcId = IM.findWithDefault IM.empty srcId reachSrc
+      selfCycle srcId =
+        any (\p -> IM.member p (rowOf srcId)) (IM.findWithDefault [] srcId predIndex)
+      reachedIds srcId =
+        [ yId | (yId, pv) <- IM.toList (rowOf srcId), pvHops pv >= 1 ]
+          ++ [ srcId | selfCycle srcId ]
   in [ (s, y)
      | srcId <- srcIds
      , Just s <- [decode srcId]
-     , yId <- Set.toList (reach1Hop srcId)
+     , yId <- reachedIds srcId
      , Just y <- [decode yId]
      ]
 
@@ -271,7 +291,7 @@ taintConfirmed sources sinks intraEdges returnRows edges =
 -- | 'taintConfirmed' over a prebuilt 'TaintClosure' (no relation rebuild).
 taintConfirmedClosure
   :: TaintClosure -> [TaintSource] -> [TaintSink] -> [(TaintSource, TaintSink)]
-taintConfirmedClosure (TaintClosure interner _rel _srcIds reachSrc _reachSucc) sources sinks =
+taintConfirmedClosure (TaintClosure interner _rel _srcIds reachSrc) sources sinks =
   let idByVal = internByVal interner
       sinkTriple snk = (tskObject snk, tskProcName snk, tskVarName snk)
       allPairs =
@@ -327,7 +347,7 @@ taintWitnessLegs sources intraEdges returnRows edges =
 taintWitnessLegsClosure
   :: TaintClosure
   -> [(TaintTriple, TaintTriple, [(TaintTriple, TaintTriple, Text, Text)])]
-taintWitnessLegsClosure (TaintClosure interner _rel srcIds reachSrc _reachSucc) =
+taintWitnessLegsClosure (TaintClosure interner _rel srcIds reachSrc) =
   let decode i = unintern i interner
       reachRel = reachSrc
       decodeLeg (fromId, toId, (kind, desc, _)) = do

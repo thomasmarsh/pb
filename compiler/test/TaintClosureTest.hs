@@ -280,6 +280,32 @@ tests = testGroup "TaintClosure"
                 | (s, k) <- taintConfirmed sources sinks [] [] edges
                 ]
           in confirmedKeys @?= Set.fromList [ (s1, t1), (s1, t2), (s2, t1), (s2, t2) ]
+      , testCase "2-hop chain: destination two real hops away appears in taintReachesPairs" $
+          let sources = [ src "w" "oa" "pA" "ls_a" (Just 5) ]
+              defs = [ defRow "w" "oa" "pA" "ls_b" 5 0
+                     , defRow "w" "oa" "pA" "ls_c" 6 1
+                     ]
+              uses = [ useRow "w" "oa" "pA" "ls_a" 5 "var"
+                     , useRow "w" "oa" "pA" "ls_b" 6 "var"
+                     ]
+              edges = [] :: [InterprocEdge]
+              srcT = ("oa", "pA", "ls_a")
+              cT   = ("oa", "pA", "ls_c")
+          in (srcT, cT) `elem`
+               taintReachesPairs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges
+               @?= True
+      , testCase "direct self-loop edge: source with an edge straight back to itself is its own target" $
+          -- Degenerate adversarial shape distinct from the two-node cycle
+          -- above: a single direct edge ls_a -> ls_a (not via an
+          -- intermediate node). Exercises the predIndex self-cycle check's
+          -- p == source branch directly (a predecessor of the source that
+          -- IS the source, trivially present in the source's own reachSrc
+          -- row via its 0-hop identity).
+          let sources = [ src "w" "oa" "pA" "ls_a" (Just 5) ]
+              uses = [ useRow "w" "oa" "pA" "ls_a" 5 "return" ]
+              edges = [ edge "oa" "pA" (Just 5) "oa" "pA" "return" "ls_a" "ls_a" "ls_a" ]
+              srcT = ("oa", "pA", "ls_a")
+          in taintReachesPairs sources [] (returnRowsFromUses uses) edges @?= [ (srcT, srcT) ]
       ]
   , testGroup "taint witness (Path)"
       [ testCase "Path relation yields a witness for a confirmed pair" $

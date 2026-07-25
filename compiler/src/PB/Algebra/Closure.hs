@@ -29,11 +29,14 @@ import PB.Prelude
 import qualified PB.Algebra.Semiring as S
 import PB.Algebra.Semiring (addS, mulS)
 
+import Control.DeepSeq (NFData)
+import Control.Parallel.Strategies (parMap, rdeepseq)
 import qualified Data.HashMap.Strict as HM
 import           Data.Hashable     (Hashable)
 import qualified Data.IntMap.Strict as IM
 import           Data.IntMap.Strict (IntMap)
 import qualified Data.List        as L
+import qualified Data.Sequence   as Seq
 import qualified Data.Set        as Set
 import           Data.Set         (Set)
 
@@ -90,20 +93,26 @@ relProduct p q =
 -- worklist relaxation (generalized Bellman-Ford / semi-naive fixpoint)
 -- instead of an all-pairs closure. Only visits nodes actually reachable from a
 -- seed, and a seed keeps its own 'S.one' membership even with zero outgoing
--- edges (no arcPairs-endpoint dependency). Returned shape is a 'Relation' keyed
--- by seed id -> reachable id -> label, so 'reachableSet' / 'reconstructPath'
--- work directly against it.
-reachFrom :: (S.Semiring s, Eq s) => Relation s -> [Int] -> Relation s
-reachFrom rel seeds = IM.fromList [ (s, relaxFrom s) | s <- seeds ]
+-- edges (no arcPairs-endpoint dependency). Each seed's relaxation is
+-- independent (no shared mutable state), so they run in parallel via 'parMap'.
+-- Returned shape is a 'Relation' keyed by seed id -> reachable id -> label,
+-- so 'reachableSet' / 'reconstructPath' work directly against it.
+reachFrom :: (S.Semiring s, Eq s, NFData s) => Relation s -> [Int] -> Relation s
+reachFrom rel seeds = IM.fromList (parMap rdeepseq (\s -> (s, relaxFrom s)) seeds)
   where
     -- One worklist relaxation per seed (generalized Bellman-Ford): only
     -- ever visits nodes reachable from this seed, converging when no
-    -- further relaxation improves any distance.
-    relaxFrom s0 = go (IM.singleton s0 S.one) (Set.singleton s0)
+    -- further relaxation improves any distance. FIFO (Seq) worklist gives
+    -- O(1) dequeue instead of Set's O(log n); since every edge has weight
+    -- 1, this processes nodes in the same non-decreasing-distance order
+    -- as the previous Set-ordered worklist, so every reachable set and
+    -- hop count is unchanged -- only the discovery order (and therefore
+    -- PathValue's equal-hop-count tie-break predecessor) can differ.
+    relaxFrom s0 = go (IM.singleton s0 S.one) (Seq.singleton s0)
       where
-        go dist worklist = case Set.minView worklist of
-          Nothing -> dist
-          Just (u, rest) ->
+        go dist worklist = case Seq.viewl worklist of
+          Seq.EmptyL -> dist
+          u Seq.:< rest ->
             let du = IM.findWithDefault S.zero u dist
                 outEdges = IM.findWithDefault IM.empty u rel
                 (dist', worklist') = IM.foldlWithKey' (relax du) (dist, rest) outEdges
@@ -111,7 +120,7 @@ reachFrom rel seeds = IM.fromList [ (s, relaxFrom s) | s <- seeds ]
         relax du (d, w) v wuv =
           let old = IM.findWithDefault S.zero v d
               new = old `addS` (du `mulS` wuv)
-          in if new == old then (d, w) else (IM.insert v new d, Set.insert v w)
+          in if new == old then (d, w) else (IM.insert v new d, w Seq.|> v)
 
 -- | Reachable destination ids from a source id, given a *starred* relation.
 reachableSet :: Relation s -> Int -> Set Int
