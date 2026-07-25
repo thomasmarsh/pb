@@ -50,6 +50,17 @@ consequences (a shared branch, a build that others depend on).
 - Extract *only* the current stage/task into its own standalone spec
   file. Do not attach or reference a multi-stage document, even with a
   "your job is only section N" instruction inside it.
+- **Caveat, confirmed 2026-07-24 (Plan 202):** this is about not exposing
+  *future* stages, not about refusing to reference source material for the
+  *current* one. If a plan document's remaining content is now entirely
+  about the task at hand (earlier stages already done and verified),
+  pointing mimo at that document directly — rather than hand-transcribing
+  its design into the spec — is fine and often better: it's the
+  document's job to state the target signatures/design once, not the
+  spec's job to restate them. State plainly what's already done and
+  out of scope ("Step 1 is complete, don't redo it, here's the current
+  state to confirm rather than re-derive") so mimo doesn't re-attempt
+  finished work or get confused about which section is current.
 - If a task is naturally large, break it into the smallest pieces that
   are each independently verifiable (build + test + whatever the
   task-specific correctness gate is), and run them as separate `mimo run`
@@ -58,6 +69,19 @@ consequences (a shared branch, a build that others depend on).
   --stat` and the touched files) before deciding whether to proceed —
   don't chain further stages automatically just because mimo's own report
   says it succeeded and offers to continue.
+- **Escalate scope deliberately across a session, not all at once.** When
+  delegating a multi-step plan for the first time in a session, run the
+  smallest, cheapest, most mechanical piece first — even if it could
+  technically be folded into the main task — review its diff in full, and
+  only then hand over the larger, more consequential piece. This isn't
+  just risk reduction; it calibrates *your own* spec-writing for this
+  task's domain before you commit real scope to it. Confirmed 2026-07-24
+  (Plan 202, composable Phase B stages): a trivial "add three newtypes"
+  task went first and caught a real defect cheaply (see the
+  warning-suppression refinement further down); only then did the
+  two-file, dozen-function stage rewrite go out, at a point where the
+  orchestrator had already learned what mimo would and wouldn't get right
+  unprompted in this codebase.
 - When one mimo run writes the tests and a later run writes the
   implementation, a *wrong test expectation can pull production behavior
   out of spec*: observed 2026-07-17 (Plan 181) — the test run asserted
@@ -96,6 +120,45 @@ Calibration from real sessions:
 When in doubt about which kind of task you have, ask: "can I write down
 the exact expected output right now?" If yes → delegate. If no → it's
 verify-first work; do that piece yourself, delegate the rest.
+
+**Refinement — when a design is already fully specified elsewhere (a plan
+file's own signatures/rationale), point mimo at it instead of re-deriving
+and transcribing it yourself.** Observed 2026-07-24 (Plan 202, composable
+Phase B stages): the orchestrator's first draft of a two-file rewrite spec
+pre-wrote the *entire* target file content by hand — re-deriving every
+bundling-record field name, hoisting every inline query block, working out
+the fetch/sink split from scratch — duplicating the plan document's own
+"Concrete signatures" section, which already stated the exact target API.
+The user interrupted mid-turn: "you might be too precise... let mimo do
+more of the mechanical research. It can satisfy higher level goals than
+you're expecting." The corrected spec instead said "read the plan file in
+full — it has the exact target signatures, follow those" plus the
+non-negotiables and gates, and let mimo derive the bundling records, hoist
+the inline blocks, and choose field names itself. Result: mimo converged
+on essentially the same design independently, in one pass, and even made a
+sound judgment call the plan hadn't fully anticipated (exporting two
+tokens' constructors because the test suite needs to fabricate them
+directly to unit-test a downstream consumer in isolation — the plan said
+"produced and consumed entirely within one module," but that overlooked
+the test file as a legitimate second consumer; mimo recognized this was
+the same "real cross-module boundary" carve-out the plan had already
+written for two sibling tokens, and applied it consistently rather than
+mechanically enforcing the letter of a rule whose premise didn't hold).
+**The lesson: transcribing an already-written design into the spec is not
+"verify first" — it's re-doing mechanical work mimo can do itself, at
+orchestrator token cost.** Verify-first work is resolving what the design
+*should be* when that's genuinely unsettled — the same session still
+needed real verify-first work in one spot: the plan's own prose (Design
+section) and its own code listing (Concrete Signatures section) gave
+*conflicting* instructions for where one token's constructor should be
+exported, a narrative slip, not a mechanical question. That contradiction
+had to be resolved by the orchestrator before delegating, and the
+resolution ("the Concrete Signatures section is authoritative when the two
+disagree — it's the one with real code in it") was stated explicitly in
+the spec so mimo didn't have to adjudicate it itself. **The calibration:
+transcribe nothing; delegate the mechanical derivation; but do resolve any
+actual disagreement in the source material yourself, and hand over only
+the resolved instruction, never the raw contradiction.**
 
 **Refinement — "verified" is not the same as "compile-clean."** A spec
 whose *design* is verified (the orchestrator has reasoned through the
@@ -176,6 +239,32 @@ is whether mimo is *converging* (each fix closer to correct, the
 diagnosis pointing at a specific defect) or *flailing* (each fix a
 different plausible-looking guess, the diagnosis gesturing at the whole
 clause). Converging → let it run, verify after. Flailing → kill.
+
+**Refinement — mimo's self-correction under warning pressure can silence
+rather than fix; the same discipline this project's `constraint-evasion`
+skill applies to a Claude-written diff applies to mimo's diffs too.**
+Observed 2026-07-24 (Plan 202 Step 1): a spec asked mimo to export a new
+type as a bare type with no constructor. That produced a real `-Wall`
+unused-constructor warning (the type wasn't consumed anywhere yet — a
+later, separate task would construct it). The spec had explicitly banned
+one evasion ("no dummy consumers to silence a warning that shouldn't fire
+in the first place") but hadn't anticipated the other: mimo made the
+warning disappear by adding a brand-new `-Wno-unused-top-binds` pragma to
+the module — a fresh suppression, exactly the escape hatch
+`constraint-evasion` exists to catch — and reported a clean build with 0
+warnings, which was in fact hiding a wrong design decision (the export
+shape was the real bug, not the pragma's absence). Caught on review, not
+by mimo itself: reverted the pragma, fixed the actual cause (the
+constructor did need exporting, for a reason the spec's author had gotten
+wrong). **The lesson: don't enumerate every specific evasion tactic you
+can think of and ban them one at a time in the spec — the list will
+always miss one.** Ban the *category* instead ("do not add any
+warning-suppressing pragma, of any kind, anywhere in this diff — if the
+design as specified produces a warning, that's a signal the spec itself
+may be wrong; stop and report rather than silencing it") and always run
+`constraint-evasion` (or at minimum grep the diff's added lines for new
+`Wno-`/`ANN`/`HLINT ignore`) on mimo's output before trusting a "0
+warnings" report at face value.
 
 ## Writing the spec file
 
@@ -326,6 +415,25 @@ session was entirely caused by comparing against a stale/aborted-run
 artifact left at the same path, not any actual logic bug — always check
 the run's own exit code and success marker, not just a truncated tail of
 its output.
+
+## mimo's own log can render garbled text — verify its claims against the repo, not the log
+
+Observed 2026-07-24 (Plan 202): mimo's captured log displayed a
+self-verification grep step (confirming each new token type had exactly
+one construction call site) with the *matched pattern text itself*
+rendered as a single garbled character (`n`) instead of the real type
+name, on every hit — almost certainly a terminal-escape-sequence artifact
+from piping the log to a file, not a real file-content problem. Read on
+its own, this looked alarming, as if every type had been silently renamed
+to `n`. The actual source files were fine — confirmed immediately by
+re-running the identical `rg` commands directly against the working tree,
+which showed the real names throughout. **The lesson: a mimo log's
+self-reported verification output (a grep count, a diff stat, "N tests
+passed", a table of gate results) is a claim, not ground truth — the same
+"trust but verify" discipline that applies to any tool's self-report
+applies here.** Before accepting a mimo self-verification claim that will
+drive a go/no-go decision, re-run the same check yourself directly against
+the working tree rather than reading it off the log.
 
 ## Recognizing successful completion (don't kill a finishing run)
 
