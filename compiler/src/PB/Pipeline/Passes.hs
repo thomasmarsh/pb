@@ -263,7 +263,7 @@ runPhaseB conn mDefaultNamespace pad = do
   schGraph <- buildSchemaCategory mDefaultNamespace catFks
     (fetchSchemaCategoryInputs conn (padDwRetrieveColumns pad) (padDwJoinLegs pad) (padDwWriteColumns pad) (padDwWhereColumns pad) (padCatFootprintCols pad))
     (sinkSchemaCategoryOutput conn)
-  dcRows  <- initDeadCodeInput conn rcReady
+  dcRows  <- initDeadCodeInput conn resolvedCallRows
   dcReady <- computeDeadCodeClosure conn dcRows
   schRows <- initSchemaInput conn schGraph catFks
   scReady <- computeSchemaClosure conn schRows
@@ -364,9 +364,9 @@ sinkSchemaCategoryOutput conn SchemaCategoryOutput{..} = do
 -- @inherits@\/@call_ref@\/@resolved_call_edge@\/@calls@\/@proc_meta@).
 -- Idempotent (@CREATE OR REPLACE VIEW@). Must run after
 -- 'resolveTypesAndCalls' (for @resolved_calls@).
-initDeadCodeInput :: Handle -> ResolvedCallsReady -> IO Relations.DeadCodeInputRows
-initDeadCodeInput conn _rcReady =
-  Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn
+initDeadCodeInput :: Handle -> [Taint.ResolvedCallRow] -> IO Relations.DeadCodeInputRows
+initDeadCodeInput conn resolvedCalls =
+  Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn resolvedCalls
 
 -- | Dead-code reachability closure over 'initDeadCodeInput''s rows, writing
 -- @proc_dead@.

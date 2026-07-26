@@ -50,7 +50,7 @@ import PB.Pipeline.DuckDb
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( SchMorphismRow (..), ProcSummaryRow (..)
   , querySchemaObjects, querySchemaMorphismRows
-  , queryObjectAncestors, queryProcedures, queryDwObjects, queryResolvedCalls
+  , queryObjectAncestors, queryProcedures, queryDwObjects
   )
 import PB.Analysis.SchemaCategory
   ( SchObject (..), StmtId (..), CatFkRow (..), schObjectKey )
@@ -273,10 +273,9 @@ data DeadCodeInputRows = DeadCodeInputRows
   , dcrDwObjects :: [Text]
   }
 
-initDeadCodeRelations :: Handle -> IO DeadCodeInputRows
-initDeadCodeRelations conn = do
+initDeadCodeRelations :: Handle -> [Taint.ResolvedCallRow] -> IO DeadCodeInputRows
+initDeadCodeRelations conn calls0 = do
   procs     <- queryProcedures conn
-  calls0    <- queryResolvedCalls conn
   ancestors <- queryObjectAncestors conn
   dwObjs    <- queryDwObjects conn
   let refs      = callRefRows calls0

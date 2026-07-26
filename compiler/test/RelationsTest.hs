@@ -233,7 +233,8 @@ tests = testGroup "Relations"
       [ testCase "a stmt whose (object,proc) is not in proc_dead appears in live_proc" $
           withHandle inMemory $ \conn -> do
             initSchema conn
-            dcRows <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            dcRows <- initDeadCodeRelations conn calls
             materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5) ]
             -- initSchemaRelations now materializes stmt eagerly (Plan 175 Phase 1) --
@@ -251,7 +252,8 @@ tests = testGroup "Relations"
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" [] ]
-            dcRows <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            dcRows <- initDeadCodeRelations conn calls
             materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
             schRows <- initSchemaRelations conn []
@@ -267,7 +269,8 @@ tests = testGroup "Relations"
           -- (found via a real --db smoke run over the openpay corpus).
           withHandle inMemory $ \conn -> do
             initSchema conn
-            dcRows <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            dcRows <- initDeadCodeRelations conn calls
             materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (DwRetrieveId "d.srd" "d_test") ]
             schRows <- initSchemaRelations conn []
@@ -295,7 +298,8 @@ tests = testGroup "Relations"
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "builtin" "dwobject" "Retrieve" "function" 1 1 "" "" "" "" "" Nothing "speculative" [] ]
-            _ <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            _ <- initDeadCodeRelations conn calls
             procViewRows <- queryHandle conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]
             entryViewRows <- queryHandle conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
             assertBool "speculative stub excluded from proc view" (null procViewRows)
@@ -369,7 +373,8 @@ tests = testGroup "Relations"
                 -- scoped_n counts only the one truly-resolved edge.
                 [ ("other_obj", "caller_c", "obj", "fn") ]
                 [] Set.empty
-            dcRows <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            dcRows <- initDeadCodeRelations conn calls
             materializeDeadCodeClosure dcRows conn
             materializeDeadCode conn (DeadCodeClosureReady ())
             -- dead_code's counts are real INTEGER columns now -- no TRY_CAST
@@ -395,7 +400,8 @@ tests = testGroup "Relations"
                 , ProcInfo "obj" "fn" "function" (Just 7)
                 ]
               [] [] [] Set.empty
-            dcRows <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            dcRows <- initDeadCodeRelations conn calls
             materializeDeadCodeClosure dcRows conn
             materializeDeadCode conn (DeadCodeClosureReady ())
             rows <- queryHandle conn
@@ -417,7 +423,8 @@ tests = testGroup "Relations"
                 , ProcInfo "obj" "fn" "function" (Just 5)
                 ]
               [] [] [] Set.empty
-            dcRows <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            dcRows <- initDeadCodeRelations conn calls
             materializeDeadCodeClosure dcRows conn
             materializeDeadCode conn (DeadCodeClosureReady ())
             rows <- queryHandle conn
@@ -443,7 +450,8 @@ tests = testGroup "Relations"
                 [ ("obj", "fn", "callee_obj", "callee_fn") ]
                 [ ("child_obj", "parent_obj") ]
                 (Set.fromList ["dw_obj"])
-            dcRows <- initDeadCodeRelations conn
+            calls <- queryResolvedCalls conn
+            dcRows <- initDeadCodeRelations conn calls
             procsIndependent     <- queryProcedures conn
             callsIndependent     <- queryResolvedCalls conn
             ancestorsIndependent <- queryObjectAncestors conn
@@ -703,7 +711,8 @@ assertConfidence name procs calls resolved (obj, proc) expectedLevel =
     initSchema conn
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved [] Set.empty
-    dcRows <- initDeadCodeRelations conn
+    calls0 <- queryResolvedCalls conn
+    dcRows <- initDeadCodeRelations conn calls0
     -- No 'entry' rows are seeded above, so every proc is unreachable and
     -- therefore dead by construction -- 'confidence' is no longer a
     -- standalone table (Plan 198 Phase A collapsed it into 'dead_code'),
