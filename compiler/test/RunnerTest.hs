@@ -23,7 +23,7 @@ import PB.AST.DataWindow
   , DataWindowFile (..), DwObjectAttrs (..), DwTable (..), DwArgument (..)
   )
 import PB.AST.Expr         (Expr (..))
-import PB.AST.Ident        (identCanon, identOrig)
+import PB.AST.Ident        (Ident, identCanon, identOrig)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), mkTypeDecl, srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
@@ -42,6 +42,9 @@ import PB.Pipeline.SqlParse
   )
 
 import Control.DeepSeq (force)
+import PB.Analysis.Dataflow     qualified as Dataflow
+import PB.Analysis.Taint        qualified as Taint
+
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
 import Database.DuckDB.Simple          (Only (..))
 import Database.DuckDB.Simple.FromRow  (FromRow (..), field)
@@ -1444,6 +1447,87 @@ tests = testGroup "Pipeline.Runner"
               }
             pad = accumulatePhaseAData emptyPhaseAData (CFPs cps)
         padLocalVars pad @?= []
+
+    , testCase "accumulatePhaseAData derives padProcDefs from cpsProcFlows" $ do
+        let ident   = "my_var" :: Ident
+            defSite = Dataflow.DefSite
+              { Dataflow.dsVar     = ident
+              , Dataflow.dsBlock   = "b0"
+              , Dataflow.dsStmtIdx = 0
+              , Dataflow.dsLine    = Just 10
+              , Dataflow.dsKind    = "assign"
+              , Dataflow.dsPartial = False
+              }
+            useSite = Dataflow.UseSite
+              { Dataflow.usVar     = ident
+              , Dataflow.usBlock   = "b0"
+              , Dataflow.usStmtIdx = 0
+              , Dataflow.usLine    = Just 12
+              , Dataflow.usKind    = "read"
+              }
+            bf = Dataflow.BlockFlow
+              { Dataflow.bfBlockId  = "b0"
+              , Dataflow.bfDefs     = [defSite]
+              , Dataflow.bfUses     = [useSite]
+              , Dataflow.bfGen      = mempty
+              , Dataflow.bfKill     = mempty
+              }
+            pf = Dataflow.ProcFlow
+              { Dataflow.pfObject   = "w_test"
+              , Dataflow.pfProc     = "ue_clicked"
+              , Dataflow.pfBlocks   = Map.singleton "b0" bf
+              , Dataflow.pfReachingIn  = mempty
+              , Dataflow.pfReachingOut = mempty
+              , Dataflow.pfLiveIn      = mempty
+              , Dataflow.pfLiveOut     = mempty
+              , Dataflow.pfAllDefs     = mempty
+              , Dataflow.pfAllUses     = mempty
+              }
+            cps = CompiledPs
+              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing ""
+              , cpsProcRows      = []
+              , cpsLocalVars     = []
+              , cpsDeadVars      = []
+              , cpsTypeMismatches = []
+              , cpsCallSites     = []
+              , cpsVarRefs       = []
+              , cpsGlobalVars    = []
+              , cpsProcFlows     = [("f.srw", "w_test", "ue_clicked", pf)]
+              , cpsSqlStmts      = []
+              , cpsSqlStmtColumns = []
+              , cpsSqlStmtFilters = []
+              , cpsSqlStmtTables = []
+              , cpsCatFootprintColumns = []
+              , cpsTaintIntraEdges = []
+              , cpsTaintReturnRows = []
+              , cpsSourceContent = Nothing
+              , cpsIdentifierTokens = []
+              }
+            pad = accumulatePhaseAData emptyPhaseAData (CFPs cps)
+            expectedDef = Taint.DefRow
+              { Taint.drFile     = "f.srw"
+              , Taint.drObject   = "w_test"
+              , Taint.drProcName = "ue_clicked"
+              , Taint.drVarName  = "my_var"
+              , Taint.drBlockId  = "b0"
+              , Taint.drStmtIdx  = 0
+              , Taint.drLine     = Just 10
+              , Taint.drKind     = "assign"
+              , Taint.drSpan     = Nothing
+              }
+            expectedUse = Taint.UseRow
+              { Taint.urFile     = "f.srw"
+              , Taint.urObject   = "w_test"
+              , Taint.urProcName = "ue_clicked"
+              , Taint.urVarName  = "my_var"
+              , Taint.urBlockId  = "b0"
+              , Taint.urStmtIdx  = 0
+              , Taint.urLine     = Just 12
+              , Taint.urKind     = "read"
+              , Taint.urSpan     = Nothing
+              }
+        padProcDefs pad @?= [expectedDef]
+        padProcUses pad @?= [expectedUse]
 
     , testCase "accumulatePhaseAData appends CFDw dw_write_columns" $ do
         let cdw = CompiledDw

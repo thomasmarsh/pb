@@ -28,7 +28,7 @@ import PB.Pipeline.DuckDb (Handle)
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( queryCallSites, queryGlobalVars, queryObjInfo
   , queryCallableProcMap
-  , queryProcDefs, queryProcUses, ProcRows (..)
+  , ProcRows (..)
   , queryTaintInputs
   , queryDwRetrieveColumns
   , queryDwJoinLegs, querySqlCols
@@ -69,11 +69,13 @@ data PhaseAData = PhaseAData
   , padTaintReturnRows  :: ![TaintReturnRow]
   , padDwWriteColumns   :: ![DwRetrieveColRow]
   , padDwWhereColumns   :: ![DwRetrieveColRow]
+  , padProcDefs         :: ![Taint.DefRow]
+  , padProcUses         :: ![Taint.UseRow]
   } deriving (Eq, Show)
 
 -- | Empty initial 'PhaseAData'.
 emptyPhaseAData :: PhaseAData
-emptyPhaseAData = PhaseAData [] [] [] [] [] []
+emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] []
 
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
@@ -252,7 +254,7 @@ runPhaseB conn mDefaultNamespace pad = do
   let ResolvedCallsReady rc = rcReady
       resolvedCallRows = map resolvedCallToRow rc
   (procRows, cgReady) <- buildCallGraphAndTaint rcReady
-    (fetchCallGraphInputs conn (padTaintIntraEdges pad) (padTaintReturnRows pad) resolvedCallRows)
+    (fetchCallGraphInputs conn (padTaintIntraEdges pad) (padTaintReturnRows pad) resolvedCallRows (padProcDefs pad) (padProcUses pad))
     (sinkCallGraphOutput conn)
   catFks <- queryCatFks conn
   schGraph <- buildSchemaCategory mDefaultNamespace catFks
@@ -302,17 +304,15 @@ sinkResolvedOutput conn ResolvedOutput{..} = do
   appendResolvedTypes conn roResolvedTypes
   appendResolvedCalls conn roResolvedCalls
 
-fetchCallGraphInputs :: Handle -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [Taint.ResolvedCallRow] -> IO CallGraphInputs
-fetchCallGraphInputs conn intraEdges returnRows resolvedCallRows =
-  Progress.timedStep "Load taint inputs (4 queries + 3 in-memory)" $ do
+fetchCallGraphInputs :: Handle -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [Taint.ResolvedCallRow] -> [Taint.DefRow] -> [Taint.UseRow] -> IO CallGraphInputs
+fetchCallGraphInputs conn intraEdges returnRows resolvedCallRows procDefs procUses =
+  Progress.timedStep "Load taint inputs (2 queries + 5 in-memory)" $ do
     gvs        <- timedQueryRows "  queryGlobalVars"        (queryGlobalVars      conn)
-    defs       <- timedQueryRows "  queryProcDefs"          (queryProcDefs        conn)
-    uses       <- timedQueryRows "  queryProcUses"          (queryProcUses        conn)
     tfis       <- timedQueryRows "  queryTaintInputs"       (queryTaintInputs     conn)
     pure CallGraphInputs
       { cgiGlobalVars    = gvs
-      , cgiProcDefs      = defs
-      , cgiProcUses      = uses
+      , cgiProcDefs      = procDefs
+      , cgiProcUses      = procUses
       , cgiResolvedCalls = resolvedCallRows
       , cgiTaintInputs   = tfis
       , cgiIntraEdges    = intraEdges
