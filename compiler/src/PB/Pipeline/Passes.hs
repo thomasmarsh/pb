@@ -452,7 +452,13 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
     , coTaintSinks     = allSinks
     , coTaintClosure   = taintClosure
     }
-  pure (ProcRows { prDefs = cgiProcDefs, prUses = cgiProcUses }, CallGraphAndTaintReady ())
+  pure ( ProcRows { prDefs = cgiProcDefs, prUses = cgiProcUses }
+       , CallGraphAndTaintReady
+           { cgtrSources = allSources
+           , cgtrSinks   = allSinks
+           , cgtrClosure = taintClosure
+           }
+       )
 
 -- | Convert 'ResolvedCall' (TypeResolve) to 'Taint.ResolvedCallRow' for
 -- in-memory threading (Plan 208 Phase 2). The return type field is always

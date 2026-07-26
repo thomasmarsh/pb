@@ -23,6 +23,7 @@ module PB.Analysis.TaintClosure
   , taintPathRelation
   , taintReachable
   , taintReachesPairs
+  , taintReachesPairsClosure
   , taintConfirmed
   , taintWitnesses
   , taintWitnessLegs

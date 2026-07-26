@@ -35,7 +35,8 @@ import PB.Lexing.Token          (SourceSpan (..))
 import PB.Analysis.TypeResolve
   ( CallSite (..), GlobalVar (..)
   )
-import PB.Analysis.Taint       qualified as Taint
+import PB.Analysis.Taint            qualified as Taint
+import PB.Analysis.TaintClosure        qualified as TaintClosure
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..)
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
@@ -278,7 +279,11 @@ data ProcRows = ProcRows
 -- convention plus review: exactly one call site constructs it, and
 -- the @constraint-evasion@ skill's Step 5 is the mechanism that catches
 -- a future construction site appearing anywhere it shouldn't.
-newtype CallGraphAndTaintReady = CallGraphAndTaintReady ()
+data CallGraphAndTaintReady = CallGraphAndTaintReady
+  { cgtrSources :: ![Taint.TaintSource]
+  , cgtrSinks   :: ![Taint.TaintSink]
+  , cgtrClosure :: !TaintClosure.TaintClosure
+  }
 
 -- | Proof-of-completion token for
 -- 'PB.Pipeline.Passes.computeDeadCodeClosure' (writes @proc_dead@),

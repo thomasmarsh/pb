@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 module PB.Pipeline.DuckDb.Materialize
   ( materializeDeadCode
   , materializeTaintPaths
@@ -13,12 +14,13 @@ module PB.Pipeline.DuckDb.Materialize
   ) where
 
 import PB.Prelude
-import PB.Analysis.Taint       qualified as Taint
-import PB.Analysis.SchemaCategory (SchGraph)
+import PB.Analysis.Taint            qualified as Taint
+import PB.Analysis.TaintClosure    qualified as TaintClosure
+import PB.Analysis.SchemaCategory    (SchGraph)
 import PB.Pipeline.DuckDb
-  ( Handle, executeHandle, recreateTextTable, queryTextRows )
+  ( Handle, executeHandle, recreateTextTable, appendTextRows )
 import PB.Pipeline.DuckDb.PhaseB.Query
-  ( ProcRows (..), DeadCodeClosureReady, SchemaClosureReady, CallGraphAndTaintReady )
+  ( ProcRows (..), DeadCodeClosureReady, SchemaClosureReady, CallGraphAndTaintReady (..) )
 import PB.Pipeline.DuckDb.PhaseB.Append (appendTaintAnnotations)
 import PB.Pipeline.DuckDb.Relations (SchemaInputRows)
 
@@ -349,9 +351,27 @@ materializeColumnRisk conn _riskReady _schGraph =
 -- table by 'PB.Analysis.TaintClosure.materializeTaintStepKind', a Haskell
 -- BFS-based reconstruction. This materializer reads that table.
 materializeTaintPaths :: Handle -> CallGraphAndTaintReady -> IO ()
-materializeTaintPaths conn _cgReady =
+materializeTaintPaths conn CallGraphAndTaintReady{..} = do
+  -- Build temp tables for source/sink enrichment from in-memory data
+  -- instead of re-reading taint_sources/taint_sinks from DuckDB.
+  let srcRows = [ [ taintKey (Taint.tsObject s) (Taint.tsProcName s) (Taint.tsVarName s)
+                  , Taint.tsFile s, Taint.tsObject s, Taint.tsProcName s, Taint.tsVarName s
+                  ]
+                | s <- cgtrSources
+                ]
+      snkRows = [ [ taintKey (Taint.tskObject s) (Taint.tskProcName s) (Taint.tskVarName s)
+                  , Taint.tskFile s, Taint.tskObject s, Taint.tskProcName s, Taint.tskVarName s
+                  , Taint.tskSeverity s, Taint.tskSinkType s
+                  ]
+                | s <- cgtrSinks
+                ]
+  void $ executeHandle conn (Query "CREATE OR REPLACE TEMP TABLE _tmp_taint_source_info (key TEXT, file TEXT, object TEXT, proc_name TEXT, var_name TEXT)")
+  void $ executeHandle conn (Query "CREATE OR REPLACE TEMP TABLE _tmp_taint_sink_info (key TEXT, file TEXT, object TEXT, proc_name TEXT, var_name TEXT, severity TEXT, sink_type TEXT)")
+  appendTextRows conn "_tmp_taint_source_info" srcRows
+  appendTextRows conn "_tmp_taint_sink_info" snkRows
   void $ executeHandle conn (Query sql)
   where
+    taintKey o p v = o <> "::" <> p <> "::" <> v
     sql = T.unlines
       [ "DELETE FROM taint_paths"
       , ";"
@@ -363,17 +383,8 @@ materializeTaintPaths conn _cgReady =
       , "  SELECT tc.s AS source_key, tc.t AS sink_key"
       , "  FROM taint_confirmed tc"
       , "),"
-      , "source_info AS ("
-      , "  SELECT ts.object || '::' || ts.proc_name || '::' || ts.var_name AS key,"
-      , "         ts.file, ts.object, ts.proc_name, ts.var_name"
-      , "  FROM taint_sources ts"
-      , "),"
-      , "sink_info AS ("
-      , "  SELECT tsk.object || '::' || tsk.proc_name || '::' || tsk.var_name AS key,"
-      , "         tsk.file, tsk.object, tsk.proc_name, tsk.var_name,"
-      , "         tsk.severity, tsk.sink_type"
-      , "  FROM taint_sinks tsk"
-      , "),"
+      , "source_info AS (SELECT * FROM _tmp_taint_source_info),"
+      , "sink_info AS (SELECT * FROM _tmp_taint_sink_info),"
       , "ranked_legs AS ("
       , "  SELECT tsk.s AS source_key, tsk.t AS sink_key,"
       , "         CAST(tsk.leg_ord AS INTEGER) AS leg_ord,"
@@ -432,36 +443,20 @@ materializeTaintPaths conn _cgReady =
 -- through 'PB.Pipeline.Passes.runPhaseB' instead of re-querying the same two
 -- tables here; Plan 187 §18 tier 3).
 materializeTaintAnnotations :: Handle -> CallGraphAndTaintReady -> ProcRows -> IO ()
-materializeTaintAnnotations conn _cgReady ProcRows{prDefs, prUses} = do
-  -- 1. Read sources/sinks as Haskell types for buildTaintAnnotations.
-  srcRows <- queryTextRows conn "taint_sources"
-               ["file","object","proc_name","var_name","source_type"]
-  snkRows <- queryTextRows conn "taint_sinks"
-               ["file","object","proc_name","var_name","sink_type","severity"]
-  let allSources = mapMaybe mkSource srcRows
-      allSinks   = mapMaybe mkSink   snkRows
-      mkSource [f,o,p,v,st] = Just Taint.TaintSource
-        { Taint.tsFile = f, Taint.tsObject = o, Taint.tsProcName = p
-        , Taint.tsVarName = v, Taint.tsSourceType = st, Taint.tsLine = Nothing }
-      mkSource _ = Nothing
-      mkSink [f,o,p,v,st,sev] = Just Taint.TaintSink
-        { Taint.tskFile = f, Taint.tskObject = o, Taint.tskProcName = p
-        , Taint.tskVarName = v, Taint.tskSinkType = st
-        , Taint.tskSeverity = sev, Taint.tskLine = Nothing }
-      mkSink _ = Nothing
-  -- 2. Read taint_reaches (all reachable pairs)
-  reachesRows <- queryTextRows conn "taint_reaches" ["x", "y"]
-  -- 3. Build the tainted set: sources ∪ {y | ∃x. taint_source(x) ∧ taint_reaches(x, y)}
-  --    Only targets reachable FROM a source are tainted — not all targets
-  --    in taint_reaches (which includes nodes reachable from non-source nodes).
-  let taintKey o p v = o <> "::" <> p <> "::" <> v
+materializeTaintAnnotations conn CallGraphAndTaintReady{..} ProcRows{prDefs, prUses} = do
+  -- Use in-memory sources/sinks and closure instead of re-reading
+  -- taint_sources/taint_sinks/taint_reaches from DuckDB.
+  let allSources = cgtrSources
+      allSinks   = cgtrSinks
+      taintKey o p v = o <> "::" <> p <> "::" <> v
       sourceKeys = Set.fromList
         [ taintKey (Taint.tsObject s) (Taint.tsProcName s) (Taint.tsVarName s) | s <- allSources ]
+      -- Use in-memory TaintClosure for reachability instead of re-reading taint_reaches
+      reachesPairs = TaintClosure.taintReachesPairsClosure cgtrClosure
       reachableFromSource = Set.fromList
-        [ toKey
-        | [fromKey, toKey] <- reachesRows
-        , fromKey `Set.member` sourceKeys
-        , case T.splitOn "::" toKey of { [_,_,_] -> True; _ -> False }
+        [ taintKey o p v
+        | ((so, sp, sv), (o, p, v)) <- reachesPairs
+        , taintKey so sp sv `Set.member` sourceKeys
         ]
       parseTriple t = case T.splitOn "::" t of
         [a, b, c] -> Just (a, b, c)
