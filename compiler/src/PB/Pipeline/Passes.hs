@@ -259,10 +259,10 @@ runPhaseB conn mDefaultNamespace = do
 
 fetchResolveInputs :: Handle -> IO ResolveInputs
 fetchResolveInputs conn = do
-  lvs                              <- queryLocalVars  conn
-  gvs                              <- queryGlobalVars conn
-  css                              <- queryCallSites  conn
-  (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
+  lvs                              <- timedQueryRows "  queryLocalVars"   (queryLocalVars    conn)
+  gvs                              <- timedQueryRows "  queryGlobalVars"  (queryGlobalVars   conn)
+  css                              <- timedQueryRows "  queryCallSites"   (queryCallSites    conn)
+  (objSet, usrTypes, inh, procMap) <- queryObjInfo     conn
   callableProcMap                  <- queryCallableProcMap conn
   pure ResolveInputs
     { riLocalVars       = lvs
@@ -314,23 +314,24 @@ sinkCallGraphOutput conn CallGraphOutput{..} = do
     TaintClosure.materializeTaintStepKind coTaintClosure coTaintSources coTaintSinks conn
 
 fetchSchemaCategoryInputs :: Handle -> IO SchemaCategoryInputs
-fetchSchemaCategoryInputs conn = do
-  drCols  <- queryDwRetrieveColumns   conn
-  dwCols  <- queryDwWriteColumns      conn
-  dwhCols <- queryDwWhereColumns      conn
-  djLegs  <- queryDwJoinLegs          conn
-  sqlCols <- querySqlCols             conn
-  cfCols  <- queryCatFootprintColumns conn
-  catCols <- queryCatColumns          conn
-  pure SchemaCategoryInputs
-    { sciDwRetrieveColumns = drCols
-    , sciDwWriteColumns    = dwCols
-    , sciDwWhereColumns    = dwhCols
-    , sciDwJoinLegs        = djLegs
-    , sciSqlCols           = sqlCols
-    , sciCatFootprintCols  = cfCols
-    , sciCatColumns        = catCols
-    }
+fetchSchemaCategoryInputs conn =
+  Progress.timedStep "Load schema-category inputs (7 queries)" $ do
+    drCols  <- timedQueryRows "  queryDwRetrieveColumns"   (queryDwRetrieveColumns   conn)
+    dwCols  <- timedQueryRows "  queryDwWriteColumns"      (queryDwWriteColumns      conn)
+    dwhCols <- timedQueryRows "  queryDwWhereColumns"      (queryDwWhereColumns      conn)
+    djLegs  <- timedQueryRows "  queryDwJoinLegs"          (queryDwJoinLegs          conn)
+    sqlCols <- timedQueryRows "  querySqlCols"             (querySqlCols             conn)
+    cfCols  <- timedQueryRows "  queryCatFootprintColumns" (queryCatFootprintColumns conn)
+    catCols <- timedQueryRows "  queryCatColumns"          (queryCatColumns          conn)
+    pure SchemaCategoryInputs
+      { sciDwRetrieveColumns = drCols
+      , sciDwWriteColumns    = dwCols
+      , sciDwWhereColumns    = dwhCols
+      , sciDwJoinLegs        = djLegs
+      , sciSqlCols           = sqlCols
+      , sciCatFootprintCols  = cfCols
+      , sciCatColumns        = catCols
+      }
 
 sinkSchemaCategoryOutput :: Handle -> SchemaCategoryOutput -> IO ()
 sinkSchemaCategoryOutput conn SchemaCategoryOutput{..} = do
