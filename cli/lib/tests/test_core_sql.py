@@ -141,7 +141,7 @@ def test_declare_cursor_rewrite():
 )
 def test_skip_unstructured(raw, expected_op):
     parsed, tables, columns, meta = parse_pb_sql(raw)
-    assert parsed is None, f"{expected_op} should not be parsed (got: {parsed!r})"
+    assert parsed == [], f"{expected_op} should return empty list (got: {parsed!r})"
     assert tables == []
     assert meta["operation"] == expected_op
 
@@ -153,7 +153,7 @@ def test_skip_unstructured(raw, expected_op):
 def test_skip_dynamic_cursor_declare():
     raw = "DECLARE cur DYNAMIC CURSOR FOR SQLSA;"
     parsed, tables, columns, meta = parse_pb_sql(raw)
-    assert parsed is None
+    assert parsed == []
     assert tables == []
     assert meta["operation"] == "DECLARE"
 
@@ -175,7 +175,7 @@ def test_skip_procedure_declare(raw):
     assert pb_sql_to_standard(raw) is None, "should be skipped by _SKIP_RE, not handed to sqlglot"
 
     parsed, tables, columns, meta = parse_pb_sql(raw)
-    assert parsed is None
+    assert parsed == []
     assert tables == []
     assert meta["operation"] == "DECLARE"
 
@@ -234,7 +234,7 @@ def test_pb_style_line_comment_stripped():
 def test_skip_unstructured_has_no_error_key():
     """Intentionally-skipped forms (OPEN/CLOSE/...) are not failures — no 'error' key."""
     parsed, tables, columns, meta = parse_pb_sql("OPEN cur_order")
-    assert parsed is None
+    assert parsed == []
     assert "error" not in meta
 
 

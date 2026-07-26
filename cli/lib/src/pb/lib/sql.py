@@ -275,7 +275,7 @@ def parse_pb_sql(
     Returns (parsed_dict, tables, columns, metadata). metadata's "column_refs",
     "row_filters", and "table_refs" keys carry the scope-aware extraction
     (list[dict], JSON-ready) alongside the legacy flat tables/columns lists.
-    parsed_dict is None for unstructured forms (cursors, dynamic SQL, connections).
+    parsed_dict is [] for unstructured forms (cursors, dynamic SQL, connections).
     """
     operation = raw_sql.strip().split()[0].upper() if raw_sql.strip() else "UNKNOWN"
     meta = {
@@ -286,7 +286,10 @@ def parse_pb_sql(
 
     standard = pb_sql_to_standard(raw_sql)
     if standard is None:
-        return None, [], [], meta
+        # Known unstructured form (EXECUTE IMMEDIATE, DECLARE ... DYNAMIC CURSOR, etc.)
+        # — not a parse error, just structurally unparseable. Return empty tables/columns
+        # with parse_ok=True so the caller doesn't report it as a SQL parse failure.
+        return [], [], [], meta
 
     dialects = [dialect] if dialect == "oracle" else [dialect, "oracle"]
     last_error: Exception | None = None
