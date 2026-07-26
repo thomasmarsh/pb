@@ -44,6 +44,10 @@ import PB.AST.SourceFile
 import PB.Lexing.Token     (SourceSpan)
 import PB.Analysis.Dataflow (extractSqlHostVars)
 
+import Control.DeepSeq            (NFData)
+import Control.Parallel.Strategies (parListChunk, rdeepseq, withStrategy)
+import GHC.Generics                (Generic)
+
 import Data.Aeson
   ( FromJSON (..), ToJSON (..), (.:)
   , object, withObject, (.=)
@@ -70,7 +74,9 @@ data DefRow = DefRow
     -- ^ The def variable's own token span -- distinct from 'drLine' (the
     -- enclosing statement's line, which 'buildInterprocEdges' matches
     -- against 'ResolvedCallRow.rcrCallLine' and so must stay untouched).
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData DefRow
 
 data UseRow = UseRow
   { urFile     :: Text
@@ -82,7 +88,9 @@ data UseRow = UseRow
   , urLine     :: Maybe Int
   , urKind     :: Text
   , urSpan     :: Maybe SourceSpan  -- ^ see 'DefRow.drSpan'
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData UseRow
 
 data ResolvedCallRow = ResolvedCallRow
   { rcrFile           :: Text
@@ -97,11 +105,15 @@ data ResolvedCallRow = ResolvedCallRow
   , rcrConfidence     :: Text
   , rcrReturnType     :: Maybe Text
   , rcrSpan           :: Maybe SourceSpan  -- ^ see 'DefRow.drSpan'
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData ResolvedCallRow
 
 data GlobalVarRow = GlobalVarRow
   { gvrVarName :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData GlobalVarRow
 
 instance FromJSON GlobalVarRow where
   parseJSON = withObject "GlobalVarRow" $ \o ->
@@ -119,7 +131,9 @@ data SqlStmt = SqlStmt
   , ssOperation :: Text
   , ssRawSql   :: Text
   , ssHasInto  :: Bool
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData SqlStmt
 
 data ProcMeta = ProcMeta
   { pmFile     :: Text
@@ -132,7 +146,9 @@ data ProcMeta = ProcMeta
                           -- the name, never the declared type
   , pmReturnType :: Text
   , pmStartLine :: Maybe Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData ProcMeta
 
 -- | Pre-extracted per-file inputs for taint analysis.
 -- Produced during the streaming per-file pass so that taintAnalysis can run
@@ -142,7 +158,9 @@ data TaintFileInputs = TaintFileInputs
   , tfiObjName   :: Text
   , tfiSqlStmts  :: [SqlStmt]
   , tfiProcMetas :: [ProcMeta]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData TaintFileInputs
 
 -- ---------------------------------------------------------------------------
 -- Taint types
@@ -155,7 +173,9 @@ data TaintSource = TaintSource
   , tsVarName   :: Text
   , tsSourceType :: Text
   , tsLine      :: Maybe Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData TaintSource
 
 instance ToJSON TaintSource where
   toJSON s = object
@@ -175,7 +195,9 @@ data TaintSink = TaintSink
   , tskSinkType :: Text
   , tskSeverity :: Text
   , tskLine     :: Maybe Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData TaintSink
 
 instance ToJSON TaintSink where
   toJSON s = object
@@ -196,7 +218,9 @@ data TaintAnnotation = TaintAnnotation
   , taIsTaintEntry   :: Bool
   , taIsTaintSink    :: Bool
   , taTaintedVars    :: [Text]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData TaintAnnotation
 
 instance ToJSON TaintAnnotation where
   toJSON a = object
@@ -223,13 +247,17 @@ data InterprocEdge = InterprocEdge
   , ieVarName        :: Text
   , ieCallerContext  :: Text
   , ieCalleeContext  :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData InterprocEdge
 
 data ProcSummaryReturnFlow = ProcSummaryReturnFlow
   { psrfObject  :: Text
   , psrfProc    :: Text
   , psrfLhsVar  :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData ProcSummaryReturnFlow
 
 data ProcedureSummary = ProcedureSummary
   { psFile            :: Text
@@ -239,10 +267,12 @@ data ProcedureSummary = ProcedureSummary
   , psGlobalsRead     :: [Text]
   , psGlobalsWritten  :: [Text]
   , psReturnFlowsTo   :: [ProcSummaryReturnFlow]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData ProcedureSummary
 
 -- ---------------------------------------------------------------------------
--- Helpers
+-- Hel
 -- ---------------------------------------------------------------------------
 
 type Triple = (Text, Text, Text)
@@ -356,7 +386,8 @@ extractTaintInputs file sf =
 -- | Classify taint sources from SQL statements and procedure metadata.
 classifySources :: [SqlStmt] -> [ProcMeta] -> [TaintSource]
 classifySources sqlStmts procs =
-  concatMap sqlSources sqlStmts <> concatMap procSources procs
+  concat (withStrategy (parListChunk 512 rdeepseq) (map sqlSources sqlStmts))
+  <> concat (withStrategy (parListChunk 512 rdeepseq) (map procSources procs))
   where
     sqlSources s
       | ssOperation s /= "SELECT" || not (ssHasInto s) = []
@@ -381,7 +412,7 @@ classifySources sqlStmts procs =
 
 -- | Classify taint sinks from SQL statements.
 classifySinks :: [SqlStmt] -> [TaintSink]
-classifySinks = concatMap go
+classifySinks = concat . withStrategy (parListChunk 512 rdeepseq) . map go
   where
     go s
       | op `Set.notMember` writeOps && op `Set.notMember` execOps = []
@@ -437,11 +468,11 @@ buildInterprocEdges
   -> [ProcMeta]
   -> [InterprocEdge]
 buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
-  concatMap callEdges resolvedCalls
-  <> concatMap builtinReturnEdges resolvedCalls
-  <> concatMap builtinArgEdges resolvedCalls
+  concat (withStrategy (parListChunk 512 rdeepseq) (map allEdges resolvedCalls))
   <> globalEdges
   where
+    allEdges rc = callEdges rc <> builtinReturnEdges rc <> builtinArgEdges rc
+
     usesByProc :: HM.HashMap (Text, Text) [UseRow]
     usesByProc = HM.fromListWith (++)
       [ ((urObject u, urProcName u), [u]) | u <- uses ]
@@ -590,7 +621,7 @@ buildProcedureSummaries
   -> [ProcMeta]
   -> [ProcedureSummary]
 buildProcedureSummaries edges defs uses globalVarNames procMetas =
-  map mkSummary procMetas
+  withStrategy (parListChunk 512 rdeepseq) (map mkSummary procMetas)
   where
     defsByProc :: HM.HashMap (Text, Text) [DefRow]
     defsByProc = HM.fromListWith (++)
