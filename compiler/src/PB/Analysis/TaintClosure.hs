@@ -36,6 +36,7 @@ import PB.Analysis.Taint
   ( InterprocEdge (..)
   , TaintSource (..)
   , TaintSink (..)
+  , buildInterprocEdgeMaps
   )
 import PB.Analysis.Taint qualified as Taint
 import PB.Analysis.TaintEdges (TaintIntraEdgeRow (..), TaintReturnRow (..))
@@ -82,24 +83,18 @@ type TaintTriple = (Text, Text, Text)
 -- not reliably share on the real corpus -- see
 -- doc/plan/182-algebraic-analysis.md Section 11.)
 buildTaintSuccessors
-  :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
+  :: [TaintIntraEdgeRow] -> [TaintReturnRow]
+  -> HM.HashMap (Text, Text, Text) [InterprocEdge]  -- argEdges
+  -> HM.HashMap (Text, Text) [InterprocEdge]        -- retEdges
+  -> HM.HashMap (Text, Text, Text) [InterprocEdge]  -- globalEdges
   -> (TaintTriple -> [(TaintTriple, Text, Text)])
-buildTaintSuccessors intraEdges returnRows edges = \triple -> successorsOf triple
+buildTaintSuccessors intraEdges returnRows !argEdges !retEdges !globalEdges = \triple -> successorsOf triple
   where
     !intraSucc = HM.fromListWith (++)
       [ ((tierObject r, tierProcName r, tierUseVar r), [tierDefVar r])
       | r <- intraEdges ]
     !returnTriples = HS.fromList
       [ (trrObject r, trrProcName r, trrVarName r) | r <- returnRows ]
-    !argEdges = HM.fromListWith (++)
-      [ ((ieCallerObject e, ieCallerProc e, ieVarName e), [e])
-      | e <- edges, ieEdgeKind e == "arg" ]
-    !retEdges = HM.fromListWith (++)
-      [ ((ieCalleeObject e, ieCalleeProc e), [e])
-      | e <- edges, ieEdgeKind e == "return" ]
-    !globalEdges = HM.fromListWith (++)
-      [ ((ieCallerObject e, ieCallerProc e, ieVarName e), [e])
-      | e <- edges, ieEdgeKind e == "global_write" ]
     successorsOf (obj, proc, var) =
       intraProc <> arg <> ret <> global
       where
@@ -148,10 +143,14 @@ data TaintClosure = TaintClosure
 -- | Build the shared 'TaintClosure' once: intern the PathValue relation and
 -- precompute the 'reachFrom' fixpoint the derived outputs consume.
 buildTaintClosure
-  :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge] -> [TaintSource]
+  :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
+  -> HM.HashMap (Text, Text, Text) [InterprocEdge]  -- argEdges
+  -> HM.HashMap (Text, Text) [InterprocEdge]        -- retEdges
+  -> HM.HashMap (Text, Text, Text) [InterprocEdge]  -- globalEdges
+  -> [TaintSource]
   -> TaintClosure
-buildTaintClosure intraEdges returnRows edges sources =
-  let (interner, rel) = taintPathRelation intraEdges returnRows edges sources
+buildTaintClosure intraEdges returnRows edges argMap retMap globalMap sources =
+  let (interner, rel) = taintPathRelation intraEdges returnRows edges argMap retMap globalMap sources
       idByVal = internByVal interner
       srcIds = Set.toList (Set.fromList
                  [ i | s <- sources
@@ -164,10 +163,14 @@ buildTaintClosure intraEdges returnRows edges sources =
 -- edge) for the same taint problem — used for witness reconstruction
 -- via 'PB.Algebra.Closure.reconstructPath'.
 taintPathRelation
-  :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge] -> [TaintSource]
+  :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
+  -> HM.HashMap (Text, Text, Text) [InterprocEdge]  -- argEdges
+  -> HM.HashMap (Text, Text) [InterprocEdge]        -- retEdges
+  -> HM.HashMap (Text, Text, Text) [InterprocEdge]  -- globalEdges
+  -> [TaintSource]
   -> (Interner TaintTriple, Relation (PathValue (Text, Text, Text)))
-taintPathRelation intraEdges returnRows edges sources =
-  let successors = buildTaintSuccessors intraEdges returnRows edges
+taintPathRelation intraEdges returnRows edges argMap retMap globalMap sources =
+  let successors = buildTaintSuccessors intraEdges returnRows argMap retMap globalMap
       seeds  = sourceTriples sources
                  ++ [ (tierObject r, tierProcName r, tierUseVar r) | r <- intraEdges ]
                  ++ [ (tierObject r, tierProcName r, tierDefVar r) | r <- intraEdges ]
@@ -201,7 +204,8 @@ taintReachable
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> Set TaintTriple
 taintReachable sources intraEdges returnRows edges =
-  let (interner, rel) = taintPathRelation intraEdges returnRows edges sources
+  let (argMap, retMap, globalMap) = buildInterprocEdgeMaps edges
+      (interner, rel) = taintPathRelation intraEdges returnRows edges argMap retMap globalMap sources
       idOf t = HM.lookup t (internByVal interner)
       srcIds = [ i | s <- sources
                , let t = (tsObject s, tsProcName s, tsVarName s)
@@ -231,7 +235,8 @@ taintReachesPairs
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple)]
 taintReachesPairs sources intraEdges returnRows edges =
-  taintReachesPairsClosure (buildTaintClosure intraEdges returnRows edges sources)
+  let (argMap, retMap, globalMap) = buildInterprocEdgeMaps edges
+  in taintReachesPairsClosure (buildTaintClosure intraEdges returnRows edges argMap retMap globalMap sources)
 
 -- | 'taintReachesPairs' over a prebuilt 'TaintClosure' (no relation rebuild).
 -- A node y /= source counts as reached iff it has 'pvHops' >= 1 in the
@@ -287,7 +292,8 @@ taintConfirmed
   :: [TaintSource] -> [TaintSink] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintSource, TaintSink)]
 taintConfirmed sources sinks intraEdges returnRows edges =
-  taintConfirmedClosure (buildTaintClosure intraEdges returnRows edges sources) sources sinks
+  let (argMap, retMap, globalMap) = buildInterprocEdgeMaps edges
+  in taintConfirmedClosure (buildTaintClosure intraEdges returnRows edges argMap retMap globalMap sources) sources sinks
 
 -- | 'taintConfirmed' over a prebuilt 'TaintClosure' (no relation rebuild).
 taintConfirmedClosure
@@ -315,7 +321,8 @@ taintWitnesses
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple, (Text, Text, Text))]
 taintWitnesses sources intraEdges returnRows edges =
-  let (interner, rel) = taintPathRelation intraEdges returnRows edges sources
+  let (argMap, retMap, globalMap) = buildInterprocEdgeMaps edges
+      (interner, rel) = taintPathRelation intraEdges returnRows edges argMap retMap globalMap sources
       idByVal = internByVal interner
       decode i = unintern i interner
       srcPairs = [ (s, i) | s <- sources
@@ -342,7 +349,8 @@ taintWitnessLegs
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple, [(TaintTriple, TaintTriple, Text, Text)])]
 taintWitnessLegs sources intraEdges returnRows edges =
-  taintWitnessLegsClosure (buildTaintClosure intraEdges returnRows edges sources)
+  let (argMap, retMap, globalMap) = buildInterprocEdgeMaps edges
+  in taintWitnessLegsClosure (buildTaintClosure intraEdges returnRows edges argMap retMap globalMap sources)
 
 -- | 'taintWitnessLegs' over a prebuilt 'TaintClosure' (no relation rebuild).
 taintWitnessLegsClosure

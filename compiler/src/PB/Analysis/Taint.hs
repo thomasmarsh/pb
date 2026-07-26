@@ -26,6 +26,7 @@ module PB.Analysis.Taint
   , classifySources
   , classifySinks
   , buildInterprocEdges
+  , buildInterprocEdgeMaps
   , buildProcedureSummaries
   , buildTaintAnnotations
     -- * Pre-extraction (for streaming pipelines)
@@ -404,6 +405,29 @@ classifySinks = concatMap go
 matchArgsToParams :: [Text] -> [Text] -> [(Text, Text)]
 matchArgsToParams args params =
   zip args (params ++ repeat "*extra")
+
+-- | Partition an edge list into the three maps @buildTaintSuccessors@ needs,
+-- keyed by edge kind. Factored out so callers can build these maps ONCE from
+-- the @[InterprocEdge]@ that @buildInterprocEdges@ already returns, instead
+-- of 'PB.Analysis.TaintClosure.buildTaintSuccessors' re-indexing the same
+-- list independently.
+buildInterprocEdgeMaps :: [InterprocEdge]
+  -> ( HM.HashMap (Text, Text, Text) [InterprocEdge]  -- argEdges
+     , HM.HashMap (Text, Text) [InterprocEdge]        -- retEdges
+     , HM.HashMap (Text, Text, Text) [InterprocEdge]  -- globalEdges
+     )
+buildInterprocEdgeMaps edges =
+  ( argEdges, retEdges, globalEdges )
+  where
+    argEdges = HM.fromListWith (++)
+      [ ((ieCallerObject e, ieCallerProc e, ieVarName e), [e])
+      | e <- edges, ieEdgeKind e == "arg" ]
+    retEdges = HM.fromListWith (++)
+      [ ((ieCalleeObject e, ieCalleeProc e), [e])
+      | e <- edges, ieEdgeKind e == "return" ]
+    globalEdges = HM.fromListWith (++)
+      [ ((ieCallerObject e, ieCallerProc e, ieVarName e), [e])
+      | e <- edges, ieEdgeKind e == "global_write" ]
 
 -- | Build inter-procedural edges from resolved calls, def/use rows, and global vars.
 buildInterprocEdges

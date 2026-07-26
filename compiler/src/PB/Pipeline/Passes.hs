@@ -441,10 +441,11 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
       allProcMetas   = concatMap Taint.tfiProcMetas cgiTaintInputs
       allSqlStmts    = concatMap Taint.tfiSqlStmts  cgiTaintInputs
       edges          = Taint.buildInterprocEdges cgiResolvedCalls cgiProcDefs cgiProcUses globalVarNames allProcMetas
+      (argMap, retMap, globalMap) = Taint.buildInterprocEdgeMaps edges
       summaries      = Taint.buildProcedureSummaries edges cgiProcDefs cgiProcUses globalVarNames allProcMetas
       allSources     = Taint.classifySources allSqlStmts allProcMetas
       allSinks       = Taint.classifySinks   allSqlStmts
-      taintClosure   = TaintClosure.buildTaintClosure cgiIntraEdges cgiReturnRows edges allSources
+      taintClosure   = TaintClosure.buildTaintClosure cgiIntraEdges cgiReturnRows edges argMap retMap globalMap allSources
   sinkOutput CallGraphOutput
     { coInterprocEdges = edges
     , coProcSummaries  = summaries

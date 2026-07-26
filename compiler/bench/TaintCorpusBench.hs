@@ -127,7 +127,8 @@ main = do
     -- decomposes it into relation-build / fixpoint / per-pair-reconstruct
     -- to locate the real bottleneck.
     tBuild0 <- getCurrentTime
-    let (internerP, relP) = TA.taintPathRelation intraEdges returnRows edges allSources
+    let (argMap, retMap, globalMap) = Taint.buildInterprocEdgeMaps edges
+        (internerP, relP) = TA.taintPathRelation intraEdges returnRows edges argMap retMap globalMap allSources
     tBuild1 <- seq internerP (getCurrentTime)
     let idByValP   = internByVal internerP
         decodeP i  = unintern i internerP
