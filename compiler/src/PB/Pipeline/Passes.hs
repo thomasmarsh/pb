@@ -28,7 +28,7 @@ import PB.Pipeline.DuckDb (Handle)
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( queryCallSites, queryGlobalVars, queryObjInfo
   , queryCallableProcMap
-  , queryProcDefs, queryProcUses, ProcRows (..), queryResolvedCalls
+  , queryProcDefs, queryProcUses, ProcRows (..)
   , queryTaintInputs
   , queryDwRetrieveColumns
   , queryDwJoinLegs, querySqlCols
@@ -78,7 +78,7 @@ emptyPhaseAData = PhaseAData [] [] [] [] [] []
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
 -- 'initDeadCodeInput'. Constructor NOT exported from this module.
-newtype ResolvedCallsReady = ResolvedCallsReady ()
+newtype ResolvedCallsReady = ResolvedCallsReady [ResolvedCall]
 
 -- | All DuckDB rows 'resolveTypesAndCalls' fetches before its pure transform.
 data ResolveInputs = ResolveInputs
@@ -247,8 +247,12 @@ runPhaseB conn mDefaultNamespace pad = do
   (_inh, rcReady) <- resolveTypesAndCalls
     (fetchResolveInputs (padLocalVars pad) conn)
     (sinkResolvedOutput conn)
+  -- Thread resolved_calls in-memory (Plan 208 Phase 2): extract from the
+  -- proof token to avoid re-querying DuckDB for Phase B's own data.
+  let ResolvedCallsReady rc = rcReady
+      resolvedCallRows = map resolvedCallToRow rc
   (procRows, cgReady) <- buildCallGraphAndTaint rcReady
-    (fetchCallGraphInputs conn (padTaintIntraEdges pad) (padTaintReturnRows pad))
+    (fetchCallGraphInputs conn (padTaintIntraEdges pad) (padTaintReturnRows pad) resolvedCallRows)
     (sinkCallGraphOutput conn)
   catFks <- queryCatFks conn
   schGraph <- buildSchemaCategory mDefaultNamespace catFks
@@ -298,19 +302,18 @@ sinkResolvedOutput conn ResolvedOutput{..} = do
   appendResolvedTypes conn roResolvedTypes
   appendResolvedCalls conn roResolvedCalls
 
-fetchCallGraphInputs :: Handle -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> IO CallGraphInputs
-fetchCallGraphInputs conn intraEdges returnRows =
-  Progress.timedStep "Load taint inputs (5 queries + 2 in-memory)" $ do
+fetchCallGraphInputs :: Handle -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [Taint.ResolvedCallRow] -> IO CallGraphInputs
+fetchCallGraphInputs conn intraEdges returnRows resolvedCallRows =
+  Progress.timedStep "Load taint inputs (4 queries + 3 in-memory)" $ do
     gvs        <- timedQueryRows "  queryGlobalVars"        (queryGlobalVars      conn)
     defs       <- timedQueryRows "  queryProcDefs"          (queryProcDefs        conn)
     uses       <- timedQueryRows "  queryProcUses"          (queryProcUses        conn)
-    allRC      <- timedQueryRows "  queryResolvedCalls"     (queryResolvedCalls   conn)
     tfis       <- timedQueryRows "  queryTaintInputs"       (queryTaintInputs     conn)
     pure CallGraphInputs
       { cgiGlobalVars    = gvs
       , cgiProcDefs      = defs
       , cgiProcUses      = uses
-      , cgiResolvedCalls = allRC
+      , cgiResolvedCalls = resolvedCallRows
       , cgiTaintInputs   = tfis
       , cgiIntraEdges    = intraEdges
       , cgiReturnRows    = returnRows
@@ -415,7 +418,7 @@ resolveTypesAndCalls fetchInputs sinkOutput = Progress.timedStep "Resolving type
     { roResolvedTypes = rt <> rtG
     , roResolvedCalls = rc
     }
-  pure (riInherits, ResolvedCallsReady ())
+  pure (riInherits, ResolvedCallsReady rc)
 
 -- | Interproc edges and taint classification ONCE
 -- corpus-wide, then the taint closure itself (@taint_reaches@\/
@@ -452,6 +455,25 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
     , coTaintClosure   = taintClosure
     }
   pure (ProcRows { prDefs = cgiProcDefs, prUses = cgiProcUses }, CallGraphAndTaintReady ())
+
+-- | Convert 'ResolvedCall' (TypeResolve) to 'Taint.ResolvedCallRow' for
+-- in-memory threading (Plan 208 Phase 2). The return type field is always
+-- 'Nothing' (the DuckDB table has no such column).
+resolvedCallToRow :: ResolvedCall -> Taint.ResolvedCallRow
+resolvedCallToRow ResolvedCall{..} = Taint.ResolvedCallRow
+  { Taint.rcrFile           = rcFile
+  , Taint.rcrObject         = rcObject
+  , Taint.rcrFromProc       = rcFromProc
+  , Taint.rcrToName         = rcToName
+  , Taint.rcrCallType       = rcCallType
+  , Taint.rcrCallLine       = rcLine
+  , Taint.rcrTargetObject   = rcTargetObject
+  , Taint.rcrTargetProc     = rcTargetProc
+  , Taint.rcrResolutionKind = rcKind
+  , Taint.rcrConfidence     = rcConfidence
+  , Taint.rcrReturnType     = Nothing
+  , Taint.rcrSpan           = rcSpan
+  }
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
