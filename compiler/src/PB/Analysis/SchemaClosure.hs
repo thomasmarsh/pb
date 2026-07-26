@@ -19,9 +19,8 @@
 --     ROW_NUMBER tie-break picks one witness per ordinal.
 --
 -- All three closures are built on the single 'PB.Algebra.Closure.reachFrom'
--- primitive (Boolean for reachability, min-plus for hop distances, and the
--- transposed relation for reverse reachability) — there is no second
--- hand-rolled worklist in this module.
+-- primitive (Boolean for reachability, min-plus for hop distances) — there is
+-- no second hand-rolled worklist in this module.
 --
 -- The input construction ('legSourceRows' / 'seedRows') is already Haskell
 -- ('PB.Pipeline.DuckDb.Relations.initSchemaRelations'); only the derived fixpoint is
@@ -29,7 +28,14 @@
 module PB.Analysis.SchemaClosure
   ( legPriority
   , reachClosure
+  , reachClosureMap
+  , reachClosureMapFrom
+  , schemaGraph
   , cosliceClosure
+  , cosliceClosureWith
+  , cosliceClosureWithFrom
+  , fwdForSeed
+  , backForSeed
   , materializeSchemaClosure
   ) where
 
@@ -42,17 +48,18 @@ import PB.Pipeline.DuckDb
   )
 
 import PB.Algebra.Closure
-  ( Interner, emptyInterner, intern, unintern, Relation, fromEdges, reachFrom )
+  ( Interner, emptyInterner, intern, unintern, Relation, fromEdges, reachFrom, internByVal )
 import qualified PB.Algebra.Semiring as S
 import Data.Semigroup (Sum (..))
 
-import qualified Data.List       as L
-import qualified Data.Map.Strict as Map
-import           Data.Map.Strict (Map)
-import qualified Data.Set        as Set
-import           Data.Set        (Set)
-import qualified Data.Text       as T
-import qualified Data.IntMap.Strict as IM
+import qualified Data.HashMap.Strict as HM
+import qualified Data.List           as L
+import qualified Data.Map.Strict     as Map
+import           Data.Map.Strict     (Map)
+import qualified Data.Set            as Set
+import           Data.Set            (Set)
+import qualified Data.Text           as T
+import qualified Data.IntMap.Strict  as IM
 
 -- | Priority-cascade leg selection, reproducing the writes-vs-retrieve
 -- choice-domain result deterministically. Groups @leg_source@ rows by
@@ -99,8 +106,8 @@ schemaGraph legRows =
   in (intAcc, allEdges, rel, succRev)
 
 -- | Forward transitive closure of @leg@ (kind ignored), computed via
--- 'reachFrom' (Boolean) — NOT an all-pairs closure (§12 item 6). Includes
--- self-pairs via cycles (a node in a cycle reaches itself).
+-- 'reachFrom' (Boolean) — NOT an all-pairs closure. Includes self-pairs via
+-- cycles (a node in a cycle reaches itself).
 --
 -- 'reachFrom' seeds keep their own 0-hop self-membership, so we seed it from
 -- each node's *direct successors* rather than the node itself: a node then
@@ -115,7 +122,13 @@ reachClosure legRows =
 reachClosureMap :: [[Text]] -> Map Text (Set Text)
 reachClosureMap legRows =
   let (interner, _edges, rel, succMap) = schemaGraph legRows
-      -- Seed 'reachFrom' from every direct successor (not the node itself) so
+  in reachClosureMapFrom interner rel succMap
+
+-- | Forward transitive closure from already-built graph components.
+reachClosureMapFrom
+  :: Interner Text -> Relation S.Boolean -> Map Text [Int] -> Map Text (Set Text)
+reachClosureMapFrom interner rel succMap =
+  let -- Seed 'reachFrom' from every direct successor (not the node itself) so
       -- a node's self-pair appears only via a real cycle.
       closed = reachFrom rel (concat (Map.elems succMap))
   in Map.fromList
@@ -125,43 +138,6 @@ reachClosureMap legRows =
             , t <- IM.keys (IM.findWithDefault IM.empty succId closed)
             , Just t' <- [unintern t interner] ])
        | (s, succs) <- Map.toList succMap ]
-
--- | Reverse reachability: node -> set of nodes that can reach it, computed via
--- 'reachFrom' over the transposed relation — the algebraic dual of
--- 'reachClosureMap', not a second hand-rolled worklist. The same
--- successor-seeded trick keeps a node's self-pair present only via a cycle,
--- so reverse reachability agrees with the forward closure's inversion.
-reverseReachClosure
-  :: Interner Text -> Relation S.Boolean -> Map Text [Int] -> Map Text (Set Text)
-reverseReachClosure interner rel succMap =
-  let revRel = transposeRel rel
-      closed = reachFrom revRel (concat (Map.elems succMap))
-  in Map.fromList
-       [ (t, Set.fromList
-            [ x'
-            | succId <- succs
-            , x <- IM.keys (IM.findWithDefault IM.empty succId closed)
-            , Just x' <- [unintern x interner] ])
-       | (t, succs) <- Map.toList succMap ]
-
--- | Transpose a Boolean relation (swap every arc's endpoints).
-transposeRel :: Relation S.Boolean -> Relation S.Boolean
-transposeRel rel =
-  fromEdges [ (v, u, lbl) | (u, inner) <- IM.toList rel, (v, lbl) <- IM.toList inner ]
-
--- | Shortest-hop distances from a seed over the leg graph, via 'reachFrom'
--- (min-plus semiring, each edge weighted one hop). Mirrors the old unweighted
--- 'bfsDist': a seed keeps distance 0, and only nodes reachable from the seed
--- appear.
-hopDist :: Interner Text -> Relation (S.MinPlus ()) -> Text -> Map Text Int
-hopDist interner relMinPlus seed =
-  let (sId, interner') = intern seed interner
-      closed = reachFrom relMinPlus [sId]
-  in Map.fromList
-       [ (t', d)
-       | (t, S.MinPlus (Just (Sum d, ()))) <-
-           IM.toList (IM.findWithDefault IM.empty sId closed)
-       , Just t' <- [unintern t interner'] ]
 
 -- | Multi-witness shortest-path reconstruction from seeds over @leg@,
 -- emitting @path_leg_fwd@ / @path_leg_back@. Emits EVERY shortest leg on a
@@ -176,21 +152,62 @@ cosliceClosure
 cosliceClosure seeds legRows =
   cosliceClosureWith seeds legRows (reachClosureMap legRows)
 
+-- | cosliceClosure wrapper that accepts a pre-computed reach map.
+-- Builds the graph internally (duplicate work — use 'cosliceClosureWithFrom'
+-- when the graph is already available).
 cosliceClosureWith
   :: [Text] -> [[Text]] -> Map Text (Set Text) -> ([[Text]], [[Text]])
 cosliceClosureWith seeds legRows reach =
   let (interner, edges, rel, succMap) = schemaGraph legRows
-      -- Min-plus relations: each edge costs one hop (NOT 'S.one', which is the
-      -- 0-distance identity). Forward and transposed variants back the two
-      -- distance maps below.
-      relMinPlus = fromEdges [ (u, v, S.MinPlus (Just (Sum 1, ())))
-                             | (u, v) <- edges ] :: Relation (S.MinPlus ())
+  in cosliceClosureWithFrom (interner, edges, rel, succMap) seeds legRows reach
+
+-- | cosliceClosure from already-built graph components.
+--
+-- Builds min-plus relations once from the shared edge list (instead of
+-- rebuilding for each relation variant), batches all seeds into one
+-- 'reachFrom' call for forward and reverse distances (instead of N per-seed
+-- calls), and derives reverse reachability by inverting the already-computed
+-- forward 'reach' map (O(|reach|) instead of a separate Boolean fixpoint).
+cosliceClosureWithFrom
+  :: (Interner Text, [(Int, Int)], Relation S.Boolean, Map Text [Int])
+  -> [Text] -> [[Text]] -> Map Text (Set Text) -> ([[Text]], [[Text]])
+cosliceClosureWithFrom (interner, edges, _rel, _succMap) seeds legRows reach =
+  let -- Min-plus relations: each edge costs one hop.
+      relMinPlus    = fromEdges [ (u, v, S.MinPlus (Just (Sum 1, ())))
+                                | (u, v) <- edges ] :: Relation (S.MinPlus ())
       relMinPlusRev = fromEdges [ (v, u, S.MinPlus (Just (Sum 1, ())))
-                               | (u, v) <- edges ] :: Relation (S.MinPlus ())
-      revReach = reverseReachClosure interner rel succMap
-      adjFwd   = Map.fromListWith (++) [ (x, [(y, k)]) | [x, y, k] <- legRows ]
-      fwd  = [ r | s <- seeds, r <- fwdForSeed s adjFwd reach (hopDist interner relMinPlus s) ]
-      back = [ r | s <- seeds, r <- backForSeed s adjFwd revReach (hopDist interner relMinPlusRev s) ]
+                                | (u, v) <- edges ] :: Relation (S.MinPlus ())
+
+      -- Batch all seeds into one 'reachFrom' call instead of N per-seed
+      -- calls. Interned id lookup via the shared interner.
+      seedIds = [ i | s <- seeds, Just i <- [HM.lookup s (internByVal interner)] ]
+
+      -- Single batched forward + reverse distance computation.
+      allDists    = reachFrom relMinPlus    seedIds
+      allDistsRev = reachFrom relMinPlusRev seedIds
+
+      -- Reverse reachability: invert the forward 'reach' map instead of
+      -- computing a separate Boolean fixpoint over the transposed relation.
+      revReach = Map.foldlWithKey'
+        (\acc s' outs -> Set.foldl'
+          (\acc' t' -> Map.insertWith Set.union t' (Set.singleton s') acc') acc outs)
+        Map.empty reach
+
+      -- Helper: extract a per-seed distance map from the batched result.
+      seedDist :: Text -> Relation (S.MinPlus ()) -> Map Text Int
+      seedDist s distRel =
+        case HM.lookup s (internByVal interner) of
+          Nothing -> Map.empty
+          Just sId -> Map.fromList
+             [ (t', d)
+             | (t, S.MinPlus (Just (Sum d, ()))) <-
+                 IM.toList (IM.findWithDefault IM.empty sId distRel)
+             , Just t' <- [unintern t interner] ]
+
+      adjFwd = Map.fromListWith (++) [ (x, [(y, k)]) | [x, y, k] <- legRows ]
+
+      fwd  = [ r | s <- seeds, r <- fwdForSeed s adjFwd reach (seedDist s allDists) ]
+      back = [ r | s <- seeds, r <- backForSeed s adjFwd revReach (seedDist s allDistsRev) ]
   in (fwd, back)
 
 fwdForSeed
@@ -247,9 +264,11 @@ materializeSchemaClosure SchemaInputRows{sirMorphisms, sirObjects} conn = do
       legSource = legSourceRows morphisms
       seeds    = [ k | [k] <- seedRows objects ]
       leg      = legPriority legSource
-      reach    = reachClosureMap leg
+      -- Build the graph once and share between reach and coslice closures.
+      graph@(interner, _edges, rel, succMap) = schemaGraph leg
+      reach    = reachClosureMapFrom interner rel succMap
       reaches  = [ [s, t] | (s, outs) <- Map.toList reach, t <- Set.toList outs ]
-      (pathFwd, pathBack) = cosliceClosureWith seeds leg reach
+      (pathFwd, pathBack) = cosliceClosureWithFrom graph seeds leg reach
   recreateTextTable conn "reaches" ["x", "y"]
   appendTextRows conn "reaches" reaches
   recreateTextTable conn "path_leg_fwd" ["s", "target", "leg_ord", "lf", "lt", "kind"]
