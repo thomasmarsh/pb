@@ -13,12 +13,12 @@ import Test.Tasty.HUnit       (testCase, assertEqual)
 
 phaseATables :: [Text]
 phaseATables =
-  [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+  [ "objects", "procedures", "call_sites", "global_vars"
   , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
-  , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+  , "sql_statement_filters", "sql_statement_tables"
   , "source_files", "parse_errors", "identifier_tokens"
   , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
-  , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+  , "dw_joins", "dw_retrieve_where"
   , "dw_arguments"
   , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
   , "dead_vars"
@@ -77,8 +77,6 @@ testAppendProcedures = withHandle inMemory $ \conn -> do
       [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed" []
       , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed" []
       ]
-    -- appendLocalVars sharing the same pool must not conflict
-    appendLocalVars pool []
     assertEqual "procedures appended" () ()
 
 testAppendSqlStmtColumnsFilters :: IO ()

@@ -27,12 +27,9 @@ module PB.Pipeline.DuckDb.PhaseA
   , appendDwControls
   , appendDwRetrieveTables
   , appendDwRetrieveColumns
-  , appendDwWriteColumns
-  , appendDwWhereColumns
   , appendDwJoins
   , appendDwRetrieveWhere
   , appendDwArguments
-  , appendLocalVars
   , appendDeadVars
   , appendTypeMismatches
   , appendCallSites
@@ -44,9 +41,6 @@ module PB.Pipeline.DuckDb.PhaseA
   , appendSqlStmtColumns
   , appendSqlStmtFilters
   , appendSqlStmtTables
-  , appendCatFootprintColumns
-  , appendTaintIntraEdges
-  , appendTaintReturnRows
   , appendCatalogColumns
   , appendCatalogPks
   , appendCatalogFks
@@ -62,9 +56,8 @@ import PB.AST.SourceFile        (ParseError (..))
 import PB.AST.Type              (pbTypeSpan)
 import PB.Grammar.Body          (isSegmentName)
 import PB.Lexing.Token          (Token (..), SourceSpan (..))
-import PB.Analysis.TypeResolve  (LocalVar (..), CallSite (..), GlobalVar (..), ResolvedVarRef (..))
+import PB.Analysis.TypeResolve  (CallSite (..), GlobalVar (..), ResolvedVarRef (..))
 import PB.Analysis.Dataflow     qualified as Dataflow
-import PB.Analysis.TaintEdges   qualified as TaintEdges
 import PB.Analysis.DeadVars     (DeadVarFinding (..), deadVarKindText)
 import PB.Analysis.TypeFamily   (TypeMismatchFinding (..), mismatchKindText)
 import PB.Pipeline.DuckDb       (aText, aMaybeText, aInt, aMaybeInt, aMaybeSpan, aBool)
@@ -343,30 +336,6 @@ appendDwRetrieveColumns pool rows = appendRow pool "dw_retrieve_columns" $ \app 
 -- computed via 'PB.Analysis.DwFootprint.dwRetrieveFootprint' at compile
 -- time -- same row shape as 'appendDwRetrieveColumns', a separate table so
 -- the leg_kind (LegWrites, not LegRetrieve) stays evident from which table
--- a row came from, matching 'appendCatFootprintColumns's own precedent.
-appendDwWriteColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
-appendDwWriteColumns _    [] = pure ()
-appendDwWriteColumns pool rows = appendRow pool "dw_write_columns" $ \app ->
-  forEachRow app rows $ \_ r -> do
-    aText      app (drcrFile r)
-    aText      app (drcrObject r)
-    aMaybeText app (drcrNamespace r)
-    aText      app (drcrTableName r)
-    aText      app (drcrColumnName r)
-
--- | Plan 163 Phase 6: a DW retrieve's WHERE-operand columns (catalog-gated
--- by 'PB.Analysis.DwFootprint.dwRetrieveFootprint' itself), same shape
--- as 'appendDwWriteColumns'.
-appendDwWhereColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
-appendDwWhereColumns _    [] = pure ()
-appendDwWhereColumns pool rows = appendRow pool "dw_where_columns" $ \app ->
-  forEachRow app rows $ \_ r -> do
-    aText      app (drcrFile r)
-    aText      app (drcrObject r)
-    aMaybeText app (drcrNamespace r)
-    aText      app (drcrTableName r)
-    aText      app (drcrColumnName r)
-
 appendDwJoins :: AppenderPool -> [DwJoinRow] -> IO ()
 appendDwJoins _    [] = pure ()
 appendDwJoins pool rows = appendRow pool "dw_joins" $ \app ->
@@ -400,19 +369,6 @@ appendDwArguments pool rows = appendRow pool "dw_arguments" $ \app ->
     aText app (darArgName r)
     aText app (darArgType r)
     aInt  app (darOrdinal r)
-
-appendLocalVars :: AppenderPool -> [LocalVar] -> IO ()
-appendLocalVars _    [] = pure ()
-appendLocalVars pool lvs = appendRow pool "local_vars" $ \app ->
-  forEachRow app lvs $ \_ lv -> do
-    aText app (lvFile lv)
-    aText app (lvObject lv)
-    aText app (lvProcName lv)
-    aText app (lvVarName lv)
-    aText app (lvRawType lv)
-    aBool app (lvIsParam lv)
-    aInt  app (lvScopeLine lv)
-    aMaybeSpan app (pbTypeSpan (lvPbType lv))
 
 appendDeadVars :: AppenderPool -> [DeadVarFinding] -> IO ()
 appendDeadVars _    [] = pure ()
@@ -536,40 +492,6 @@ appendSqlStmtColumns pool rows = appendRow pool "sql_statement_columns" $ \app -
 -- | Plan 163 Phase 3: same row shape/append pattern as
 -- 'appendSqlStmtColumns' (reuses 'SqlStmtColumnRow' rather than a bespoke
 -- type), writing to 'cat_footprint_columns' instead.
-appendCatFootprintColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
-appendCatFootprintColumns _    [] = pure ()
-appendCatFootprintColumns pool rows = appendRow pool "cat_footprint_columns" $ \app ->
-  forEachRow app rows $ \_ r -> do
-    aText      app (sscrFile r)
-    aText      app (sscrObject r)
-    aText      app (sscrProcName r)
-    aInt       app (sscrLine r)
-    aMaybeText app (sscrNamespace r)
-    aMaybeText app (sscrTableName r)
-    aText      app (sscrColumnName r)
-    aBool      app (sscrIsWrite r)
-
--- | Plan 182 Move 2: writes 'PB.Analysis.TaintEdges.foldTaintEdgesEff'
--- output, one row per intra-proc @(useVar, defVar)@ edge.
-appendTaintIntraEdges :: AppenderPool -> [TaintEdges.TaintIntraEdgeRow] -> IO ()
-appendTaintIntraEdges _    [] = pure ()
-appendTaintIntraEdges pool rows = appendRow pool "taint_intra_edges" $ \app ->
-  forEachRow app rows $ \_ r -> do
-    aText app (TaintEdges.tierObject r)
-    aText app (TaintEdges.tierProcName r)
-    aText app (TaintEdges.tierUseVar r)
-    aText app (TaintEdges.tierDefVar r)
-
--- | Plan 182b: writes 'PB.Analysis.TaintEdges.foldTaintEdgesEff' output,
--- one row per var used in a procedure's @return@ payload.
-appendTaintReturnRows :: AppenderPool -> [TaintEdges.TaintReturnRow] -> IO ()
-appendTaintReturnRows _    [] = pure ()
-appendTaintReturnRows pool rows = appendRow pool "taint_return_rows" $ \app ->
-  forEachRow app rows $ \_ r -> do
-    aText app (TaintEdges.trrObject r)
-    aText app (TaintEdges.trrProcName r)
-    aText app (TaintEdges.trrVarName r)
-
 appendSqlStmtFilters :: AppenderPool -> [SqlStmtFilterRow] -> IO ()
 appendSqlStmtFilters _    [] = pure ()
 appendSqlStmtFilters pool rows = appendRow pool "sql_statement_filters" $ \app ->

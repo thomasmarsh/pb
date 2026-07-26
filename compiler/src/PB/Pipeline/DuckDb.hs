@@ -140,11 +140,6 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- type_start_line/col, type_end_line/col carry the declared type
       -- name's own token span (additive, nullable -- NULL for a primitive/
       -- any/decimal type, which is a keyword, not an identifier reference).
-      , "CREATE TABLE IF NOT EXISTS local_vars \
-        \(file TEXT, object TEXT, proc_name TEXT, \
-        \var_name TEXT, raw_type TEXT, is_param BOOLEAN, scope_line INTEGER, \
-        \type_start_line INTEGER, type_start_col INTEGER, \
-        \type_end_line INTEGER, type_end_col INTEGER)"
       -- Plan 195 Phase E.5b: to_name_start_line/col, to_name_end_line/col
       -- carry the callee identifier token's own span, additive alongside
       -- line (the enclosing statement's line, which
@@ -168,7 +163,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \name_start_line INTEGER, name_start_col INTEGER, \
         \name_end_line INTEGER, name_end_col INTEGER, declared_type TEXT)"
       -- type_start_line/col, type_end_line/col carry the declared type
-      -- name's own token span, same convention as local_vars above.
+      -- name's own token span.
       , "CREATE TABLE IF NOT EXISTS global_vars \
         \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT, \
         \type_start_line INTEGER, type_start_col INTEGER, \
@@ -202,24 +197,6 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- that module's doc comment). Kept as its own table, not merged into
       -- sql_statement_columns, so Phase 4's leg_source column can tag rows
       -- by producer without an extra column on this table.
-      , "CREATE TABLE IF NOT EXISTS cat_footprint_columns \
-        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
-        \namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN)"
-      -- Plan 182 Move 2 (2026-07-18): the intra-proc @(useVar, defVar)@
-      -- edges 'PB.Analysis.TaintEdges.foldTaintEdgesEff' folds directly
-      -- from each procedure's compiled EffTerm, populated in Phase A
-      -- (PB.Pipeline.Runner.compileOne, same phase as cat_footprint_columns)
-      -- and consumed by PB.Analysis.TaintClosure.buildTaintSuccessors in Phase B.
-      , "CREATE TABLE IF NOT EXISTS taint_intra_edges \
-        \(object TEXT, proc_name TEXT, use_var TEXT, def_var TEXT)"
-      -- Plan 182b (2026-07-18): one row per var used in a procedure's
-      -- 'PB.Compile.IR.EReturn' payload, populated in Phase A alongside
-      -- taint_intra_edges and consumed by
-      -- PB.Analysis.TaintClosure.buildTaintSuccessors in
-      -- Phase B -- replaces the old index's prior dependency on proc_uses'
-      -- kind='return' rows.
-      , "CREATE TABLE IF NOT EXISTS taint_return_rows \
-        \(object TEXT, proc_name TEXT, var_name TEXT)"
       -- Plan 157 Phase 4.5: namespace-aware sibling of sql_statements.tables
       -- (comma-joined, no namespace, kept untouched -- see that field's own
       -- consumers). One row per (statement, table) pair, extracted straight
@@ -234,10 +211,6 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
         \(file TEXT, object TEXT, namespace TEXT, table_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_columns \
-        \(file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
-      , "CREATE TABLE IF NOT EXISTS dw_write_columns \
-        \(file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
-      , "CREATE TABLE IF NOT EXISTS dw_where_columns \
         \(file TEXT, object TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_joins \
         \(file TEXT, object TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \

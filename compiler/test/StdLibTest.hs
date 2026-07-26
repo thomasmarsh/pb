@@ -64,12 +64,12 @@ withStdlibDb act = withHandle inMemory $ \conn -> do
   act conn
   where
     phaseATables =
-      [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
+      [ "objects", "procedures", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
-      , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+      , "sql_statement_filters", "sql_statement_tables"
       , "source_files", "parse_errors", "identifier_tokens"
       , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
-      , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+      , "dw_joins", "dw_retrieve_where"
       , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
       ]
 
@@ -134,12 +134,12 @@ testUserConfirmed = withHandle inMemory $ \conn -> do
   assertEqual "user object is confirmed" ["confirmed"] confs
   where
     phaseATables =
-      [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
+      [ "objects", "procedures", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
-      , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+      , "sql_statement_filters", "sql_statement_tables"
       , "source_files", "parse_errors", "identifier_tokens"
       , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
-      , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+      , "dw_joins", "dw_retrieve_where"
       , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
       ]
 

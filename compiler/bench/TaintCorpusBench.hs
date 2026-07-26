@@ -12,8 +12,6 @@ import PB.Pipeline.DuckDb.PhaseB.Query
   , queryProcUses
   , queryResolvedCalls
   , queryTaintInputs
-  , queryTaintIntraEdges
-  , queryTaintReturnRows
   )
 import PB.Analysis.TypeResolve (GlobalVar (..))
 import PB.Analysis.Taint qualified as Taint
@@ -83,9 +81,9 @@ main = do
     uses  <- queryProcUses conn
     allRC <- queryResolvedCalls conn
     tfis  <- queryTaintInputs conn
-    intraEdges <- queryTaintIntraEdges conn
-    returnRows <- queryTaintReturnRows conn
-    let globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
+    let intraEdges   = []  -- Phase 1: no longer in DuckDB (threaded in-memory)
+        returnRows   = []  -- Phase 1: no longer in DuckDB (threaded in-memory)
+        globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
         allProcMetas   = concatMap Taint.tfiProcMetas tfis
         allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
         edges          = Taint.buildInterprocEdges allRC defs uses globalVarNames allProcMetas

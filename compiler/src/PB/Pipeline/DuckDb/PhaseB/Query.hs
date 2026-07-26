@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module PB.Pipeline.DuckDb.PhaseB.Query
-  ( queryLocalVars
-  , queryCallSites
+  ( queryCallSites
   , queryGlobalVars
   , queryObjInfo
   , queryCallableProcMap
@@ -14,15 +13,10 @@ module PB.Pipeline.DuckDb.PhaseB.Query
   , queryResolvedCalls
   , queryTaintInputs
   , queryDwRetrieveColumns
-  , queryDwWriteColumns
-  , queryDwWhereColumns
   , queryDwJoinLegs
   , querySqlCols
-  , queryCatFootprintColumns
   , queryCatColumns
   , queryCatFks
-  , queryTaintIntraEdges
-  , queryTaintReturnRows
   -- Plan 175 Phase 1: typed relation-reshaping-layer readers
   , SchMorphismRow (..)
   , querySchemaObjects
@@ -39,10 +33,9 @@ import PB.AST.Ident             (Ident, IdentMap, IdentSet, identMapFromListWith
 import PB.AST.Type             (parseTypeText, parseTypeTextAt)
 import PB.Lexing.Token          (SourceSpan (..))
 import PB.Analysis.TypeResolve
-  ( LocalVar (..), CallSite (..), GlobalVar (..)
+  ( CallSite (..), GlobalVar (..)
   )
 import PB.Analysis.Taint       qualified as Taint
-import PB.Analysis.TaintEdges  qualified as TaintEdges
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..)
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
@@ -59,27 +52,6 @@ import qualified Data.Text               as T
 
 -- ---------------------------------------------------------------------------
 -- FromRow instances (orphans for external types)
-
-instance FromRow LocalVar where
-  fromRow = do
-    file_      <- field
-    obj_       <- field
-    proc_      <- field
-    var_       <- field
-    rawType_   <- field
-    isParam_   <- field
-    scopeLine_ <- field
-    typeSp_    <- fieldSpan
-    pure LocalVar
-      { lvFile      = file_
-      , lvObject    = obj_
-      , lvProcName  = proc_
-      , lvVarName   = var_
-      , lvRawType   = rawType_
-      , lvIsParam   = isParam_
-      , lvScopeLine = scopeLine_
-      , lvPbType    = maybe (parseTypeText rawType_) (`parseTypeTextAt` rawType_) typeSp_
-      }
 
 -- | Read four nullable INTEGER span columns (in @start_line, start_col,
 -- end_line, end_col@ order) as one 'SourceSpan', all-or-nothing -- every
@@ -135,11 +107,7 @@ instance FromRow Taint.UseRow where
     <*> field <*> field <*> field <*> field
     <*> fieldSpan
 
-instance FromRow TaintEdges.TaintIntraEdgeRow where
-  fromRow = TaintEdges.TaintIntraEdgeRow <$> field <*> field <*> field <*> field
 
-instance FromRow TaintEdges.TaintReturnRow where
-  fromRow = TaintEdges.TaintReturnRow <$> field <*> field <*> field
 
 instance FromRow Taint.ResolvedCallRow where
   fromRow = do
@@ -214,12 +182,6 @@ instance FromRow TwoText where
 
 -- ---------------------------------------------------------------------------
 -- Phase B queries
-
-queryLocalVars :: Handle -> IO [LocalVar]
-queryLocalVars conn = queryHandle conn
-  "SELECT file, object, proc_name, var_name, raw_type, is_param, scope_line, \
-  \type_start_line, type_start_col, type_end_line, type_end_col \
-  \FROM local_vars"
 
 queryCallSites :: Handle -> IO [CallSite]
 queryCallSites conn = queryHandle conn
@@ -341,16 +303,6 @@ newtype DeadCodeClosureReady = DeadCodeClosureReady ()
 -- 'PB.Pipeline.Passes.computeSchemaClosure'.
 newtype SchemaClosureReady = SchemaClosureReady ()
 
--- | Plan 182 Move 2: reads back 'PB.Pipeline.DuckDb.PhaseA.appendTaintIntraEdges''s output.
-queryTaintIntraEdges :: Handle -> IO [TaintEdges.TaintIntraEdgeRow]
-queryTaintIntraEdges conn = queryHandle conn
-  "SELECT object, proc_name, use_var, def_var FROM taint_intra_edges"
-
--- | Plan 182b: reads back 'PB.Pipeline.DuckDb.PhaseA.appendTaintReturnRows''s output.
-queryTaintReturnRows :: Handle -> IO [TaintEdges.TaintReturnRow]
-queryTaintReturnRows conn = queryHandle conn
-  "SELECT object, proc_name, var_name FROM taint_return_rows"
-
 queryResolvedCalls :: Handle -> IO [Taint.ResolvedCallRow]
 queryResolvedCalls conn = queryHandle conn
   "SELECT file, object, proc_name, to_name, call_type, line, \
@@ -403,14 +355,6 @@ queryDwRetrieveColumns conn = queryHandle conn
 
 -- | Plan 163 Phase 6. Same 'DwRetrieveColRow' 'FromRow' shape as
 -- 'queryDwRetrieveColumns' -- only the source table differs.
-queryDwWriteColumns :: Handle -> IO [DwRetrieveColRow]
-queryDwWriteColumns conn = queryHandle conn
-  "SELECT file, object, namespace, table_name, column_name FROM dw_write_columns"
-
-queryDwWhereColumns :: Handle -> IO [DwRetrieveColRow]
-queryDwWhereColumns conn = queryHandle conn
-  "SELECT file, object, namespace, table_name, column_name FROM dw_where_columns"
-
 queryDwJoinLegs :: Handle -> IO [DwJoinLegRow]
 queryDwJoinLegs conn = queryHandle conn
   "SELECT file, object, left_ref, right_ref FROM dw_joins"
@@ -511,14 +455,6 @@ queryDwObjects :: Handle -> IO [Text]
 queryDwObjects conn = do
   rows <- queryHandle conn "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
   pure [o | OneText o <- rows]
-
--- | Plan 163 Phase 3: same shape/query as 'querySqlCols', reading
--- 'cat_footprint_columns' instead -- the existing 'FromRow' 'SqlColRow'
--- instance is reused verbatim.
-queryCatFootprintColumns :: Handle -> IO [SqlColRow]
-queryCatFootprintColumns conn = queryHandle conn
-  "SELECT file, object, proc_name, line, namespace, table_name, column_name, is_write \
-  \FROM cat_footprint_columns"
 
 queryCatColumns :: Handle -> IO [CatColumnRow]
 queryCatColumns conn = queryHandle conn

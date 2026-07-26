@@ -1,19 +1,20 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, runModeDb, CompiledFile (..), CompiledPs (..), CompiledDw (..))
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, runModeDb, CompiledFile (..), CompiledPs (..), CompiledDw (..), accumulatePhaseAData, sqlStmtColumnRowToSqlColRow, dwRetrieveColumnRowToDwRetrieveColRow)
 import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
 import PB.AST.SourceFile   (ParseError (..))
 import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Pipeline.DuckDb.PhaseA
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
-  , DwRetrieveColumnRow (..)
-  , DwRetrieveTableRow (..)
-  , DwRetrieveWhereRow (..)
-  , DwArgumentRow (..)
-  , SqlStmtTableRow (..)
+  , DwRetrieveColumnRow (..), DwRetrieveTableRow (..)
+  , DwRetrieveWhereRow (..), DwArgumentRow (..), SqlStmtTableRow (..)
+  , ObjectRow (..), DwObjectRow (..)
   )
+import PB.Pipeline.Passes (PhaseAData (..), emptyPhaseAData)
+
+import PB.Analysis.SchemaCategory (SqlColRow (..), DwRetrieveColRow (..), StmtId (..))
 import PB.Pipeline.DuckDb          (Config (..), inMemory, initSchema, queryHandle, withHandle)
 import PB.Pipeline.DuckDb.Appender (withAppenderPool)
 import PB.AST.BodyStmt     (BodyStmt (..))
@@ -106,7 +107,7 @@ instance FromRow ObjRowQ where
 dwFixturePhaseATables :: [Text]
 dwFixturePhaseATables =
   [ "objects", "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
-  , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+  , "dw_joins", "dw_retrieve_where"
   , "source_files", "identifier_tokens", "resolved_var_refs", "call_sites"
   ]
 
@@ -1403,6 +1404,73 @@ tests = testGroup "Pipeline.Runner"
           let stdlibFiles = [ f | Only f <- rows, "__stdlib__/" `T.isPrefixOf` f ]
           assertBool "no duplicate __stdlib__ source_files rows after a second run"
             (length stdlibFiles == length (Set.fromList stdlibFiles))
+    ]
+  , testGroup "PhaseAData accumulation"
+    [ testCase "sqlStmtColumnRowToSqlColRow converts all fields" $ do
+        let src = SqlStmtColumnRow "f.srw" "w_test" "ue_clicked" 42 (Just "sales") (Just "orders") "id" True
+            dst = SqlColRow (SqlStmtId "f.srw" "w_test" "ue_clicked" 42) (Just "sales") (Just "orders") "id" True
+        sqlStmtColumnRowToSqlColRow src @?= dst
+
+    , testCase "dwRetrieveColumnRowToDwRetrieveColRow converts all fields with nullable namespace" $ do
+        let src = DwRetrieveColumnRow "d_test.srd" "d_test" Nothing "orders" "id"
+            dst = DwRetrieveColRow "d_test.srd" "d_test" Nothing "orders" "id"
+        dwRetrieveColumnRowToDwRetrieveColRow src @?= dst
+
+    , testCase "dwRetrieveColumnRowToDwRetrieveColRow converts all fields with non-null namespace" $ do
+        let src = DwRetrieveColumnRow "d_test.srd" "d_test" (Just "sales") "orders" "id"
+            dst = DwRetrieveColRow "d_test.srd" "d_test" (Just "sales") "orders" "id"
+        dwRetrieveColumnRowToDwRetrieveColRow src @?= dst
+
+    , testCase "accumulatePhaseAData appends CFPs local_vars" $ do
+        let cps = CompiledPs
+              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing ""
+              , cpsProcRows      = []
+              , cpsLocalVars     = []
+              , cpsDeadVars      = []
+              , cpsTypeMismatches = []
+              , cpsCallSites     = []
+              , cpsVarRefs       = []
+              , cpsGlobalVars    = []
+              , cpsProcFlows     = []
+              , cpsSqlStmts      = []
+              , cpsSqlStmtColumns = []
+              , cpsSqlStmtFilters = []
+              , cpsSqlStmtTables = []
+              , cpsCatFootprintColumns = []
+              , cpsTaintIntraEdges = []
+              , cpsTaintReturnRows = []
+              , cpsSourceContent = Nothing
+              , cpsIdentifierTokens = []
+              }
+            pad = accumulatePhaseAData emptyPhaseAData (CFPs cps)
+        padLocalVars pad @?= []
+
+    , testCase "accumulatePhaseAData appends CFDw dw_write_columns" $ do
+        let cdw = CompiledDw
+              { cdDwObjectRow      = DwObjectRow "" "" "" "" Nothing
+              , cdDwControls       = []
+              , cdDwRetrieveTables = []
+              , cdDwRetrieveColumns = []
+              , cdDwWriteColumns   = [DwRetrieveColumnRow "d.srd" "d" Nothing "t" "c"]
+              , cdDwWhereColumns   = []
+              , cdDwJoins          = []
+              , cdDwRetrieveWhere  = []
+              , cdDwArguments      = []
+              , cdCallSites        = []
+              , cdVarRefs          = []
+              , cdSourceContent    = Nothing
+              , cdIdentifierTokens = []
+              }
+            pad = accumulatePhaseAData emptyPhaseAData (CFDw cdw)
+        padDwWriteColumns pad @?= [DwRetrieveColRow "d.srd" "d" Nothing "t" "c"]
+
+    , testCase "accumulatePhaseAData skips CFError" $ do
+        let pad = accumulatePhaseAData emptyPhaseAData (CFError "bad.srf" (ParseError "" Nothing))
+        pad @?= emptyPhaseAData
+
+    , testCase "accumulatePhaseAData skips CFSkip" $ do
+        let pad = accumulatePhaseAData emptyPhaseAData CFSkip
+        pad @?= emptyPhaseAData
     ]
   ]
 

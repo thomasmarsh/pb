@@ -16,6 +16,11 @@ module PB.Pipeline.Runner
   , CompiledFile (..)
   , CompiledPs (..)
   , CompiledDw (..)
+  , PhaseAData
+  , emptyPhaseAData
+  , accumulatePhaseAData
+  , sqlStmtColumnRowToSqlColRow
+  , dwRetrieveColumnRowToDwRetrieveColRow
   ) where
 
 import PB.Prelude
@@ -41,7 +46,7 @@ import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.SchemaCategory
   ( splitColumnRef, catalogNamespacedTables, resolveTableRef
-  , CatColumnRow (..), DwRetrieveColRow (..)
+  , CatColumnRow (..), DwRetrieveColRow (..), SqlColRow (..)
   , StmtId (..), SchObject (..), SchMorphism (..), LegKind (..), LegSource (..)
   )
 import PB.Analysis.TaintEdges (foldTaintEdgesEff, TaintIntraEdgeRow (..), TaintReturnRow (..))
@@ -73,7 +78,7 @@ import PB.Pipeline.Emit
   , wrapSrFile
   )
 import PB.Runtime.StdLib (parseStdlibFiles)
-import PB.Pipeline.Passes    (runPhaseB)
+import PB.Pipeline.Passes    (runPhaseB, PhaseAData (..), emptyPhaseAData)
 import PB.Pipeline.Progress  qualified as Progress
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
@@ -97,15 +102,12 @@ import PB.Pipeline.DuckDb.PhaseA
   , IdentifierTokenRow (..), identifierTokenRows
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
-  , appendDwWriteColumns, appendDwWhereColumns, appendDwJoins
+  , appendDwJoins
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
   , appendDwArguments, DwArgumentRow (..)
-  , appendLocalVars, appendDeadVars, appendTypeMismatches, appendCallSites, appendVarRefs, appendGlobalVars
+  , appendDeadVars, appendTypeMismatches, appendCallSites, appendVarRefs, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
-  , appendCatFootprintColumns
-  , appendTaintIntraEdges
-  , appendTaintReturnRows
   , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
   , appendParseErrors, appendSourceFiles
   , appendIdentifierTokens
@@ -114,7 +116,7 @@ import PB.Pipeline.DuckDb.PhaseA
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
-import Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.MVar  (MVar, newMVar, withMVar)
 import Control.Concurrent.STM
   ( TQueue, atomically
@@ -203,7 +205,7 @@ data CompiledFile
   | CFSkip
 
 -- | Convert one 'foldSchFootprintEff'-produced 'SchMorphism' into the same
--- row shape 'appendCatFootprintColumns' persists. 'SchFootprint' only ever
+-- row shape that 'SchFootprint' only ever
 -- emits the @StmtObj -> ColumnObj@/'LegWrites' shape today ('resolveSetItem'
 -- is its sole non-trivial producer) — the catch-all 'Nothing' totalizes
 -- against any future shape rather than crashing (Plan 163 Phase 3).
@@ -624,7 +626,8 @@ dwRetrieveColRowsForFootprint resolve fp dw =
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Ident [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+-- Returns the list of compiled files for in-memory Phase A data accumulation.
+workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Ident [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO [CompiledFile]
 workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv controlIdx tcw globalDwColumns appPool mutex errCount = go
   where
     go = do
@@ -632,7 +635,7 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv co
         empty <- isEmptyTQueue workQ
         if empty then pure Nothing else Just <$> readTQueue workQ
       case mFile of
-        Nothing   -> pure ()
+        Nothing   -> pure []
         Just file -> do
           let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
@@ -642,12 +645,14 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv co
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb appPool compiled
           emitProgress (object ["tag" .= ("worker_done" :: Text), "worker" .= k, "file" .= fp, "ok" .= ok])
-          go
+          rest <- go
+          pure (compiled : rest)
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Ident [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+-- Returns the list of compiled files for in-memory Phase A data accumulation.
+workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Ident [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO [CompiledFile]
 workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv controlIdx tcw globalDwColumns appPool mutex errCount = go
   where
     go = do
@@ -655,7 +660,7 @@ workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv contr
         empty <- isEmptyTQueue workQ
         if empty then pure Nothing else Just <$> readTQueue workQ
       case mFile of
-        Nothing   -> pure ()
+        Nothing   -> pure []
         Just file -> do
           let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
@@ -665,13 +670,44 @@ workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv contr
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb appPool compiled
           emitProgress (object ["tag" .= ("worker_done" :: Text), "worker" .= k, "file" .= fp, "ok" .= ok])
-          go
+          rest <- go
+          pure (compiled : rest)
+
+-- | Convert a Phase A write-side 'SqlStmtColumnRow' (from
+-- 'PB.Pipeline.DuckDb.PhaseA') to the Phase B read-side 'SqlColRow'
+-- (from 'PB.Analysis.SchemaCategory') that 'runPhaseB' expects.
+sqlStmtColumnRowToSqlColRow :: SqlStmtColumnRow -> SqlColRow
+sqlStmtColumnRowToSqlColRow r =
+  SqlColRow (SqlStmtId (sscrFile r) (sscrObject r) (sscrProcName r) (sscrLine r))
+            (sscrNamespace r) (sscrTableName r) (sscrColumnName r) (sscrIsWrite r)
+
+-- | Convert a Phase A write-side 'DwRetrieveColumnRow' (from
+-- 'PB.Pipeline.DuckDb.PhaseA') to the Phase B read-side 'DwRetrieveColRow'
+-- (from 'PB.Analysis.SchemaCategory') that 'runPhaseB' expects.
+dwRetrieveColumnRowToDwRetrieveColRow :: DwRetrieveColumnRow -> DwRetrieveColRow
+dwRetrieveColumnRowToDwRetrieveColRow r =
+  DwRetrieveColRow (drcrFile r) (drcrObject r) (drcrNamespace r) (drcrTableName r) (drcrColumnName r)
+
+-- | Accumulate a 'CompiledFile''s compiler-only table data into a
+-- 'PhaseAData' workspace, concatenating the lists. Returns the pad
+-- unchanged for 'CFError' and 'CFSkip'.
+accumulatePhaseAData :: PhaseAData -> CompiledFile -> PhaseAData
+accumulatePhaseAData pad (CFPs r) = pad
+  { padLocalVars        = cpsLocalVars r ++ padLocalVars pad
+  , padCatFootprintCols = map sqlStmtColumnRowToSqlColRow (cpsCatFootprintColumns r) ++ padCatFootprintCols pad
+  , padTaintIntraEdges  = cpsTaintIntraEdges r ++ padTaintIntraEdges pad
+  , padTaintReturnRows  = cpsTaintReturnRows r ++ padTaintReturnRows pad
+  }
+accumulatePhaseAData pad (CFDw r) = pad
+  { padDwWriteColumns = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWriteColumns r) ++ padDwWriteColumns pad
+  , padDwWhereColumns = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWhereColumns r) ++ padDwWhereColumns pad
+  }
+accumulatePhaseAData pad _ = pad
 
 appendToDb :: AppenderPool -> CompiledFile -> IO ()
 appendToDb pool (CFPs r) = do
   appendObjects    pool [cpsObjectRow r]
   appendProcedures pool (cpsProcRows r)
-  appendLocalVars  pool (cpsLocalVars r)
   appendDeadVars   pool (cpsDeadVars r)
   appendTypeMismatches pool (cpsTypeMismatches r)
   appendCallSites  pool (cpsCallSites r)
@@ -683,9 +719,6 @@ appendToDb pool (CFPs r) = do
   appendSqlStmtColumns pool (cpsSqlStmtColumns r)
   appendSqlStmtFilters pool (cpsSqlStmtFilters r)
   appendSqlStmtTables  pool (cpsSqlStmtTables r)
-  appendCatFootprintColumns pool (cpsCatFootprintColumns r)
-  appendTaintIntraEdges pool (cpsTaintIntraEdges r)
-  appendTaintReturnRows pool (cpsTaintReturnRows r)
   appendSourceFiles pool (catMaybes [cpsSourceContent r])
   appendIdentifierTokens pool (cpsIdentifierTokens r)
 appendToDb pool (CFDw r) = do
@@ -695,8 +728,6 @@ appendToDb pool (CFDw r) = do
   appendDwControls       pool (cdDwControls r)
   appendDwRetrieveTables pool (cdDwRetrieveTables r)
   appendDwRetrieveColumns pool (cdDwRetrieveColumns r)
-  appendDwWriteColumns   pool (cdDwWriteColumns r)
-  appendDwWhereColumns   pool (cdDwWhereColumns r)
   appendDwJoins          pool (cdDwJoins r)
   appendDwRetrieveWhere  pool (cdDwRetrieveWhere r)
   appendDwArguments      pool (cdDwArguments r)
@@ -913,23 +944,23 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- and DDL loading. The pool's scope closes (flushing all appenders)
     -- before runPhaseB starts — this ordering is correctness-critical.
     let phaseATables =
-          [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
+          [ "objects", "procedures", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
-          , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
-          , "taint_intra_edges", "taint_return_rows"
+          , "sql_statement_filters", "sql_statement_tables"
           , "source_files", "parse_errors", "identifier_tokens"
           , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
-          , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+          , "dw_joins", "dw_retrieve_where"
           , "dw_arguments"
           , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
           ]
-    withAppenderPoolTimed Progress.emitEvent conn phaseATables $ \appPool -> do
+    allCfs <- withAppenderPoolTimed Progress.emitEvent conn phaseATables $ \appPool -> do
       -- Load stdlib first so type lookups in user-code Phase B see the base classes.
       -- Stdlib has no DW files of its own, so an empty map is correct here.
-      mapM_ (\pf -> do
+      stdlibCfs <- mapM (\pf -> do
         cf <- compileOne Set.empty mDefaultNamespace (mkDwFootprintCtx [] mDefaultNamespace) wsEnv controlIdx tcw Map.empty Nothing "speculative" (PsParsed pf)
-        appendToDb appPool cf) stdlibParsed
-      case mBridgeBin of
+        appendToDb appPool cf
+        pure cf) stdlibParsed
+      userCfs <- case mBridgeBin of
         Nothing -> do
           for_ ddlArgs $ \_ -> emitProgress (object
             [ "tag" .= ("warning" :: Text)
@@ -946,7 +977,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           workQ <- newTQueueIO
           atomically (mapM_ (writeTQueue workQ) files)
           mutex <- newMVar ()
-          mapConcurrently_
+          concat <$> mapConcurrently
             (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace dwfCtx k workQ wsEnv controlIdx tcw globalDwColumns appPool mutex errCount)
             [0 .. nWorkers - 1]
         Just pythonExe -> do
@@ -995,13 +1026,16 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           workQ <- newTQueueIO
           atomically (mapM_ (writeTQueue workQ) files)
           mutex <- newMVar ()
-          mapConcurrently_
+          res <- concat <$> mapConcurrently
             (\k -> workerLoopFiles srcDir catTables mDefaultNamespace dwfCtx k workQ sqlPool wsEnv controlIdx tcw globalDwColumns appPool mutex errCount)
             [0 .. nWorkers - 1]
             `finally` shutdownSqlBridgePool sqlPool
+          pure res
+      pure (stdlibCfs ++ userCfs)
     -- Pool scope closed here: all Phase A appenders flushed + destroyed.
     -- Phase B SQL queries now see the complete data.
-    runPhaseB conn mDefaultNamespace  -- Phase B: link analysis (passes 5–8)
+    let phaseAData = foldl' accumulatePhaseAData emptyPhaseAData allCfs
+    runPhaseB conn mDefaultNamespace phaseAData  -- Phase B: link analysis (passes 5–8)
 
   errors <- readIORef errCount
   emitProgress (object ["tag" .= ("done" :: Text), "parsed" .= (total - errors), "errors" .= errors])

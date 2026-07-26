@@ -12,19 +12,19 @@ import PB.Analysis.SchemaCategory
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
   )
-import PB.Analysis.TypeResolve   (LocalVar (..), GlobalVar (..))
+import PB.Analysis.TypeResolve   (GlobalVar (..))
 import PB.Lexing.Token            (SourceSpan (..))
 import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (assertFailure, testCase, assertEqual, (@?=))
 
 phaseATables :: [Text]
 phaseATables =
-  [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+  [ "objects", "procedures", "call_sites", "global_vars"
   , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
-  , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+  , "sql_statement_filters", "sql_statement_tables"
   , "source_files", "parse_errors"
   , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
-  , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+  , "dw_joins", "dw_retrieve_where"
   , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
   , "dead_vars"
   ]
@@ -36,10 +36,6 @@ tests :: TestTree
 tests = testGroup "PhaseB.Query"
   [ testCase "SchemaCategory Phase B queries round-trip Phase A appends"
       testSchemaCategoryQueryRoundTrip
-  , testCase "appendCatFootprintColumns/queryCatFootprintColumns round-trip"
-      testCatFootprintColumnsRoundTrip
-  , testCase "appendLocalVars/queryLocalVars round-trips a user-defined type's own span"
-      testLocalVarTypeSpanRoundTrip
   , testCase "appendGlobalVars/queryGlobalVars round-trips a user-defined type's own span"
       testGlobalVarTypeSpanRoundTrip
   ]
@@ -49,32 +45,6 @@ tests = testGroup "PhaseB.Query"
 -- in-memory Phase A row -- confirms the additive type_start_line/col
 -- columns and the 'FromRow' reconstruction via 'parseTypeTextAt' actually
 -- wire together, not just that each half compiles in isolation.
-testLocalVarTypeSpanRoundTrip :: IO ()
-testLocalVarTypeSpanRoundTrip = withHandle inMemory $ \conn -> do
-  initSchema conn
-  withTestPool conn $ \pool ->
-    appendLocalVars pool
-      [ LocalVar
-          { lvFile = "t.srw", lvObject = "w_test", lvProcName = "of_run"
-          , lvVarName = "lw_child", lvRawType = "w_child", lvIsParam = False
-          , lvScopeLine = 3
-          , lvPbType = PtUserDefined (mkIdentAt (SourceSpan 3 10 3 17) "w_child")
-          }
-      , LocalVar
-          { lvFile = "t.srw", lvObject = "w_test", lvProcName = "of_run"
-          , lvVarName = "li_count", lvRawType = "integer", lvIsParam = False
-          , lvScopeLine = 4, lvPbType = PtPrimitive "integer"
-          }
-      ]
-
-  lvs <- queryLocalVars conn
-  case [lv | lv <- lvs, lvVarName lv == "lw_child"] of
-    [lv] -> pbTypeSpan (lvPbType lv) @?= Just (SourceSpan 3 10 3 17)
-    other -> assertFailure ("expected exactly 1 lw_child row, got " ++ show (length other))
-  case [lv | lv <- lvs, lvVarName lv == "li_count"] of
-    [lv] -> pbTypeSpan (lvPbType lv) @?= Nothing
-    other -> assertFailure ("expected exactly 1 li_count row, got " ++ show (length other))
-
 testGlobalVarTypeSpanRoundTrip :: IO ()
 testGlobalVarTypeSpanRoundTrip = withHandle inMemory $ \conn -> do
   initSchema conn
@@ -134,19 +104,3 @@ testSchemaCategoryQueryRoundTrip = withHandle inMemory $ \conn -> do
 -- (SqlStmtColumnRow) and query (SqlColRow) sides -- confirms the append/
 -- query round-trip works against the new table name, and that it stays
 -- independent of sql_statement_columns (querySqlCols sees none of these rows).
-testCatFootprintColumnsRoundTrip :: IO ()
-testCatFootprintColumnsRoundTrip = withHandle inMemory $ \conn -> do
-  initSchema conn
-  withTestPool conn $ \pool -> do
-    appendCatFootprintColumns pool
-      [ SqlStmtColumnRow "w_dw_copy.srw" "w_dw_copy" "clicked" 553 Nothing (Just "sales_order_items") "id" True ]
-    -- Appending an empty list after a real batch must not throw
-    appendCatFootprintColumns pool []
-
-  cfCols  <- queryCatFootprintColumns conn
-  sqlCols <- querySqlCols             conn
-
-  assertEqual "cat_footprint_columns round-trip"
-    [SqlColRow (SqlStmtId "w_dw_copy.srw" "w_dw_copy" "clicked" 553) Nothing (Just "sales_order_items") "id" True]
-    cfCols
-  assertEqual "sql_statement_columns unaffected (separate table)" [] sqlCols
