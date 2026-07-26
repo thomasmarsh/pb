@@ -26,12 +26,11 @@ import PB.Analysis.TaintClosure qualified as TaintClosure
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb (Handle)
 import PB.Pipeline.DuckDb.PhaseB.Query
-  ( queryCallSites, queryGlobalVars, queryObjInfo
+  ( queryObjInfo
   , queryCallableProcMap
   , ProcRows (..)
   , queryTaintInputs
-  , queryDwRetrieveColumns
-  , queryDwJoinLegs, querySqlCols
+  , querySqlCols
   , queryCatColumns, queryCatFks
   , DeadCodeClosureReady (..), SchemaClosureReady (..), CallGraphAndTaintReady (..)
   )
@@ -63,19 +62,23 @@ import Data.Time.Clock        (getCurrentTime)
 -- compiled files. Populated in 'PB.Pipeline.Runner.runModeDb' and threaded
 -- into 'runPhaseB', replacing DuckDB query calls.
 data PhaseAData = PhaseAData
-  { padLocalVars        :: ![LocalVar]
-  , padCatFootprintCols :: ![SqlColRow]
-  , padTaintIntraEdges  :: ![TaintIntraEdgeRow]
-  , padTaintReturnRows  :: ![TaintReturnRow]
-  , padDwWriteColumns   :: ![DwRetrieveColRow]
-  , padDwWhereColumns   :: ![DwRetrieveColRow]
-  , padProcDefs         :: ![Taint.DefRow]
-  , padProcUses         :: ![Taint.UseRow]
+  { padLocalVars         :: ![LocalVar]
+  , padCatFootprintCols  :: ![SqlColRow]
+  , padTaintIntraEdges   :: ![TaintIntraEdgeRow]
+  , padTaintReturnRows   :: ![TaintReturnRow]
+  , padDwWriteColumns    :: ![DwRetrieveColRow]
+  , padDwWhereColumns    :: ![DwRetrieveColRow]
+  , padProcDefs          :: ![Taint.DefRow]
+  , padProcUses          :: ![Taint.UseRow]
+  , padGlobalVars        :: ![GlobalVar]
+  , padCallSites         :: ![CallSite]
+  , padDwRetrieveColumns :: ![DwRetrieveColRow]
+  , padDwJoinLegs        :: ![DwJoinLegRow]
   } deriving (Eq, Show)
 
 -- | Empty initial 'PhaseAData'.
 emptyPhaseAData :: PhaseAData
-emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] []
+emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] []
 
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
@@ -247,18 +250,18 @@ runPhaseB conn mDefaultNamespace pad = do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
   (_inh, rcReady) <- resolveTypesAndCalls
-    (fetchResolveInputs (padLocalVars pad) conn)
+    (fetchResolveInputs (padLocalVars pad) (padGlobalVars pad) (padCallSites pad) conn)
     (sinkResolvedOutput conn)
   -- Thread resolved_calls in-memory (Plan 208 Phase 2): extract from the
   -- proof token to avoid re-querying DuckDB for Phase B's own data.
   let ResolvedCallsReady rc = rcReady
       resolvedCallRows = map resolvedCallToRow rc
   (procRows, cgReady) <- buildCallGraphAndTaint rcReady
-    (fetchCallGraphInputs conn (padTaintIntraEdges pad) (padTaintReturnRows pad) resolvedCallRows (padProcDefs pad) (padProcUses pad))
+    (fetchCallGraphInputs conn (padGlobalVars pad) (padTaintIntraEdges pad) (padTaintReturnRows pad) resolvedCallRows (padProcDefs pad) (padProcUses pad))
     (sinkCallGraphOutput conn)
   catFks <- queryCatFks conn
   schGraph <- buildSchemaCategory mDefaultNamespace catFks
-    (fetchSchemaCategoryInputs conn (padDwWriteColumns pad) (padDwWhereColumns pad) (padCatFootprintCols pad))
+    (fetchSchemaCategoryInputs conn (padDwRetrieveColumns pad) (padDwJoinLegs pad) (padDwWriteColumns pad) (padDwWhereColumns pad) (padCatFootprintCols pad))
     (sinkSchemaCategoryOutput conn)
   dcRows  <- initDeadCodeInput conn rcReady
   dcReady <- computeDeadCodeClosure conn dcRows
@@ -282,10 +285,8 @@ runPhaseB conn mDefaultNamespace pad = do
 -- Fetch/sink helpers for the shape-1 stages (constructed once in runPhaseB,
 -- closed over a real Handle)
 
-fetchResolveInputs :: [LocalVar] -> Handle -> IO ResolveInputs
-fetchResolveInputs lvs conn = do
-  gvs                              <- timedQueryRows "  queryGlobalVars"  (queryGlobalVars   conn)
-  css                              <- timedQueryRows "  queryCallSites"   (queryCallSites    conn)
+fetchResolveInputs :: [LocalVar] -> [GlobalVar] -> [CallSite] -> Handle -> IO ResolveInputs
+fetchResolveInputs lvs gvs css conn = do
   (objSet, usrTypes, inh, procMap) <- queryObjInfo     conn
   callableProcMap                  <- queryCallableProcMap conn
   pure ResolveInputs
@@ -304,13 +305,12 @@ sinkResolvedOutput conn ResolvedOutput{..} = do
   appendResolvedTypes conn roResolvedTypes
   appendResolvedCalls conn roResolvedCalls
 
-fetchCallGraphInputs :: Handle -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [Taint.ResolvedCallRow] -> [Taint.DefRow] -> [Taint.UseRow] -> IO CallGraphInputs
-fetchCallGraphInputs conn intraEdges returnRows resolvedCallRows procDefs procUses =
-  Progress.timedStep "Load taint inputs (2 queries + 5 in-memory)" $ do
-    gvs        <- timedQueryRows "  queryGlobalVars"        (queryGlobalVars      conn)
+fetchCallGraphInputs :: Handle -> [GlobalVar] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [Taint.ResolvedCallRow] -> [Taint.DefRow] -> [Taint.UseRow] -> IO CallGraphInputs
+fetchCallGraphInputs conn globalVars intraEdges returnRows resolvedCallRows procDefs procUses =
+  Progress.timedStep "Load taint inputs (1 query + 6 in-memory)" $ do
     tfis       <- timedQueryRows "  queryTaintInputs"       (queryTaintInputs     conn)
     pure CallGraphInputs
-      { cgiGlobalVars    = gvs
+      { cgiGlobalVars    = globalVars
       , cgiProcDefs      = procDefs
       , cgiProcUses      = procUses
       , cgiResolvedCalls = resolvedCallRows
@@ -332,18 +332,16 @@ sinkCallGraphOutput conn CallGraphOutput{..} = do
   Progress.timedStep "Taint witness paths" $
     TaintClosure.materializeTaintStepKind coTaintClosure coTaintSources coTaintSinks conn
 
-fetchSchemaCategoryInputs :: Handle -> [DwRetrieveColRow] -> [DwRetrieveColRow] -> [SqlColRow] -> IO SchemaCategoryInputs
-fetchSchemaCategoryInputs conn dwWriteCols dwWhereCols cfCols =
-  Progress.timedStep "Load schema-category inputs (4 queries + 3 in-memory)" $ do
-    drCols  <- timedQueryRows "  queryDwRetrieveColumns"   (queryDwRetrieveColumns   conn)
-    djLegs  <- timedQueryRows "  queryDwJoinLegs"          (queryDwJoinLegs          conn)
+fetchSchemaCategoryInputs :: Handle -> [DwRetrieveColRow] -> [DwJoinLegRow] -> [DwRetrieveColRow] -> [DwRetrieveColRow] -> [SqlColRow] -> IO SchemaCategoryInputs
+fetchSchemaCategoryInputs conn dwRetrieveCols dwJoinLegs dwWriteCols dwWhereCols cfCols =
+  Progress.timedStep "Load schema-category inputs (2 queries + 5 in-memory)" $ do
     sqlCols <- timedQueryRows "  querySqlCols"             (querySqlCols             conn)
     catCols <- timedQueryRows "  queryCatColumns"          (queryCatColumns          conn)
     pure SchemaCategoryInputs
-      { sciDwRetrieveColumns = drCols
+      { sciDwRetrieveColumns = dwRetrieveCols
       , sciDwWriteColumns    = dwWriteCols
       , sciDwWhereColumns    = dwWhereCols
-      , sciDwJoinLegs        = djLegs
+      , sciDwJoinLegs        = dwJoinLegs
       , sciSqlCols           = sqlCols
       , sciCatFootprintCols  = cfCols
       , sciCatColumns        = catCols

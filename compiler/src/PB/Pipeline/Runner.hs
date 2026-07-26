@@ -46,7 +46,7 @@ import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.SchemaCategory
   ( splitColumnRef, catalogNamespacedTables, resolveTableRef
-  , CatColumnRow (..), DwRetrieveColRow (..), SqlColRow (..)
+  , CatColumnRow (..), DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , StmtId (..), SchObject (..), SchMorphism (..), LegKind (..), LegSource (..)
   )
 import PB.Analysis.TaintEdges (foldTaintEdgesEff, TaintIntraEdgeRow (..), TaintReturnRow (..))
@@ -688,6 +688,13 @@ dwRetrieveColumnRowToDwRetrieveColRow :: DwRetrieveColumnRow -> DwRetrieveColRow
 dwRetrieveColumnRowToDwRetrieveColRow r =
   DwRetrieveColRow (drcrFile r) (drcrObject r) (drcrNamespace r) (drcrTableName r) (drcrColumnName r)
 
+-- | Convert a 'DwJoinRow' (Phase A row shape) to a 'DwJoinLegRow'
+-- (SchemaCategory row shape), dropping the operator and outer-join flags
+-- that are not needed for schema category construction.
+dwJoinRowToJoinLegRow :: DwJoinRow -> DwJoinLegRow
+dwJoinRowToJoinLegRow r =
+  DwJoinLegRow (djrFile r) (djrObject r) (djrLeftRef r) (djrRightRef r)
+
 -- | Accumulate a 'CompiledFile''s compiler-only table data into a
 -- 'PhaseAData' workspace, concatenating the lists. Returns the pad
 -- unchanged for 'CFError' and 'CFSkip'.
@@ -699,10 +706,15 @@ accumulatePhaseAData pad (CFPs r) = pad
   , padTaintReturnRows  = cpsTaintReturnRows r ++ padTaintReturnRows pad
   , padProcDefs         = procFlowsToDefRows (cpsProcFlows r) ++ padProcDefs pad
   , padProcUses         = procFlowsToUseRows (cpsProcFlows r) ++ padProcUses pad
+  , padGlobalVars       = cpsGlobalVars r ++ padGlobalVars pad
+  , padCallSites        = cpsCallSites r ++ padCallSites pad
   }
 accumulatePhaseAData pad (CFDw r) = pad
-  { padDwWriteColumns = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWriteColumns r) ++ padDwWriteColumns pad
-  , padDwWhereColumns = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWhereColumns r) ++ padDwWhereColumns pad
+  { padDwWriteColumns    = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWriteColumns r) ++ padDwWriteColumns pad
+  , padDwWhereColumns    = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWhereColumns r) ++ padDwWhereColumns pad
+  , padDwRetrieveColumns = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwRetrieveColumns r) ++ padDwRetrieveColumns pad
+  , padDwJoinLegs        = map dwJoinRowToJoinLegRow (cdDwJoins r) ++ padDwJoinLegs pad
+  , padCallSites         = cdCallSites r ++ padCallSites pad
   }
 accumulatePhaseAData pad _ = pad
 
