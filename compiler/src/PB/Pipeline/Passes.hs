@@ -331,15 +331,15 @@ fetchCallGraphInputs conn globalVars intraEdges returnRows resolvedCallRows proc
 
 sinkCallGraphOutput :: Handle -> CallGraphOutput -> IO ([(TaintClosure.TaintTriple, TaintClosure.TaintTriple)], [(Taint.TaintSource, Taint.TaintSink)])
 sinkCallGraphOutput conn CallGraphOutput{..} = do
-  Progress.timedStep "Build interproc edges + summaries + classify" $ do
+  Progress.timedStep "  Building call graph / Writes: interproc edges + summaries" $ do
     appendInterprocEdges conn coInterprocEdges
     appendProcSummaries  conn coProcSummaries
-  Progress.timedStep "Taint classification" $ do
+  Progress.timedStep "  Building call graph / Writes: taint sources/sinks" $ do
     appendTaintSources   conn coTaintSources
     appendTaintSinks     conn coTaintSinks
-  (reachesPairs, confirmedPairs) <- Progress.timedStep "Taint closure" $
+  (reachesPairs, confirmedPairs) <- Progress.timedStep "  Building call graph / Materialize: taint reaches + confirmed" $
     TaintClosure.materializeTaintClosure coTaintClosure coTaintSources coTaintSinks conn
-  Progress.timedStep "Taint witness paths" $
+  Progress.timedStep "  Building call graph / Materialize: taint step kind" $
     TaintClosure.materializeTaintStepKind coTaintClosure coTaintSources coTaintSinks conn
   pure (reachesPairs, confirmedPairs)
 

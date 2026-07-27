@@ -72,6 +72,11 @@ def index(
         help="Write a post-run diagnostics report (JSON + HTML) to this path "
         "(e.g. /tmp/diagnostics). Produces <path>.json and <path>.html.",
     ),
+    profile: bool = typer.Option(
+        False,
+        "--profile",
+        help="Enable GHC RTS GC profiling output (passes +RTS -sstderr -RTS to pbc).",
+    ),
 ) -> None:
     """Parse → import → analyze, incremental by default (only changed files).
 
@@ -85,7 +90,7 @@ def index(
         run_pipeline(
             src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect,
             input_path=input_path, ddl=ddl, default_namespace=default_namespace,
-            diagnostics_report_path=diagnostics_report,
+            diagnostics_report_path=diagnostics_report, profile=profile,
         )
 
 
@@ -261,6 +266,11 @@ def explore(
         help="Write a post-run diagnostics report (JSON + HTML) to this path "
         "(e.g. /tmp/diagnostics). Produces <path>.json and <path>.html.",
     ),
+    profile: bool = typer.Option(
+        False,
+        "--profile",
+        help="Enable GHC RTS GC profiling output (passes +RTS -sstderr -RTS to pbc).",
+    ),
 ) -> None:
     """Start the interactive DuckDB explorer web UI.
 
@@ -305,7 +315,7 @@ def explore(
             index_job = IndexJob(
                 src_dir, db, binary, reset=reset, dialect=sql_dialect,
                 input_path=input_path, ddl=ddl, default_namespace=default_namespace,
-                diagnostics_report_path=diagnostics_report,
+                diagnostics_report_path=diagnostics_report, profile=profile,
             )
             app.state.index_job = index_job
             index_job.start()

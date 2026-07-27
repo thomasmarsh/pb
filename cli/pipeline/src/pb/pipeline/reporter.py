@@ -929,7 +929,7 @@ class _LiveRunnerProgress:
         self._current_derived_rows: dict[str, int] = {}
         self._current_residency_mb: float | None = None
         self._step_history: list[_StepInfo] = []
-        self._max_history = 6
+        self._max_history = 12
 
     @property
     def parsed_count(self) -> int:

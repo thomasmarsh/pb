@@ -40,6 +40,7 @@ def _prepare_run(
     dialect: str,
     ddl: Sequence[str],
     default_namespace: str | None,
+    profile: bool = False,
 ) -> tuple[Path, str, list[str], str | None]:
     """Resolve src_dir, build pbc's argv, and normalize default_namespace.
 
@@ -79,6 +80,8 @@ def _prepare_run(
         argv += ["--ddl", d]
     if default_namespace:
         argv += ["--default-namespace", default_namespace]
+    if profile:
+        argv += ["+RTS", "-sstderr", "-RTS"]
 
     return src_dir, db_new, argv, default_namespace
 
@@ -130,9 +133,10 @@ def run(
     ddl: Sequence[str] = (),
     default_namespace: str | None = None,
     diagnostics_report_path: str | None = None,
+    profile: bool = False,
 ) -> None:
     src_dir, db_new, argv, default_namespace = _prepare_run(
-        src_dir, db, binary, reset, dialect, ddl, default_namespace,
+        src_dir, db, binary, reset, dialect, ddl, default_namespace, profile=profile,
     )
 
     errors = 0

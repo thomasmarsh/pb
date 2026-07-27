@@ -39,6 +39,7 @@ class IndexJob:
         ddl: Sequence[str] = (),
         default_namespace: str | None = None,
         diagnostics_report_path: str | None = None,
+        profile: bool = False,
     ) -> None:
         self._src_dir = src_dir
         self._db = db
@@ -48,6 +49,7 @@ class IndexJob:
         self._ddl = ddl
         self._default_namespace = default_namespace
         self._diagnostics_report_path = diagnostics_report_path
+        self._profile = profile
 
         self._collector = DiagnosticsCollector()
         self._state_lock = threading.Lock()
@@ -83,7 +85,7 @@ class IndexJob:
         try:
             _src_dir, db_new, argv, _default_namespace = _prepare_run(
                 self._src_dir, self._db, self._binary, self._reset, self._dialect,
-                self._ddl, self._default_namespace,
+                self._ddl, self._default_namespace, profile=self._profile,
             )
 
             returncode, raw_stderr_lines = _run_pbc(argv, self._collector.on_event)
