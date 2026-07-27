@@ -462,8 +462,8 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
        )
 
 -- | Convert 'ResolvedCall' (TypeResolve) to 'Taint.ResolvedCallRow' for
--- in-memory threading (Plan 208 Phase 2). The return type field is always
--- 'Nothing' (the DuckDB table has no such column).
+-- in-memory threading. The return type field is always 'Nothing' (the
+-- DuckDB table has no such column).
 resolvedCallToRow :: ResolvedCall -> Taint.ResolvedCallRow
 resolvedCallToRow ResolvedCall{..} = Taint.ResolvedCallRow
   { Taint.rcrFile           = rcFile

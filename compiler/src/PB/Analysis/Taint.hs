@@ -272,7 +272,7 @@ data ProcedureSummary = ProcedureSummary
 instance NFData ProcedureSummary
 
 -- ---------------------------------------------------------------------------
--- Hel
+-- Helpers
 -- ---------------------------------------------------------------------------
 
 type Triple = (Text, Text, Text)

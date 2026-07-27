@@ -47,6 +47,8 @@ module PB.Pipeline.DuckDb.PhaseA
   , appendCatalogChecks
   , appendParseErrors
   , appendSourceFiles
+  , flowsToDefRows
+  , flowsToUseRows
   , appendIdentifierTokens
   ) where
 
@@ -58,6 +60,7 @@ import PB.Grammar.Body          (isSegmentName)
 import PB.Lexing.Token          (Token (..), SourceSpan (..))
 import PB.Analysis.TypeResolve  (CallSite (..), GlobalVar (..), ResolvedVarRef (..))
 import PB.Analysis.Dataflow     qualified as Dataflow
+import PB.Analysis.Taint        qualified as Taint
 import PB.Analysis.DeadVars     (DeadVarFinding (..), deadVarKindText)
 import PB.Analysis.TypeFamily   (TypeMismatchFinding (..), mismatchKindText)
 import PB.Pipeline.DuckDb       (aText, aMaybeText, aInt, aMaybeInt, aMaybeSpan, aBool)
@@ -432,35 +435,75 @@ appendGlobalVars pool gvs = appendRow pool "global_vars" $ \app ->
     aText app (T.intercalate "|" (gvMods gv))
     aMaybeSpan app (pbTypeSpan (gvPbType gv))
 
+-- | Convert a list of (file, object, proc_name, ProcFlow) tuples to
+-- 'Taint.DefRow' list, extracting 'DefSite' entries from every block's
+-- 'bfDefs'. Shared primitive used by both 'appendProcDefs' (DuckDB write)
+-- and 'accumulatePhaseAData' (in-memory threading).
+flowsToDefRows :: [(Text, Text, Text, Dataflow.ProcFlow)] -> [Taint.DefRow]
+flowsToDefRows = concatMap $ \(file, obj, proc_, pf) ->
+  [ Taint.DefRow
+    { Taint.drFile     = file
+    , Taint.drObject   = obj
+    , Taint.drProcName = proc_
+    , Taint.drVarName  = identOrig (Dataflow.dsVar d)
+    , Taint.drBlockId  = Dataflow.dsBlock d
+    , Taint.drStmtIdx  = Dataflow.dsStmtIdx d
+    , Taint.drLine     = Dataflow.dsLine d
+    , Taint.drKind     = Dataflow.dsKind d
+    , Taint.drSpan     = provenanceSpan (identSpan (Dataflow.dsVar d))
+    }
+  | bf <- Map.elems (Dataflow.pfBlocks pf)
+  , d  <- Dataflow.bfDefs bf
+  ]
+
+-- | Convert a list of (file, object, proc_name, ProcFlow) tuples to
+-- 'Taint.UseRow' list, extracting 'UseSite' entries from every block's
+-- 'bfUses'. Shared primitive used by both 'appendProcUses' (DuckDB write)
+-- and 'accumulatePhaseAData' (in-memory threading).
+flowsToUseRows :: [(Text, Text, Text, Dataflow.ProcFlow)] -> [Taint.UseRow]
+flowsToUseRows = concatMap $ \(file, obj, proc_, pf) ->
+  [ Taint.UseRow
+    { Taint.urFile     = file
+    , Taint.urObject   = obj
+    , Taint.urProcName = proc_
+    , Taint.urVarName  = identOrig (Dataflow.usVar u)
+    , Taint.urBlockId  = Dataflow.usBlock u
+    , Taint.urStmtIdx  = Dataflow.usStmtIdx u
+    , Taint.urLine     = Dataflow.usLine u
+    , Taint.urKind     = Dataflow.usKind u
+    , Taint.urSpan     = provenanceSpan (identSpan (Dataflow.usVar u))
+    }
+  | bf <- Map.elems (Dataflow.pfBlocks pf)
+  , u  <- Dataflow.bfUses bf
+  ]
+
 appendProcDefs :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcDefs _    [] = pure ()
 appendProcDefs pool flows = appendRow pool "proc_defs" $ \app ->
-  for_ flows $ \(file, obj, proc_, pf) ->
-    forEachRow app (concatMap Dataflow.bfDefs (Map.elems (Dataflow.pfBlocks pf))) $ \_ d -> do
-      aText     app file
-      aText     app obj
-      aText     app proc_
-      aText     app (identOrig (Dataflow.dsVar d))
-      aText     app (Dataflow.dsBlock d)
-      aInt      app (Dataflow.dsStmtIdx d)
-      aMaybeInt app (Dataflow.dsLine d)
-      aText     app (Dataflow.dsKind d)
-      aMaybeSpan app (provenanceSpan (identSpan (Dataflow.dsVar d)))
+  forEachRow app (flowsToDefRows flows) $ \_ d -> do
+    aText     app (Taint.drFile d)
+    aText     app (Taint.drObject d)
+    aText     app (Taint.drProcName d)
+    aText     app (Taint.drVarName d)
+    aText     app (Taint.drBlockId d)
+    aInt      app (Taint.drStmtIdx d)
+    aMaybeInt app (Taint.drLine d)
+    aText     app (Taint.drKind d)
+    aMaybeSpan app (Taint.drSpan d)
 
 appendProcUses :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcUses _    [] = pure ()
 appendProcUses pool flows = appendRow pool "proc_uses" $ \app ->
-  for_ flows $ \(file, obj, proc_, pf) ->
-    forEachRow app (concatMap Dataflow.bfUses (Map.elems (Dataflow.pfBlocks pf))) $ \_ u -> do
-      aText     app file
-      aText     app obj
-      aText     app proc_
-      aText     app (identOrig (Dataflow.usVar u))
-      aText     app (Dataflow.usBlock u)
-      aInt      app (Dataflow.usStmtIdx u)
-      aMaybeInt app (Dataflow.usLine u)
-      aText     app (Dataflow.usKind u)
-      aMaybeSpan app (provenanceSpan (identSpan (Dataflow.usVar u)))
+  forEachRow app (flowsToUseRows flows) $ \_ u -> do
+    aText     app (Taint.urFile u)
+    aText     app (Taint.urObject u)
+    aText     app (Taint.urProcName u)
+    aText     app (Taint.urVarName u)
+    aText     app (Taint.urBlockId u)
+    aInt      app (Taint.urStmtIdx u)
+    aMaybeInt app (Taint.urLine u)
+    aText     app (Taint.urKind u)
+    aMaybeSpan app (Taint.urSpan u)
 
 appendSqlStmts :: AppenderPool -> [SqlStmtRow] -> IO ()
 appendSqlStmts _    [] = pure ()

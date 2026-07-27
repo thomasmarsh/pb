@@ -26,7 +26,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig, mkIdent, identSpan, provenanceSpan)
+import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig, mkIdent)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText, parseTypeTextAt)
@@ -106,6 +106,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
   , appendDwArguments, DwArgumentRow (..)
   , appendDeadVars, appendTypeMismatches, appendCallSites, appendVarRefs, appendGlobalVars
+  , flowsToDefRows, flowsToUseRows
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
   , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
@@ -720,47 +721,17 @@ accumulatePhaseAData pad _ = pad
 
 -- | Convert a list of (file, object, proc_name, ProcFlow) tuples to
 -- 'Taint.DefRow' list, extracting 'DefSite' entries from every block's
--- 'bfDefs'. Mirrors 'appendProcDefs' in
--- 'PB.Pipeline.DuckDb.PhaseA' but produces an in-memory list instead
--- of writing to DuckDB (Plan 208 Phase 3).
+-- 'bfDefs'. Delegates to the shared 'flowsToDefRows' primitive in
+-- 'PB.Pipeline.DuckDb.PhaseA'.
 procFlowsToDefRows :: [(Text, Text, Text, Dataflow.ProcFlow)] -> [Taint.DefRow]
-procFlowsToDefRows = concatMap $ \(file, obj, proc_, pf) ->
-  [ Taint.DefRow
-    { Taint.drFile     = file
-    , Taint.drObject   = obj
-    , Taint.drProcName = proc_
-    , Taint.drVarName  = identOrig (Dataflow.dsVar d)
-    , Taint.drBlockId  = Dataflow.dsBlock d
-    , Taint.drStmtIdx  = Dataflow.dsStmtIdx d
-    , Taint.drLine     = Dataflow.dsLine d
-    , Taint.drKind     = Dataflow.dsKind d
-    , Taint.drSpan     = provenanceSpan (identSpan (Dataflow.dsVar d))
-    }
-  | bf <- Map.elems (Dataflow.pfBlocks pf)
-  , d  <- Dataflow.bfDefs bf
-  ]
+procFlowsToDefRows = flowsToDefRows
 
 -- | Convert a list of (file, object, proc_name, ProcFlow) tuples to
 -- 'Taint.UseRow' list, extracting 'UseSite' entries from every block's
--- 'bfUses'. Mirrors 'appendProcUses' in
--- 'PB.Pipeline.DuckDb.PhaseA' but produces an in-memory list instead
--- of writing to DuckDB (Plan 208 Phase 3).
+-- 'bfUses'. Delegates to the shared 'flowsToUseRows' primitive in
+-- 'PB.Pipeline.DuckDb.PhaseA'.
 procFlowsToUseRows :: [(Text, Text, Text, Dataflow.ProcFlow)] -> [Taint.UseRow]
-procFlowsToUseRows = concatMap $ \(file, obj, proc_, pf) ->
-  [ Taint.UseRow
-    { Taint.urFile     = file
-    , Taint.urObject   = obj
-    , Taint.urProcName = proc_
-    , Taint.urVarName  = identOrig (Dataflow.usVar u)
-    , Taint.urBlockId  = Dataflow.usBlock u
-    , Taint.urStmtIdx  = Dataflow.usStmtIdx u
-    , Taint.urLine     = Dataflow.usLine u
-    , Taint.urKind     = Dataflow.usKind u
-    , Taint.urSpan     = provenanceSpan (identSpan (Dataflow.usVar u))
-    }
-  | bf <- Map.elems (Dataflow.pfBlocks pf)
-  , u  <- Dataflow.bfUses bf
-  ]
+procFlowsToUseRows = flowsToUseRows
 
 appendToDb :: AppenderPool -> CompiledFile -> IO ()
 appendToDb pool (CFPs r) = do
