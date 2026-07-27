@@ -23,6 +23,8 @@ import PB.Pipeline.DuckDb.Relations (LegSourceFanout (..), SchemaInputRows (..))
 import PB.Analysis.DeadCodeReachability qualified as DeadCodeReachability
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Analysis.TaintClosure qualified as TaintClosure
+import Control.DeepSeq       (force)
+import Control.Exception    (evaluate)
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb (Handle)
 import PB.Pipeline.DuckDb.PhaseA (ObjectRow (..), ProcRow (..))
@@ -445,16 +447,40 @@ buildCallGraphAndTaint
   -> (CallGraphOutput -> IO ([(TaintClosure.TaintTriple, TaintClosure.TaintTriple)], [(Taint.TaintSource, Taint.TaintSink)]))
   -> IO (ProcRows, CallGraphAndTaintReady)
 buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Building call graph" $ do
+  -- Sub-step 1: fetch inputs (already has its own "Load taint inputs" step inside)
   CallGraphInputs{..} <- fetchInputs
+
   let globalVarNames = Set.fromList (map (mkIdent . gvName) cgiGlobalVars)
       allProcMetas   = concatMap Taint.tfiProcMetas cgiTaintInputs
       allSqlStmts    = concatMap Taint.tfiSqlStmts  cgiTaintInputs
-      edges          = Taint.buildInterprocEdges cgiResolvedCalls cgiProcDefs cgiProcUses globalVarNames allProcMetas
-      (argMap, retMap, globalMap) = Taint.buildInterprocEdgeMaps edges
-      summaries      = Taint.buildProcedureSummaries edges cgiProcDefs cgiProcUses globalVarNames allProcMetas
-      allSources     = Taint.classifySources allSqlStmts allProcMetas
-      allSinks       = Taint.classifySinks   allSqlStmts
-      taintClosure   = TaintClosure.buildTaintClosure cgiIntraEdges cgiReturnRows edges argMap retMap globalMap allSources
+
+  -- Sub-step 2: interprocedural edges (pure, forced via evaluate + force)
+  edges <- Progress.timedStep "  Building interproc edges" $
+    evaluate (force (Taint.buildInterprocEdges cgiResolvedCalls cgiProcDefs cgiProcUses globalVarNames allProcMetas))
+
+  -- Sub-step 3: edge maps (pure, forced via evaluate + force)
+  (argMap, retMap, globalMap) <- Progress.timedStep "  Building interproc edge maps" $
+    evaluate (force (Taint.buildInterprocEdgeMaps edges))
+
+  -- Sub-step 4: procedure summaries (pure, forced via evaluate + force)
+  summaries <- Progress.timedStep "  Building procedure summaries" $
+    evaluate (force (Taint.buildProcedureSummaries edges cgiProcDefs cgiProcUses globalVarNames allProcMetas))
+
+  -- Sub-step 5: classify taint sources (pure, forced via evaluate + force)
+  allSources <- Progress.timedStep "  Classifying taint sources" $
+    evaluate (force (Taint.classifySources allSqlStmts allProcMetas))
+
+  -- Sub-step 6: classify taint sinks (pure, forced via evaluate + force)
+  allSinks <- Progress.timedStep "  Classifying taint sinks" $
+    evaluate (force (Taint.classifySinks allSqlStmts))
+
+  -- Sub-step 7: build taint closure (pure; WHNF via evaluate is sufficient
+  -- since buildTaintClosure uses strict folds internally)
+  taintClosure <- Progress.timedStep "  Building taint closure" $
+    evaluate (TaintClosure.buildTaintClosure cgiIntraEdges cgiReturnRows edges argMap retMap globalMap allSources)
+
+  -- Sub-step 8: write outputs (sinkOutput has its own sub-steps: interproc
+  -- edges + summaries, taint sources/sinks, materialize taint closure)
   (reachesPairs, confirmedPairs) <- sinkOutput CallGraphOutput
     { coInterprocEdges = edges
     , coProcSummaries  = summaries
@@ -462,6 +488,7 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
     , coTaintSinks     = allSinks
     , coTaintClosure   = taintClosure
     }
+
   pure ( ProcRows { prDefs = cgiProcDefs, prUses = cgiProcUses }
        , CallGraphAndTaintReady
            { cgtrSources      = allSources
