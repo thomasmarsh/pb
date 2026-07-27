@@ -7,7 +7,7 @@ module PB.Pipeline.Passes
   ) where
 
 import PB.Prelude
-import PB.AST.Ident            (Ident, IdentMap, IdentSet, identSetFromList, mkIdent)
+import PB.AST.Ident            (Ident, IdentMap, IdentSet, identMapFromListWith, identSetFromList, identSetSingleton, identSetUnion, mkIdent)
 import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TaintEdges  qualified as TaintEdges
@@ -25,10 +25,9 @@ import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Analysis.TaintClosure qualified as TaintClosure
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb (Handle)
+import PB.Pipeline.DuckDb.PhaseA (ObjectRow (..), ProcRow (..))
 import PB.Pipeline.DuckDb.PhaseB.Query
-  ( queryObjInfo
-  , queryCallableProcMap
-  , ProcRows (..)
+  ( ProcRows (..)
   , queryTaintInputs
   , querySqlCols
   , queryCatColumns, queryCatFks
@@ -74,11 +73,13 @@ data PhaseAData = PhaseAData
   , padCallSites         :: ![CallSite]
   , padDwRetrieveColumns :: ![DwRetrieveColRow]
   , padDwJoinLegs        :: ![DwJoinLegRow]
+  , padObjectRows        :: ![ObjectRow]
+  , padProcedureRows     :: ![ProcRow]
   } deriving (Eq, Show)
 
 -- | Empty initial 'PhaseAData'.
 emptyPhaseAData :: PhaseAData
-emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] []
+emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] []
 
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
@@ -250,7 +251,7 @@ runPhaseB conn mDefaultNamespace pad = do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
   (_inh, rcReady) <- resolveTypesAndCalls
-    (fetchResolveInputs (padLocalVars pad) (padGlobalVars pad) (padCallSites pad) conn)
+    (fetchResolveInputs (padLocalVars pad) (padGlobalVars pad) (padCallSites pad) (padObjectRows pad) (padProcedureRows pad))
     (sinkResolvedOutput conn)
   -- Thread resolved_calls in-memory (Plan 208 Phase 2): extract from the
   -- proof token to avoid re-querying DuckDB for Phase B's own data.
@@ -285,10 +286,15 @@ runPhaseB conn mDefaultNamespace pad = do
 -- Fetch/sink helpers for the shape-1 stages (constructed once in runPhaseB,
 -- closed over a real Handle)
 
-fetchResolveInputs :: [LocalVar] -> [GlobalVar] -> [CallSite] -> Handle -> IO ResolveInputs
-fetchResolveInputs lvs gvs css conn = do
-  (objSet, usrTypes, inh, procMap) <- queryObjInfo     conn
-  callableProcMap                  <- queryCallableProcMap conn
+fetchResolveInputs :: [LocalVar] -> [GlobalVar] -> [CallSite] -> [ObjectRow] -> [ProcRow] -> IO ResolveInputs
+fetchResolveInputs lvs gvs css objRows procRows = do
+  let objSet = Set.fromList [orObject r | r <- objRows, T.toLower (fromMaybe "" (orAncestor r)) /= "structure"]
+      usrTypes = Set.fromList [orObject r | r <- objRows, T.toLower (fromMaybe "" (orAncestor r)) == "structure"]
+      inh = Map.fromList [(mkIdent (orObject r), mkIdent a) | r <- objRows, Just a <- [orAncestor r]]
+      procMap = identMapFromListWith identSetUnion
+          [(mkIdent (prObject r), identSetSingleton (mkIdent (prProcName r))) | r <- procRows]
+      callableProcMap = identMapFromListWith identSetUnion
+          [(mkIdent (prObject r), identSetSingleton (mkIdent (prProcName r))) | r <- procRows, prProcType r `elem` ["function", "subroutine"]]
   pure ResolveInputs
     { riLocalVars       = lvs
     , riGlobalVars      = gvs

@@ -80,7 +80,7 @@ data ObjectRow = ObjectRow
   , orLayoutJson     :: Maybe Text
   , orTypeBlocksJson :: Maybe Text
   , orConfidence     :: Text
-  }
+  } deriving (Eq, Show)
 
 data ProcRow = ProcRow
   { prFile       :: Text
@@ -97,7 +97,7 @@ data ProcRow = ProcRow
   , prCyclomatic :: Maybe Int
   , prConfidence :: Text
   , prParamNames :: [Text]  -- ^ ordered declared parameter names, see 'procedures.param_names'
-  }
+  } deriving (Eq, Show)
 
 data DwObjectRow = DwObjectRow
   { dorFile        :: Text

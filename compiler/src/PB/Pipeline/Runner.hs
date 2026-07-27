@@ -696,6 +696,13 @@ dwJoinRowToJoinLegRow :: DwJoinRow -> DwJoinLegRow
 dwJoinRowToJoinLegRow r =
   DwJoinLegRow (djrFile r) (djrObject r) (djrLeftRef r) (djrRightRef r)
 
+-- | Convert a 'DwObjectRow' (DW row shape) to an 'ObjectRow' (PS row
+-- shape), matching the same construction used in 'appendToDb' for DW
+-- files. DW objects are always kind @datawindow@ with no ancestor.
+dwObjectRowToObjectRow :: DwObjectRow -> ObjectRow
+dwObjectRowToObjectRow dw =
+  ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"
+
 -- | Accumulate a 'CompiledFile''s compiler-only table data into a
 -- 'PhaseAData' workspace, concatenating the lists. Returns the pad
 -- unchanged for 'CFError' and 'CFSkip'.
@@ -709,6 +716,8 @@ accumulatePhaseAData pad (CFPs r) = pad
   , padProcUses         = procFlowsToUseRows (cpsProcFlows r) ++ padProcUses pad
   , padGlobalVars       = cpsGlobalVars r ++ padGlobalVars pad
   , padCallSites        = cpsCallSites r ++ padCallSites pad
+  , padObjectRows       = cpsObjectRow r : padObjectRows pad
+  , padProcedureRows    = cpsProcRows r ++ padProcedureRows pad
   }
 accumulatePhaseAData pad (CFDw r) = pad
   { padDwWriteColumns    = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWriteColumns r) ++ padDwWriteColumns pad
@@ -716,6 +725,7 @@ accumulatePhaseAData pad (CFDw r) = pad
   , padDwRetrieveColumns = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwRetrieveColumns r) ++ padDwRetrieveColumns pad
   , padDwJoinLegs        = map dwJoinRowToJoinLegRow (cdDwJoins r) ++ padDwJoinLegs pad
   , padCallSites         = cdCallSites r ++ padCallSites pad
+  , padObjectRows        = dwObjectRowToObjectRow (cdDwObjectRow r) : padObjectRows pad
   }
 accumulatePhaseAData pad _ = pad
 
