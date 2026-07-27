@@ -47,6 +47,15 @@ _REWRITES: list[tuple[re.Pattern, object]] = [
         ),
         lambda m: m.group(1),
     ),
+    # Convert bare START WITH (no CONNECT BY) to WHERE. Oracle requires
+    # CONNECT BY alongside START WITH for hierarchical queries, but PB
+    # sometimes uses START WITH as a standalone filter (equivalent to
+    # WHERE). Lambda checks the full text so CONNECT BY appearing before
+    # OR after START WITH is respected.
+    (
+        re.compile(r"\bSTART\s+WITH\b", re.I),
+        lambda m: "WHERE" if "CONNECT BY" not in m.string.upper() else m.group(0),
+    ),
 ]
 
 

@@ -552,6 +552,24 @@ tests = testGroup "Grammar.Body.Parser"
                        ]
     ]
 
+  , testGroup "DECLARE CURSOR FOR + multi-line SELECT"
+    [ testCase "DECLARE CURSOR FOR yields separate BsRaw; SELECT collects through TkDeclKw FROM" $
+        let decl = mkStmtSrc False "DECLARE tgtg_cursos CURSOR FOR"
+                     [(TkSqlKw,"declare"),(TkIdent,"tgtg_cursos"),(TkSqlKw,"cursor"),(TkControlKw,"for")]
+            sel  = mkStmtSrc False "\tselect"
+                     [(TkSqlKw,"select")]
+            col1 = mkStmtSrc False "\t\tparent_tg_lab_id,"
+                     [(TkIdent,"parent_tg_lab_id"),(TkComma,",")]
+            col2 = mkStmtSrc False "\t\tchild_tg_lab_id,"
+                     [(TkIdent,"child_tg_lab_id"),(TkComma,",")]
+            frm  = mkStmtSrc False "\t from testgrouptestgroup"
+                     [(TkDeclKw,"from"),(TkIdent,"testgrouptestgroup")]
+        in runBodyStmts [decl, sel, col1, col2, frm] @?=
+             Right [ loc1 (BsRaw "DECLARE tgtg_cursos CURSOR FOR")
+                   , loc1 (BsRaw "\tselect\n\t\tparent_tg_lab_id,\n\t\tchild_tg_lab_id,\n\t from testgrouptestgroup")
+                   ]
+    ]
+
   , testGroup "line anchors"
     [ testCase "locLine of leaf stmt matches stmtSource llStartLine" $ do
         let s = mkStmtAt 42 [(TkIdent,"x"),(TkAssignOp,"="),(TkIntLiteral,"1")]

@@ -263,3 +263,36 @@ def test_core_sql_has_no_io_imports():
     src = open(mod.__file__).read()
     for forbidden in ["import duckdb", "import subprocess", "from pathlib"]:
         assert forbidden not in src, f"pb/lib/sql.py must not contain {forbidden!r}"
+
+
+def test_start_with_converted_to_where():
+    """Bare START WITH (no CONNECT BY) is converted to WHERE so sqlglot's
+    Oracle parser can handle it. CONNECT BY + START WITH is left alone."""
+    # Pattern 1: bare START WITH → WHERE
+    parsed, tables, columns, meta = parse_pb_sql(
+        "SELECT x FROM t START WITH t.id = :this.id",
+        dialect="oracle",
+    )
+    assert parsed is not None, "bare START WITH should parse after rewrite"
+    assert "t" in tables
+    assert meta["operation"] == "SELECT"
+
+    # Pattern 2: CONNECT BY + START WITH is left unchanged
+    parsed2, tables2, _, meta2 = parse_pb_sql(
+        "SELECT level FROM dual CONNECT BY level < 5 START WITH level = 1",
+        dialect="oracle",
+    )
+    assert parsed2 is not None, "CONNECT BY + START WITH should parse"
+    assert "dual" in tables2
+
+    # Pattern 3: DECLARE CURSOR FOR + SELECT + bare START WITH
+    # (operation is DECLARE because it's extracted from raw text before rewrites)
+    raw3 = (
+        "DECLARE tgtg_cursos CURSOR FOR "
+        "SELECT parent_tg_lab_id, parent_tg_id "
+        "FROM testgrouptestgroup tgtg "
+        "START WITH tgtg.parent_tg_id = :this.uis.id"
+    )
+    parsed3, tables3, _, meta3 = parse_pb_sql(raw3, dialect="oracle")
+    assert parsed3 is not None, "DECLARE CURSOR FOR + START WITH should parse"
+    assert "testgrouptestgroup" in tables3
