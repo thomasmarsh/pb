@@ -3248,7 +3248,11 @@ create_materialized_view
         )* ')'
     )? (
         ON PREBUILT TABLE ( (WITH | WITHOUT) REDUCED PRECISION)?
-        | physical_properties? (CACHE | NOCACHE)? parallel_clause? build_clause?
+        | deferred_segment_creation? segment_attributes_clause? table_compression? inmemory_table_clause? ilm_clause?
+          (ORGANIZATION (HEAP segment_attributes_clause? heap_org_table_clause | INDEX segment_attributes_clause? index_org_table_clause? | EXTERNAL external_table_clause))?
+          (EXTERNAL PARTITION ATTRIBUTES external_table_clause (REJECT LIMIT)?)?
+          (CLUSTER cluster_name '(' column_name (',' column_name)* ')')?
+          (CACHE | NOCACHE)? parallel_clause? build_clause?
     ) (
         USING INDEX ((physical_attributes_clause | TABLESPACE mv_tablespace = id_expression)+)*
         | USING NO INDEX
