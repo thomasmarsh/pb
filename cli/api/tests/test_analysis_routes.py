@@ -905,13 +905,14 @@ def report_client(tmp_path_factory):
     conn.execute("""
         CREATE TABLE sql_statements (
             file TEXT, object TEXT, proc_name TEXT, line INT,
-            operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN
+            operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN,
+            error TEXT
         )
     """)
     for tables in ["tbl_a", "tbl_a,tbl_b", "tbl_a,tbl_b,tbl_c", "", "tbl_a,tbl_b"]:
         conn.execute(
-            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
-            ["w.srf", "obj_a", "proc_a", 1, "SELECT", tables, "", "SELECT 1", True],
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ["w.srf", "obj_a", "proc_a", 1, "SELECT", tables, "", "SELECT 1", True, None],
         )
 
     conn.close()

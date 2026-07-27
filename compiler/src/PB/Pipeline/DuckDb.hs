@@ -183,7 +183,8 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \var_end_line INTEGER, var_end_col INTEGER)"
       , "CREATE TABLE IF NOT EXISTS sql_statements \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
-        \operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
+        \operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN, \
+        \error TEXT)"
       , "CREATE TABLE IF NOT EXISTS sql_statement_columns \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN)"

@@ -24,7 +24,7 @@ WITH all_errors AS (
     SELECT
         file,
         'sql'            AS error_kind,
-        raw_sql          AS message,
+        COALESCE(error, raw_sql) AS message,
         object,
         proc_name,
         line,

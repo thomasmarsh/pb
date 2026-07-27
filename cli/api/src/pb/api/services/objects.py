@@ -228,7 +228,7 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 
     sql_stmts = rows(
         conn.execute(
-            "SELECT line, raw_sql, operation, parse_ok "
+            "SELECT line, raw_sql, operation, parse_ok, error "
             "FROM sql_statements WHERE object = ? ORDER BY line",
             [name],
         )

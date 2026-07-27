@@ -545,7 +545,7 @@ skipOps = Set.fromList
 -- | Build SqlStmtRows from BsRaw nodes without a SQL bridge (no tables/columns).
 rawSqlRow :: Text -> Text -> (Text, [Located BodyStmt]) -> [SqlStmtRow]
 rawSqlRow fpT obj (pName, body) =
-  [ SqlStmtRow fpT obj pName ln (Just op) "" "" rawTxt False
+  [ SqlStmtRow fpT obj pName ln (Just op) "" "" rawTxt False Nothing
   | (ln, rawTxt) <- extractBsRawNodes body
   , let op = Taint.classifyOperation rawTxt
   , not (T.null op)
@@ -586,6 +586,7 @@ extractProcSql resolve pool k fp obj (pName, body) = do
                   (T.intercalate "," (srColumns res))
                   rawTxt
                   (srParseOk res)
+                  (srError res)
           colRows =
             [ SqlStmtColumnRow fp obj pName ln ns tbl (crColumn c) (crIsWrite c)
             | c <- srColumnRefs res

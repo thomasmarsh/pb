@@ -122,8 +122,9 @@ def main() -> None:
                 "column_refs": meta.get("column_refs", []),
                 "row_filters": meta.get("row_filters", []),
                 "table_refs": meta.get("table_refs", []),
+                "error": meta.get("error"),
             }
-        except Exception:
+        except Exception as exc:
             response = {
                 "tables": [],
                 "columns": [],
@@ -132,6 +133,7 @@ def main() -> None:
                 "column_refs": [],
                 "row_filters": [],
                 "table_refs": [],
+                "error": str(exc),
             }
 
         _write_msg(stdout, response)

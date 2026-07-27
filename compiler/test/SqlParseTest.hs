@@ -234,6 +234,25 @@ tests = testGroup "SqlParse"
         case mres of
           Nothing -> assertFailure "SqlResult failed to decode"
           Just res -> assertEqual "table_refs default" [] (srTableRefs res)
+
+    , testCase "error field decodes from json" $ do
+        let json = "{\"tables\":[\"t\"],\"columns\":[],\
+                    \\"operation\":\"SELECT\",\"parse_ok\":false,\
+                    \\"error\":\"syntax error at line 2: unexpected token\"}"
+            mres = decode json :: Maybe SqlResult
+        case mres of
+          Nothing -> assertFailure "SqlResult failed to decode"
+          Just res -> do
+            assertEqual "parse_ok" False (srParseOk res)
+            assertEqual "error" (Just "syntax error at line 2: unexpected token") (srError res)
+
+    , testCase "missing error field decodes to Nothing" $ do
+        let json = "{\"tables\":[\"t\"],\"columns\":[],\
+                    \\"operation\":\"SELECT\",\"parse_ok\":true}"
+            mres = decode json :: Maybe SqlResult
+        case mres of
+          Nothing -> assertFailure "SqlResult failed to decode"
+          Just res -> assertEqual "error defaults to Nothing" Nothing (srError res)
     ]
 
   , testGroup "splitTableRef (Plan 157 Phase 4.5)"

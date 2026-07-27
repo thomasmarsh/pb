@@ -6,7 +6,8 @@ from pb.pipeline.db import count_sql_parse_failures, db_connection, parse_sql_fi
 _CREATE_SQL_STATEMENTS = """
     CREATE TABLE sql_statements (
         file TEXT, object TEXT, proc_name TEXT, line INTEGER,
-        operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN
+        operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN,
+        error TEXT
     )
 """
 
@@ -22,8 +23,8 @@ def test_count_sql_parse_failures_excludes_cursor_ops(tmp_path):
             ("CLOSE", "CLOSE cur;"),
         ]:
             conn.execute(
-                "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
-                ("f.srw", "obj", "proc", 1, op, None, None, raw, False),
+                "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("f.srw", "obj", "proc", 1, op, None, None, raw, False, None),
             )
         assert count_sql_parse_failures(conn) == 0
 
@@ -34,16 +35,16 @@ def test_count_sql_parse_failures_excludes_dynamic_cursor_declare(tmp_path):
     with db_connection(db) as conn:
         conn.execute(_CREATE_SQL_STATEMENTS)
         conn.execute(
-            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?)",
             ("f.srw", "obj", "proc", 1, "DECLARE",
-             None, None, "DECLARE cur DYNAMIC CURSOR FOR SQLSA;", False),
+             None, None, "DECLARE cur DYNAMIC CURSOR FOR SQLSA;", False, None),
         )
         assert count_sql_parse_failures(conn) == 0
 
         conn.execute(
-            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?)",
             ("f.srw", "obj", "proc", 2, "DECLARE",
-             None, None, "DECLARE cur_order CURSOR FOR SELECT garbage(((", False),
+             None, None, "DECLARE cur_order CURSOR FOR SELECT garbage(((", False, None),
         )
         assert count_sql_parse_failures(conn) == 1
 
@@ -53,8 +54,8 @@ def test_count_sql_parse_failures_counts_real_failures(tmp_path):
     with db_connection(db) as conn:
         conn.execute(_CREATE_SQL_STATEMENTS)
         conn.execute(
-            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
-            ("f.srw", "obj", "proc", 1, "SELECT", None, None, "SELECT 1 FROM", False),
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("f.srw", "obj", "proc", 1, "SELECT", None, None, "SELECT 1 FROM", False, None),
         )
         assert count_sql_parse_failures(conn) == 1
 

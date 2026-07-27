@@ -38,7 +38,8 @@ def _make_minimal_db(path: str) -> None:
     )
     conn.execute(
         "CREATE TABLE sql_statements (file TEXT, object TEXT, proc_name TEXT, line INT, "
-        "operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
+        "operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN, "
+        "error TEXT)"
     )
     conn.close()
 

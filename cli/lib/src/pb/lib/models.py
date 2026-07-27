@@ -105,6 +105,7 @@ class SqlStatementRow(NamedTuple):
     has_into: bool
     has_cursor: bool
     parse_ok: bool
+    error: str | None
 
 
 class ParseErrorRow(NamedTuple):

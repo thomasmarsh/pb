@@ -173,6 +173,7 @@ data SqlStmtRow = SqlStmtRow
   , ssrColumns   :: Text
   , ssrRawSql    :: Text
   , ssrParseOk   :: Bool
+  , ssrError     :: Maybe Text
   }
 
 data SqlStmtColumnRow = SqlStmtColumnRow
@@ -518,6 +519,7 @@ appendSqlStmts pool rows = appendRow pool "sql_statements" $ \app ->
     aText      app (ssrColumns r)
     aText      app (ssrRawSql r)
     aBool      app (ssrParseOk r)
+    aMaybeText app (ssrError r)
 
 appendSqlStmtColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
 appendSqlStmtColumns _    [] = pure ()

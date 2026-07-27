@@ -69,7 +69,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     proc["callees"] = [c["callee"] for c in callees]
 
     sql_stmts = rows(conn.execute(
-        "SELECT line, operation, raw_sql, tables, columns, parse_ok "
+        "SELECT line, operation, raw_sql, tables, columns, parse_ok, error "
         "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY line",
         [object_name, proc_name],
     ))
@@ -108,7 +108,7 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
     row = proc_rows[0]
     sql_stmts = rows(
         conn.execute(
-            "SELECT line, operation, raw_sql, tables, columns, parse_ok "
+            "SELECT line, operation, raw_sql, tables, columns, parse_ok, error "
             "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY line",
             [object_name, proc_name],
         )

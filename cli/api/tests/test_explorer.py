@@ -29,12 +29,12 @@ def client_with_sql(db_path, tmp_path_factory):
     shutil.copy(db_path, db_copy)
 
     conn = duckdb.connect(db_copy)
-    # sql_statements schema: file, object, proc_name, line, operation, tables, columns, raw_sql, parse_ok
+    # sql_statements schema: file, object, proc_name, line, operation, tables, columns, raw_sql, parse_ok, error
     conn.execute(
-        "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?)",
         ["", "fn_sqlerror", "fn_sqlerror", 0, "SELECT",
          "synthetic_test_table", "id",
-         "SELECT id FROM synthetic_test_table WHERE id = 1", True],
+         "SELECT id FROM synthetic_test_table WHERE id = 1", True, None],
     )
     # sql_statement_tables (Plan 157 Phase 4.5): all_sql_tables is now a VIEW
     # over this table (and dw_retrieve_tables) instead of CSV-splitting

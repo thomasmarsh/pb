@@ -90,6 +90,9 @@ data SqlResult = SqlResult
     -- 'srColumnRefs') -- so a column-less table touch (@SELECT COUNT(*)
     -- FROM t@, bare @DELETE FROM t@) still gets a table-level object, which
     -- an extraction keyed off column refs alone can never see.
+  , srError      :: Maybe Text
+    -- ^ sqlglot error message when 'srParseOk' is False; 'Nothing' when the
+    -- statement parsed successfully or no error was reported.
   } deriving (Show, Eq)
 
 instance FromJSON SqlResult where
@@ -101,6 +104,7 @@ instance FromJSON SqlResult where
     <*> o .:? "column_refs" .!= []
     <*> o .:? "row_filters" .!= []
     <*> o .:? "table_refs"  .!= []
+    <*> o .:? "error"
 
 -- | A table identifier, optionally schema/namespace-qualified. Lowercased by
 -- the Python-side extractor.
@@ -317,7 +321,7 @@ parseSql pool idx sqlText = do
       restartWorker pool ref conn
       conn' <- readIORef ref
       mres2 <- safeRequest conn'
-      pure $ fromMaybe (SqlResult [] [] Nothing False [] [] []) mres2
+      pure $ fromMaybe (SqlResult [] [] Nothing False [] [] [] Nothing) mres2
   where
     safeRequest conn = do
       r <- try @SomeException (timeout 30_000_000 (sendReceive conn (sbpDialect pool) sqlText))
