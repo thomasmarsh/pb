@@ -642,7 +642,7 @@ drop_lockdown_profile
 // Package DDLs
 
 drop_package
-    : DROP PACKAGE BODY? (schema_object_name '.')? package_name
+    : DROP PACKAGE BODY? (schema_object_name ('.' '.'?))? package_name
     ;
 
 alter_package
@@ -652,14 +652,14 @@ alter_package
     ;
 
 create_package
-    : CREATE (OR REPLACE)? (EDITIONABLE | NONEDITIONABLE)? PACKAGE (schema_object_name '.')? package_name invoker_rights_clause? (
+    : CREATE (OR REPLACE)? (EDITIONABLE | NONEDITIONABLE)? PACKAGE (schema_object_name ('.' '.'?))? package_name invoker_rights_clause? (
         IS
         | AS
     ) package_obj_spec* END package_name?
     ;
 
 create_package_body
-    : CREATE (OR REPLACE)? (EDITIONABLE | NONEDITIONABLE)? PACKAGE BODY (schema_object_name '.')? package_name (
+    : CREATE (OR REPLACE)? (EDITIONABLE | NONEDITIONABLE)? PACKAGE BODY (schema_object_name ('.' '.'?))? package_name (
         IS
         | AS
     ) package_obj_body*? (BEGIN seq_of_statements (EXCEPTION exception_handler+)?)? END package_name?
@@ -5728,7 +5728,7 @@ variable_declaration
     ;
 
 subtype_declaration
-    : SUBTYPE identifier IS type_spec (RANGE expression '..' expression)? (NOT NULL_)? ';'
+    : SUBTYPE identifier IS type_spec (RANGE expression '.' '.' expression)? (NOT NULL_)? ';'
     ;
 
 // cursor_declaration incorportates curscursor_body and cursor_spec
@@ -5857,7 +5857,7 @@ loop_statement
 // Loop Specific Clause
 
 cursor_loop_param
-    : index_name IN REVERSE? lower_bound range_separator = '..' upper_bound
+    : index_name IN REVERSE? lower_bound range_separator = '.' '.' upper_bound
     | record_name IN (cursor_name ('(' expressions_? ')')? | '(' select_statement ')')
     ;
 
@@ -5867,7 +5867,7 @@ forall_statement
     ;
 
 bounds_clause
-    : lower_bound '..' upper_bound
+    : lower_bound '.' '.' upper_bound
     | INDICES OF general_element between_bound?
     | VALUES OF index_name
     ;
@@ -7760,6 +7760,11 @@ identifier
 id_expression
     : regular_id
     | DELIMITED_ID
+    | substitution_variable
+    ;
+
+substitution_variable
+    : AMPERSAND AMPERSAND? (id_expression | numeric)
     ;
 
 inquiry_directive

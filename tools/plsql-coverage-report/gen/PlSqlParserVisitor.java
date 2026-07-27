@@ -7243,6 +7243,12 @@ public interface PlSqlParserVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitId_expression(PlSqlParser.Id_expressionContext ctx);
 	/**
+	 * Visit a parse tree produced by {@link PlSqlParser#substitution_variable}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitSubstitution_variable(PlSqlParser.Substitution_variableContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link PlSqlParser#inquiry_directive}.
 	 * @param ctx the parse tree
 	 * @return the visitor result

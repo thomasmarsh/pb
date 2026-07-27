@@ -12063,6 +12063,16 @@ public interface PlSqlParserListener extends ParseTreeListener {
 	 */
 	void exitId_expression(PlSqlParser.Id_expressionContext ctx);
 	/**
+	 * Enter a parse tree produced by {@link PlSqlParser#substitution_variable}.
+	 * @param ctx the parse tree
+	 */
+	void enterSubstitution_variable(PlSqlParser.Substitution_variableContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link PlSqlParser#substitution_variable}.
+	 * @param ctx the parse tree
+	 */
+	void exitSubstitution_variable(PlSqlParser.Substitution_variableContext ctx);
+	/**
 	 * Enter a parse tree produced by {@link PlSqlParser#inquiry_directive}.
 	 * @param ctx the parse tree
 	 */

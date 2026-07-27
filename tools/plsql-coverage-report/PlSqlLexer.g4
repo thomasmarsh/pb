@@ -2487,7 +2487,7 @@ BIT_STRING_LIT: 'B' ('\'' [01]* '\'')+;
 //  The '0X' is used in external_table_clause sub-rules
 
 HEX_STRING_LIT : ('X' | '0X') ('\'' [A-F0-9]* '\'')+;
-DOUBLE_PERIOD  : '..';
+//DOUBLE_PERIOD  : '..';  // removed — '..' tokenized as two PERIOD tokens
 PERIOD         : '.';
 
 //{ Rule #238 <EXACT_NUM_LIT>
