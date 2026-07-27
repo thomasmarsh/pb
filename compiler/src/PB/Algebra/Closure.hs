@@ -136,28 +136,7 @@ reachableSet starRel src =
 reconstructPath :: Relation (S.PathValue e) -> Int -> Int -> Maybe [e]
 reconstructPath starRel src dst
   | src == dst = Just []
-  | otherwise    = go dst
-  where
-    go j
-      | j == src  = Just []   -- reached the source: stop, no edge to append
-      | otherwise = case IM.lookup src starRel >>= IM.lookup j of
-          Nothing                 -> Nothing
-          Just S.Unreachable       -> Nothing
-          Just (S.Reachable _ Nothing _) -> Nothing   -- identity with no edge but j /= src: inconsistent
-          Just (S.Reachable _ (Just e) k) ->
-            case go k of
-              Nothing -> Nothing
-              Just es -> Just (es ++ [e])
-
--- | Like 'reconstructPath', but keeps each leg's endpoint node ids
--- alongside its label instead of discarding them -- 'pvPred' already
--- names each leg's from-node, this just surfaces it to the caller so a
--- domain layer (e.g. 'PB.Analysis.TaintClosure') can decode both
--- endpoints of every hop, not only the edge label.
-reconstructPathNodes :: Relation (S.PathValue e) -> Int -> Int -> Maybe [(Int, Int, e)]
-reconstructPathNodes starRel src dst
-  | src == dst = Just []
-  | otherwise    = go dst
+  | otherwise    = fmap reverse (go dst)
   where
     go j
       | j == src  = Just []
@@ -168,4 +147,25 @@ reconstructPathNodes starRel src dst
           Just (S.Reachable _ (Just e) k) ->
             case go k of
               Nothing -> Nothing
-              Just es -> Just (es ++ [(k, j, e)])
+              Just es -> Just (e : es)
+
+-- | Like 'reconstructPath', but keeps each leg's endpoint node ids
+-- alongside its label instead of discarding them -- 'pvPred' already
+-- names each leg's from-node, this just surfaces it to the caller so a
+-- domain layer (e.g. 'PB.Analysis.TaintClosure') can decode both
+-- endpoints of every hop, not only the edge label.
+reconstructPathNodes :: Relation (S.PathValue e) -> Int -> Int -> Maybe [(Int, Int, e)]
+reconstructPathNodes starRel src dst
+  | src == dst = Just []
+  | otherwise    = fmap reverse (go dst)
+  where
+    go j
+      | j == src  = Just []
+      | otherwise = case IM.lookup src starRel >>= IM.lookup j of
+          Nothing                 -> Nothing
+          Just S.Unreachable       -> Nothing
+          Just (S.Reachable _ Nothing _) -> Nothing
+          Just (S.Reachable _ (Just e) k) ->
+            case go k of
+              Nothing -> Nothing
+              Just es -> Just ((k, j, e) : es)

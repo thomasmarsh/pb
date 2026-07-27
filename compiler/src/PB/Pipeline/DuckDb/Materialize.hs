@@ -15,7 +15,6 @@ module PB.Pipeline.DuckDb.Materialize
 
 import PB.Prelude
 import PB.Analysis.Taint            qualified as Taint
-import PB.Analysis.TaintClosure    qualified as TaintClosure
 import PB.Analysis.SchemaCategory    (SchGraph)
 import PB.Pipeline.DuckDb
   ( Handle, executeHandle, recreateTextTable, appendTextRows )
@@ -444,15 +443,12 @@ materializeTaintPaths conn CallGraphAndTaintReady{..} = do
 -- tables here; Plan 187 §18 tier 3).
 materializeTaintAnnotations :: Handle -> CallGraphAndTaintReady -> ProcRows -> IO ()
 materializeTaintAnnotations conn CallGraphAndTaintReady{..} ProcRows{prDefs, prUses} = do
-  -- Use in-memory sources/sinks and closure instead of re-reading
-  -- taint_sources/taint_sinks/taint_reaches from DuckDB.
   let allSources = cgtrSources
       allSinks   = cgtrSinks
       taintKey o p v = o <> "::" <> p <> "::" <> v
       sourceKeys = Set.fromList
         [ taintKey (Taint.tsObject s) (Taint.tsProcName s) (Taint.tsVarName s) | s <- allSources ]
-      -- Use in-memory TaintClosure for reachability instead of re-reading taint_reaches
-      reachesPairs = TaintClosure.taintReachesPairsClosure cgtrClosure
+      reachesPairs = cgtrReachesPairs
       reachableFromSource = Set.fromList
         [ taintKey o p v
         | ((so, sp, sv), (o, p, v)) <- reachesPairs

@@ -280,9 +280,10 @@ data ProcRows = ProcRows
 -- the @constraint-evasion@ skill's Step 5 is the mechanism that catches
 -- a future construction site appearing anywhere it shouldn't.
 data CallGraphAndTaintReady = CallGraphAndTaintReady
-  { cgtrSources :: ![Taint.TaintSource]
-  , cgtrSinks   :: ![Taint.TaintSink]
-  , cgtrClosure :: !TaintClosure.TaintClosure
+  { cgtrSources      :: ![Taint.TaintSource]
+  , cgtrSinks        :: ![Taint.TaintSink]
+  , cgtrReachesPairs :: ![(TaintClosure.TaintTriple, TaintClosure.TaintTriple)]
+  , cgtrConfirmed    :: ![(Taint.TaintSource, Taint.TaintSink)]
   }
 
 -- | Proof-of-completion token for

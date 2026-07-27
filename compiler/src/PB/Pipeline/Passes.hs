@@ -247,22 +247,24 @@ timedQueryRows label action = Progress.timedStepRows label (do
 --   derived output table into its API-facing shape (@path_leg_fwd@\/
 --   @path_leg_back@->@decomposition_coslice@).
 runPhaseB :: Handle -> Maybe Text -> PhaseAData -> IO ()
-runPhaseB conn mDefaultNamespace pad = do
+runPhaseB conn mDefaultNamespace pad =
+  let PhaseAData{..} = pad
+  in do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
   (_inh, rcReady) <- resolveTypesAndCalls
-    (fetchResolveInputs (padLocalVars pad) (padGlobalVars pad) (padCallSites pad) (padObjectRows pad) (padProcedureRows pad))
+    (fetchResolveInputs padLocalVars padGlobalVars padCallSites padObjectRows padProcedureRows)
     (sinkResolvedOutput conn)
   -- Thread resolved_calls in-memory (Plan 208 Phase 2): extract from the
   -- proof token to avoid re-querying DuckDB for Phase B's own data.
   let ResolvedCallsReady rc = rcReady
       resolvedCallRows = map resolvedCallToRow rc
   (procRows, cgReady) <- buildCallGraphAndTaint rcReady
-    (fetchCallGraphInputs conn (padGlobalVars pad) (padTaintIntraEdges pad) (padTaintReturnRows pad) resolvedCallRows (padProcDefs pad) (padProcUses pad))
+    (fetchCallGraphInputs conn padGlobalVars padTaintIntraEdges padTaintReturnRows resolvedCallRows padProcDefs padProcUses)
     (sinkCallGraphOutput conn)
   catFks <- queryCatFks conn
   schGraph <- buildSchemaCategory mDefaultNamespace catFks
-    (fetchSchemaCategoryInputs conn (padDwRetrieveColumns pad) (padDwJoinLegs pad) (padDwWriteColumns pad) (padDwWhereColumns pad) (padCatFootprintCols pad))
+    (fetchSchemaCategoryInputs conn padDwRetrieveColumns padDwJoinLegs padDwWriteColumns padDwWhereColumns padCatFootprintCols)
     (sinkSchemaCategoryOutput conn)
   dcRows  <- initDeadCodeInput conn resolvedCallRows
   dcReady <- computeDeadCodeClosure conn dcRows
@@ -325,7 +327,7 @@ fetchCallGraphInputs conn globalVars intraEdges returnRows resolvedCallRows proc
       , cgiReturnRows    = returnRows
       }
 
-sinkCallGraphOutput :: Handle -> CallGraphOutput -> IO ()
+sinkCallGraphOutput :: Handle -> CallGraphOutput -> IO ([(TaintClosure.TaintTriple, TaintClosure.TaintTriple)], [(Taint.TaintSource, Taint.TaintSink)])
 sinkCallGraphOutput conn CallGraphOutput{..} = do
   Progress.timedStep "Build interproc edges + summaries + classify" $ do
     appendInterprocEdges conn coInterprocEdges
@@ -333,10 +335,11 @@ sinkCallGraphOutput conn CallGraphOutput{..} = do
   Progress.timedStep "Taint classification" $ do
     appendTaintSources   conn coTaintSources
     appendTaintSinks     conn coTaintSinks
-  Progress.timedStep "Taint closure" $
+  (reachesPairs, confirmedPairs) <- Progress.timedStep "Taint closure" $
     TaintClosure.materializeTaintClosure coTaintClosure coTaintSources coTaintSinks conn
   Progress.timedStep "Taint witness paths" $
     TaintClosure.materializeTaintStepKind coTaintClosure coTaintSources coTaintSinks conn
+  pure (reachesPairs, confirmedPairs)
 
 fetchSchemaCategoryInputs :: Handle -> [DwRetrieveColRow] -> [DwJoinLegRow] -> [DwRetrieveColRow] -> [DwRetrieveColRow] -> [SqlColRow] -> IO SchemaCategoryInputs
 fetchSchemaCategoryInputs conn dwRetrieveCols dwJoinLegs dwWriteCols dwWhereCols cfCols =
@@ -439,7 +442,7 @@ resolveTypesAndCalls fetchInputs sinkOutput = Progress.timedStep "Resolving type
 buildCallGraphAndTaint
   :: ResolvedCallsReady
   -> IO CallGraphInputs
-  -> (CallGraphOutput -> IO ())
+  -> (CallGraphOutput -> IO ([(TaintClosure.TaintTriple, TaintClosure.TaintTriple)], [(Taint.TaintSource, Taint.TaintSink)]))
   -> IO (ProcRows, CallGraphAndTaintReady)
 buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Building call graph" $ do
   CallGraphInputs{..} <- fetchInputs
@@ -452,7 +455,7 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
       allSources     = Taint.classifySources allSqlStmts allProcMetas
       allSinks       = Taint.classifySinks   allSqlStmts
       taintClosure   = TaintClosure.buildTaintClosure cgiIntraEdges cgiReturnRows edges argMap retMap globalMap allSources
-  sinkOutput CallGraphOutput
+  (reachesPairs, confirmedPairs) <- sinkOutput CallGraphOutput
     { coInterprocEdges = edges
     , coProcSummaries  = summaries
     , coTaintSources   = allSources
@@ -461,9 +464,10 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
     }
   pure ( ProcRows { prDefs = cgiProcDefs, prUses = cgiProcUses }
        , CallGraphAndTaintReady
-           { cgtrSources = allSources
-           , cgtrSinks   = allSinks
-           , cgtrClosure = taintClosure
+           { cgtrSources      = allSources
+           , cgtrSinks        = allSinks
+           , cgtrReachesPairs = reachesPairs
+           , cgtrConfirmed    = confirmedPairs
            }
        )
 

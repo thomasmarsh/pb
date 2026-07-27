@@ -27,6 +27,7 @@ module PB.Analysis.TaintClosure
   , taintConfirmed
   , taintWitnesses
   , taintWitnessLegs
+  , taintWitnessLegsForPair
   , materializeTaintClosure
   , materializeTaintStepKind
   ) where
@@ -372,12 +373,34 @@ taintWitnessLegsClosure (TaintClosure interner _rel srcIds reachSrc) =
      , Just legs <- [traverse decodeLeg rawLegs]
      ]
 
+-- | Reconstruct the witness leg sequence for a single (src, dst) pair.
+-- O(path_length) — calls 'reconstructPathNodes' once and decodes.
+-- Use this when only a subset of reachable pairs is needed
+-- (e.g. confirmed source-sink pairs) rather than 'taintWitnessLegsClosure'
+-- which enumerates all reachable pairs.
+taintWitnessLegsForPair :: TaintClosure -> TaintTriple -> TaintTriple -> Maybe [(TaintTriple, TaintTriple, Text, Text)]
+taintWitnessLegsForPair (TaintClosure interner _rel _srcIds reachSrc) srcT dstT = do
+  srcId <- HM.lookup srcT (internByVal interner)
+  dstId <- HM.lookup dstT (internByVal interner)
+  rawLegs <- reconstructPathNodes reachSrc srcId dstId
+  traverse decodeLeg rawLegs
+  where
+    decode i = unintern i interner
+    decodeLeg (fromId, toId, (kind, desc, _)) = do
+      fromT <- decode fromId
+      toT   <- decode toId
+      pure (fromT, toT, kind, desc)
+
 -- | Materialize @taint_reaches@\/@taint_confirmed@ from the shared closure
 -- ('taintReachesPairsClosure' / 'taintConfirmedClosure'). Takes the
 -- prebuilt 'TaintClosure' 'PB.Pipeline.Passes.buildCallGraphAndTaint' constructs once,
 -- so no relation is rebuilt and no extra DB round-trip is needed.
+--
+-- Returns the pre-computed reaches pairs and confirmed pairs so the caller
+-- can thread them to downstream consumers without retaining the closure.
 materializeTaintClosure
-  :: TaintClosure -> [Taint.TaintSource] -> [Taint.TaintSink] -> Handle -> IO ()
+  :: TaintClosure -> [Taint.TaintSource] -> [Taint.TaintSink] -> Handle
+  -> IO ([(TaintTriple, TaintTriple)], [(TaintSource, TaintSink)])
 materializeTaintClosure closure sources sinks conn = do
   let reaches   = taintReachesPairsClosure closure
       confirmed = taintConfirmedClosure closure sources sinks
@@ -395,6 +418,7 @@ materializeTaintClosure closure sources sinks conn = do
   appendTextRows conn "taint_reaches" reachRows
   recreateTextTable conn "taint_confirmed" ["s", "t"]
   appendTextRows conn "taint_confirmed" confirmedRows
+  pure (reaches, confirmed)
 
 -- | Materialize @taint_step_kind@ from the witness
 -- ('taintWitnessLegsClosure'), restricted to CONFIRMED (source,
@@ -410,16 +434,14 @@ materializeTaintClosure closure sources sinks conn = do
 materializeTaintStepKind
   :: TaintClosure -> [Taint.TaintSource] -> [Taint.TaintSink] -> Handle -> IO ()
 materializeTaintStepKind closure sources sinks conn = do
-  let confirmed   = taintConfirmedClosure closure sources sinks
-      witnessLegs = taintWitnessLegsClosure closure
-      legsByPair  = HM.fromList [ ((srcT, dstT), legList) | (srcT, dstT, legList) <- witnessLegs ]
-      rows        = concatMap (rowsForPair legsByPair) confirmed
+  let confirmed = taintConfirmedClosure closure sources sinks
+      rows = concatMap rowsForPair confirmed
   recreateTextTable conn "taint_step_kind"
     ["s", "t", "leg_ord", "lf", "lt", "kind", "step_kind", "description"]
   appendTextRows conn "taint_step_kind" rows
   where
     taintKey3 (o, p, v) = taintKey o p v
-    rowsForPair legsByPair (src, snk) =
+    rowsForPair (src, snk) =
       let srcT      = (Taint.tsObject src, Taint.tsProcName src, Taint.tsVarName src)
           snkT      = (Taint.tskObject snk, Taint.tskProcName snk, Taint.tskVarName snk)
           sourceKey = taintKey3 srcT
@@ -427,7 +449,7 @@ materializeTaintStepKind closure sources sinks conn = do
       in if srcT == snkT
            then [[sourceKey, sourceKey, "0", sourceKey, sourceKey, "sink", "source-sink",
                   "taint source and sink (same variable)"]]
-           else case HM.lookup (srcT, snkT) legsByPair of
+           else case taintWitnessLegsForPair closure srcT snkT of
              Nothing -> error
                ("PB.Analysis.TaintClosure.materializeTaintStepKind: impossible: "
                  <> show snkT <> " has no witness path despite being taint_confirmed reachable from "
