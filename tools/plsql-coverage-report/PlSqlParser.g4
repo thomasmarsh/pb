@@ -7207,6 +7207,7 @@ sql_plus_command
     | start_command
     | set_command
     | clear_command
+    | DEFINE (id_expression ('=' id_expression)?)?
     ;
 
 start_command
