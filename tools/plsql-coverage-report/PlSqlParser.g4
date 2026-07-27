@@ -6975,6 +6975,7 @@ listagg_overflow_clause
 other_function
     : over_clause_keyword function_argument_analytic over_clause?
     | /*TODO stantard_function_enabling_using*/ regular_id function_argument_modeling using_clause?
+    | regular_id '(' (DISTINCT | UNIQUE | ALL)? (argument (',' argument)*)? ')' keep_clause?
     | COUNT '(' (ASTERISK | (DISTINCT | UNIQUE | ALL)? concatenation) ')' over_clause?
     | (CAST | XMLCAST) '(' (MULTISET '(' subquery ')' | concatenation) AS type_spec (
         DEFAULT concatenation ON CONVERSION ERROR
