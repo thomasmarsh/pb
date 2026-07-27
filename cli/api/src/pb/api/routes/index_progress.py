@@ -13,6 +13,13 @@ from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
+STREAM_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+    "Transfer-Encoding": "chunked",
+}
+
 
 @router.get("/api/index-progress")
 async def get_index_progress(request: Request) -> dict[str, Any]:
@@ -34,7 +41,7 @@ async def stream_index_events(request: Request) -> StreamingResponse:
         async def empty():
             yield _sse({"active": False})
 
-        return StreamingResponse(empty(), media_type="text/event-stream")
+        return StreamingResponse(empty(), media_type="text/event-stream", headers=STREAM_HEADERS)
 
     q: queue.Queue = queue.Queue(maxsize=256)
     collector = job._collector
@@ -67,5 +74,5 @@ async def stream_index_events(request: Request) -> StreamingResponse:
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers=STREAM_HEADERS,
     )
