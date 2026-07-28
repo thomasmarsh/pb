@@ -5,23 +5,11 @@ under `cli/`. This file covers Python-specific rules only — session
 protocol, the staged verification loop, commit discipline, documentation
 style, and change-scope rules live in the root `AGENTS.md` and apply here too.
 
-## Verification
-
-```text
-cd cli && uv run pytest lib/tests/ pipeline/tests/ api/tests/  # tests
-cd cli && uv run ruff check     # lint
-cd cli && uv run pyright        # type check (0 errors baseline)
-```
-
 ## Backend SQL mock mode
 
-Set `PB_SQL_MOCK=1` to return canned data instead of connecting
-to MySQL. Useful for development iteration without a running database:
-
-```bash
-PB_SQL_MOCK=1 cd cli && uv run pb explore   # mock mode
-uv run pb explore                            # live mode (default)
-```
+`PB_SQL_MOCK=1` returns canned data instead of connecting to MySQL — useful
+for development iteration without a running database. See root `AGENTS.md`
+Quick Reference for the invocation.
 
 ## SQL worker bridge
 

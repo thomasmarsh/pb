@@ -100,7 +100,7 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 - Be creative and comprehensive in generating PBT and pathological unit test cases; PB has lots of issues like `foo()bar()` smashed together ` & // comment`
 - Ensure the preprocess step is principled and resilient
 - We always strongly type everything we can. E.g., in a DataWindow we will see `..(retrieve="..SQL string", ...)`. Rather than a map of properties, we should have an explicit record type that captures the possible known fields.
-- **Identifier typing is a standing goal, not a cost/benefit call.** Any AST field that structurally holds a PB identifier — or a fixed-arity compound of identifiers, e.g. `TypeDecl`'s ancestor-class + optional-override — must be `Ident`/`IdentSet`/`Lvalue`, never raw `Text`/`[Token]`. This holds **regardless of how many consumers currently read the field** — "only one call site needs it" is not a reason to leave it untyped. Do not apply the root AGENTS.md's "no premature abstraction" rule to this category; that rule is about not inventing behavior nobody asked for, and typing an identifier correctly is not new behavior, it's removing a latent footgun (raw `Text`/`Token` equality is case-sensitive; PB identifiers are not). The only valid reasons a field stays `Text`/`[Token]`: (a) genuinely unparsed/raw source (`BsRaw`, embedded SQL, arg-token lists not yet parsed into `Expr`), (b) a PB keyword or grammar-literal comparison (e.g. checking a token equals the literal keyword `structure`) — not an identifier reference, (c) the value isn't structurally an identifier or a small fixed compound of them (free-form text, a rendered display string). When in doubt, name the specific reason in the Stage 1 proposal rather than defaulting to "leave it as Text since nothing else reads it yet."
+- **Identifier typing is a standing goal, not a cost/benefit call.** Any AST field structurally holding a PB identifier — or a fixed-arity compound of identifiers, e.g. `TypeDecl`'s ancestor-class + optional-override — must be `Ident`/`IdentSet`/`Lvalue`, never raw `Text`/`[Token]`, regardless of how many consumers currently read the field ("only one call site needs it" doesn't apply). The root AGENTS.md's "no premature abstraction" rule doesn't apply here either: that rule targets inventing unasked-for behavior, and typing an identifier correctly isn't new behavior — it removes a latent footgun (raw `Text`/`Token` equality is case-sensitive; PB identifiers are not). Valid reasons a field stays `Text`/`[Token]`: (a) genuinely unparsed/raw source (`BsRaw`, embedded SQL, arg-token lists not yet parsed into `Expr`); (b) a keyword/grammar-literal comparison, not an identifier reference (e.g. a token equals the literal keyword `structure`); (c) the value isn't structurally an identifier or a small fixed compound of them (free-form text, a rendered display string). When in doubt, name the specific reason in the Stage 1 proposal rather than defaulting to "leave it as Text."
 
 ---
 
@@ -161,30 +161,12 @@ The parser specification is in `doc/spec.md` — consult it first for any questi
 
 ## Corpus Coverage Checklist
 
-Every distinct top-level construct found in the 515 non-DataWindow corpus files.
-Mark done/pending as body parsers land.
-
-| Construct                               | File types | Status  |
-| --------------------------------------- | ---------- | ------- |
-| `forward … end forward`                 | .srw, .sru | done    |
-| `forward prototypes … end prototypes`   | .srw, .sru | done    |
-| `type prototypes … end prototypes`      | .srf, .sru | done    |
-| `prototypes … end prototypes`           | .srf       | done    |
-| `global variables … end variables`      | .srw, .sru | done    |
-| `type variables … end variables`        | .srw, .sru | done    |
-| `global type … end type`                | .srw, .sru | done    |
-| `public function … end function`        | .srw, .sru | done    |
-| `protected subroutine … end subroutine` | .srw, .sru | done    |
-| `on … end on`                           | .srw, .sru | done    |
-| `event … end event`                     | .srw, .sru | done    |
-| `type … end type` (TypeBlock)           | .srw, .sru | done    |
-| Body: `if … end if`                     | all        | done    |
-| Body: `choose case … end choose`        | all        | done    |
-| Body: `for … next`                      | all        | done    |
-| Body: `do … loop`                       | all        | done    |
-| Body: `try … catch … end try`           | all        | done    |
-| Body: embedded SQL                      | .srw, .sru | pending |
-| Body: assignment / call statements      | all        | done    |
+All top-level constructs (`forward`/`prototypes`/`variables`/`global type`/
+function/subroutine/`on`/`event`/`type` blocks) and body statements (`if`,
+`choose case`, `for`/`next`, `do`/`loop`, `try`/`catch`,
+assignment/call) parse across the 515 non-DataWindow corpus files. The one
+open gap: **embedded SQL body statements** (`.srw`/`.sru`) are not
+grammar-parsed — they stay `BsRaw` (unparsed raw text).
 
 ---
 
@@ -335,7 +317,7 @@ was discovered — Plan 198's Phases C, D, and G each found real consumers
 outside the initial grep (a `queries/*.sql` file, a `ui/` type, a stale doc
 line) that would otherwise have shipped silently wrong or gone silently
 stale. State the full consumer list in the Stage 1 proposal per the root
-`AGENTS.md`'s "Confirm scope before multi-file changes" rule — a schema
+`AGENTS.md`'s "Multi-file changes require Stage 1 review" rule — a schema
 rename is definitionally a multi-file, multi-layer change.
 
 **Schema-shape lookups: read `doc/architecture-pipeline.md`'s §5, not
@@ -354,77 +336,42 @@ precedent this section generalizes — read it for the specific renames
 
 ---
 
-## Module Signature Lookup
+## Appender-pool failure modes
 
-There is no hand-maintained module-signature index in this file — a prior
-version had one, but at this codebase's size (60+ modules, ~18k lines) it
-went stale faster than sessions kept it current, including gaps in the
-modules under most active development. Locate signatures the same way the
-Token Efficiency section already prescribes for everything else:
+Two silent `appender_flush` failure modes can bite the `--db` pipeline. Both
+surface only at pool teardown (`withAppenderPoolTimed`'s `destroyAll` flush),
+not at the `append_*` call — a clean per-file append gives no warning, and
+the whole corpus run dies at the end with a bare `appender_flush` error and
+no table/row context.
 
-```text
-rg -n "functionName" src/
-rg -l "TypeName" src/
-```
+1. **Missing `endRow` in a row-marshalling sequence.** Every `append*`
+   function must finalize each row with `endRow app`
+   (`c_duckdb_appender_end_row`). Without it, the row's `aText`/`aInt`/…
+   calls never finalize; the _next_ row's values keep advancing the
+   appender's column counter, so by flush time the buffered chunk has
+   N×columns against a table with `columns` — a column-count mismatch
+   DuckDB only validates at flush. **Structural guard:** every `append*`
+   routes its row marshalling through `forEachRow` (`PB.Pipeline.DuckDb`),
+   which brackets `endRow app` via `bracket_` so a new `append*` calling it
+   can't omit `endRow`.
+2. **Table written by `append*` but missing from `phaseATables`.**
+   `appendRow` does `Map.lookup tbl pool` and throws `impossible: appender
+   pool missing table <t>` if the table isn't in `phaseATables`
+   (`Runner.hs`) — fails loudly at the first append, not at flush. A new
+   `append*` + table needs both the `CREATE TABLE` in `initSchema` and the
+   name in `phaseATables`.
 
-`rg -l` to find the file, `rg -n` to find the line, then `Read` with
-`offset`/`limit` around that line rather than the whole file.
+**Diagnosing a bare `appender_flush` error:** `checkAppenderSt`
+(`PB.Pipeline.DuckDb`) replaces the bare `checkSt` at both flush sites
+(`destroyAll` pool teardown and `withAppender`). On a non-zero DuckDB status
+it pulls the real libduckdb error string via `c_duckdb_appender_error_data`
+and reports it with the failing table name, e.g. `appender_flush:
+taint_intra_edges: <real libduckdb message>`. A bare error with no `:<table>:`
+suffix means some code path is still on `checkSt` — switch it to
+`checkAppenderSt`. To bisect without it, flush each Phase A appender
+individually (`c_duckdb_appender_flush` over `Map.toList pool`) or grep the
+suspect `append*` for a missing `endRow app`.
 
----
-
-## Appender-pool failure modes (Plan 182b follow-up, 2026-07-18)
-
-Two silent `appender_flush` failure modes have bitten the `--db` pipeline. Both
-surface only at pool teardown (`withAppenderPoolTimed`'s `destroyAll` flush), not
-at the `append_*` call — so a clean per-file append gives no warning and the
-whole corpus run dies at the end with a bare `DuckDB appender error in
-appender_flush` and no table/row context.
-
-1. **Missing `endRow` in a row-marshalling sequence (the 182b bug).** Every
-   `append*` function's body must finalize each row with `endRow app`
-   (`c_duckdb_appender_end_row`). If it doesn't, the N `aText`/`aInt`/…
-   calls for a row are never finalized; the _next_ row's values keep advancing
-   the appender's column counter, so by flush time the buffered chunk has
-   N×columns against a table with `columns` → a column-count mismatch that
-   DuckDB only validates at flush. Symptom: `taint-corpus-bench` dies at
-   teardown with `appender_flush` after a clean parse; BFS/algebraic parity is
-   never reached. **Fix (now structural, not a thing to remember):** every
-   `append*` routes its per-row column marshalling through `forEachRow`
-   (`PB.Pipeline.DuckDb`), which brackets `endRow app` via `bracket_` so a
-   forgotten `endRow` is impossible — a new `append*` that calls `forEachRow`
-   can never reintroduce this. The row-marshalling sequence
-   (`aText`/`aInt`/`aMaybeText`/`endRow`) is the invariant Plan 169 calls out
-   as "unchanged" when an `append*` moves from `withRaw` to the pool;
-   `forEachRow` preserves it mechanically.
-
-2. **Table written by `append*` but missing from `phaseATables` (the first
-   182b bug, already fixed).** `appendRow` does `Map.lookup tbl pool` and
-   throws `impossible: appender pool missing table <t>` if the table isn't in
-   `phaseATables` (`Runner.hs`). That one fails loudly at the first append, not
-   at flush — but it's the same class: a new `append*` + table needs BOTH the
-   `CREATE TABLE` in `initSchema` AND the name in `phaseATables`.
-
-**Diagnose fast next time.** `checkAppenderSt` (in `PB.Pipeline.DuckDb`) now
-replaces the bare `checkSt` at both flush sites (`destroyAll` pool teardown and
-the `withAppender` path). On a non-zero DuckDB status it pulls the real
-libduckdb error string via `c_duckdb_appender_error_data` (current FFI; the
-deprecated `c_duckdb_appender_error` is not re-exported by `Database.DuckDB.FFI`)
-and reports it together with the failing table name, e.g.
-`DuckDB appender error in appender_flush:taint_intra_edges: <real libduckdb message>`.
-If you ever see the old bare `DuckDB appender error in appender_flush` with no
-`:<table>:` suffix, that's the non-pool `withAppender` path or a code path still
-on `checkSt` — switch it to `checkAppenderSt`. To bisect without the helper,
-temporarily flush each Phase A appender individually (`c_duckdb_appender_flush`
-in a `for_` over `Map.toList pool`) and watch which table errors first; or grep
-the suspect `append*` for a missing `endRow app`.
-
-Cross-reference: the appender-pool design (pooled create-once / flush-at-boundary,
-`phaseATables`, `appendRow`) is `doc/plan/169-appender-reuse-and-effterm-sharing.md`.
-The `endRow` requirement is part of that plan's "row marshalling code … is
-unchanged" invariant — this 182b incident is the concrete case where it was
-violated on a newly-added `append*`, and `forEachRow` is the mechanical guard
-that now keeps it invariant.
-
-```
-
-```
+History and full appender-pool design (pooled create-once /
+flush-at-boundary, `phaseATables`, `appendRow`):
+`doc/plan/169-appender-reuse-and-effterm-sharing.md`.

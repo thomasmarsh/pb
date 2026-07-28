@@ -19,95 +19,39 @@ If a component needs server data, the sequence is always:
 user action → store.dispatch(action) → reducer → env.method() → Effect → dispatch(result-action) → state update → component re-renders
 ```
 
-Calling `fetch` inside a component (in `onMount`, `createResource`, a signal setter, etc.)
-is always wrong. It bypasses the env, makes the behavior untestable without `vi.stubGlobal`,
-and fires an actual HTTP request against a non-running server in tests — causing `ECONNREFUSED`.
+Calling `fetch` inside a component (in `onMount`, `createResource`, a signal setter, etc.) bypasses
+the env and fires a real HTTP request against a non-running server in tests. The reducer fetches
+via `env`; the component only ever reads from the store snapshot.
 
-**Wrong:**
-
-```tsx
-function MyComponent() {
-  const [data, setData] = createSignal(null);
-  onMount(async () => {
-    const r = await fetch("/api/my-endpoint"); // ❌
-    setData(await r.json());
-  });
-}
-```
-
-**Right:** the reducer fetches via `env`; the component reads from the store snapshot.
+If `pnpm test` shows `ECONNREFUSED` noise (not a test failure, just stderr), one of Rule 2's six
+steps is missing an entry — never fix it with `vi.stubGlobal` (Rule 4).
 
 ### Rule 2 — Adding a new API call: the six-step checklist
 
 Follow all six steps every time. Missing any one causes TypeScript errors or test noise.
 
-1. **Feature `Env` interface** — add the typed method:
-
-   ```ts
-   // e.g., in features/datawindows/reducer.ts
-   export interface DatawindowsEnv {
-     getDwLayout(name: string): Effect<DataWindowFile>;
-   }
-   ```
-
-2. **`ApiClient` interface + implementation** — in `ui/src/features/app/api-client.ts`:
-
-   ```ts
-   // interface:
-   getDwLayout(name: string): Promise<DataWindowFile>;
-   // implementation:
-   async getDwLayout(name: string): Promise<DataWindowFile> {
-     return fetchJson("/api/objects/" + encodeURIComponent(name) + "/dw");
-   }
-   ```
-
-3. **`createEnv` wiring** — in the same `api-client.ts` `createEnv` function:
-
-   ```ts
-   getDwLayout: (n) => lift(() => api.getDwLayout(n)),
-   ```
-
+1. **Feature `Env` interface** — add the typed method, e.g. in `features/datawindows/reducer.ts`:
+   `getDwLayout(name: string): Effect<DataWindowFile>;`
+2. **`ApiClient` interface + implementation** — in `ui/src/features/app/api-client.ts`, add the
+   `Promise`-returning interface method and its `fetchJson(...)` implementation.
+3. **`createEnv` wiring** — in the same file's `createEnv`:
+   `getDwLayout: (n) => lift(() => api.getDwLayout(n)),`
 4. **`mockEnv` in `ui/tests/helpers.tsx`** — add a no-op entry:
-
-   ```ts
-   getDwLayout: () => Effect.none(),
-   ```
-
-5. **Feature-local mock envs** — any test file with its own `const mockEnv: FeatureEnv` must
-   also add the method. Search for files that declare the feature's `Env` type explicitly:
-
-   ```bash
-   rg -l "DatawindowsEnv\|ExploreEnv" ui/tests/
-   ```
-
-6. **Reducer usage** — return `Effect.merge` when firing in parallel with another call:
-
-   ```ts
-   case "select":
-     return Effect.merge(
-       env.getDW(action.name).map(...).catch(...),
-       env.getDwLayout(action.name).map(...).catch(...),
-     );
-   ```
+   `getDwLayout: () => Effect.none(),`
+5. **Feature-local mock envs** — any test file with its own `const mockEnv: FeatureEnv` must also
+   add the method. Find them with `rg -l "DatawindowsEnv\|ExploreEnv" ui/tests/`.
+6. **Reducer usage** — return `Effect.merge(e1, e2)` when firing in parallel with another call
+   (see Rule 5).
 
 ### Rule 3 — Navigation via `env.navigate()`, never dispatched directly
 
-Feature reducers call `env.navigate(navAction)` to change the route. They never return a nav
-action as an `Effect` themselves.
+Feature reducers call `env.navigate(navAction)` to change the route — never return a nav action
+as an `Effect` themselves (`Effect.send({ tag: "nav", ... })` is always wrong; it leaks the
+app-level action shape into the feature).
 
 `pullbackWithNav` (in `ui/src/core/reducer.ts`) intercepts `env.navigate` calls synchronously,
-converts them to `Effect.send(widenNav(nav))`, and merges them with the feature's own effect.
-Navigation fires in the same dispatch cycle. See `doc/nav-philosophy.md` for full rationale.
-
-**Wrong:**
-
-```ts
-case "select":
-  // ❌ Feature should not know about app-level action shape
-  return Effect.send({ tag: "nav", action: { tag: "navigate", route: { view: "dwDetail", name } } });
-```
-
-**Right:**
+converts them to `Effect.send(widenNav(nav))`, and merges them with the feature's own effect in
+the same dispatch cycle. See `doc/nav-philosophy.md` for full rationale.
 
 ```ts
 case "select":
@@ -117,9 +61,9 @@ case "select":
 ```
 
 `navigate` must be declared in the feature's `Env` interface as
-`navigate(action: NavigationAction): Effect<never>`. `pullbackWithNav` provides the
-implementation at the app level — the feature never calls `history.pushState` or touches the
-nav reducer directly.
+`navigate(action: NavigationAction): Effect<never>` — `pullbackWithNav` provides the
+implementation at the app level; the feature never calls `history.pushState` or touches the nav
+reducer directly.
 
 ### Rule 4 — Test injection via closures, never `vi.stubGlobal`
 
@@ -170,54 +114,25 @@ eff.catch(onReject)        // converts rejection to a dispatched action (never l
 Reducers return `Effect<ActionType> | null`. The store's `dispatch` calls `effect.execute(dispatch)`.
 Never start async work inside a reducer body — only inside `env` method implementations.
 
-### Diagnosing test-time `ECONNREFUSED` errors
-
-If `pnpm test` shows `ECONNREFUSED` in stderr (not a test failure — console noise), the cause
-is always a component making a real `fetch` call. The fix is never `vi.stubGlobal`; it is
-always one of:
-
-- The component is calling `fetch` directly → move the call into an `AppEnv` method (Plan 104).
-- A new env method was added but not to `mockEnv` in `helpers.tsx` → add `Method: () => Effect.none()`.
-- A feature test file has its own `mockEnv` that is missing the new method → add it there too.
-
 ---
 
 ## Testing
 
-**Runtime test pattern (Plan 107).** When testing the PB interpreter / runtime reducer, use
-`MockRuntimeEnv` for controlled SQL responses and `renderWindow()` for logical JSX output.
+**Runtime test pattern.** When testing the PB interpreter / runtime reducer, use
+`createMockRuntimeEnv` (controlled SQL responses) and `renderWindow()` (logical JSX output).
 Never start the server or hit a real database in unit tests.
 
 ```ts
-import { createMockRuntimeEnv } from "../mock-runtime-env.js";
-import { renderWindow } from "../../src/core/render-window.js";
-
-// 1. Create mock env with controlled data
 const mockEnv = createMockRuntimeEnv({
-  misth_zpkrat: {
-    rows: [{ kodkrat: "01" }],
-    rowcount: 1,
-    columns: ["kodkrat"],
-  },
+  misth_zpkrat: { rows: [{ kodkrat: "01" }], rowcount: 1, columns: ["kodkrat"] },
 });
-
-// 2. Set up store with mock env
 const ts = createTestStore(runtimeReducer, mockEnv, initialRuntimeState);
-
-// 3. Load AST and run event
 ts.send({ tag: "set-ast", ast });
 ts.send({ tag: "run-event", owner: "w_test", event: "open" });
 ts.receive({ tag: "sql-result", dwName: "dw", rows: MOCK_ROWS });
-
-// 4. Assert on state
 expect(ts.getState().controlValues["dw"]).toHaveLength(1);
 
-// 5. Render and assert on logical structure
-const rendered = renderWindow(
-  ast,
-  ts.getState().controlValues,
-  ts.getState().variables,
-);
+const rendered = renderWindow(ast, ts.getState().controlValues, ts.getState().variables);
 expect(rendered.dataWindows[0]!.rows).toHaveLength(1);
 ```
 
