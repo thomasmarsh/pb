@@ -6,7 +6,7 @@ import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
 import { EntityCard, Loading, useListKeyboard } from "@pb/platform";
 
-export function TableList(props: { store: Store<AppState, AppAction> }) {
+export function TableList(props: { store: Store<AppState, AppAction>; embedded?: boolean }) {
   const snap = props.store.getState();
   const ts = () => snap().tables;
   const routeNamespace = () => {
@@ -43,15 +43,17 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
   return (
     <>
       <div class="search-bar">
-        <input
-          class="search-input"
-          type="text"
-          placeholder="Search tables…"
-          value={ts().q}
-          onInput={(e) => {
-            props.store.dispatch({ tag: "tables", action: { tag: "filter", q: e.currentTarget.value } });
-          }}
-        />
+        <Show when={!props.embedded}>
+          <input
+            class="search-input"
+            type="text"
+            placeholder="Search tables…"
+            value={ts().q}
+            onInput={(e) => {
+              props.store.dispatch({ tag: "tables", action: { tag: "filter", q: e.currentTarget.value } });
+            }}
+          />
+        </Show>
         <Show when={ts().schemas.length > 1}>
           <select
             class="schema-select"

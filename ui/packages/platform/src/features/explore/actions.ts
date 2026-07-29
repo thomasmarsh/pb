@@ -30,4 +30,5 @@ export type ExploreAction =
   | { tag: "help-overlay-toggle" }
   | { tag: "browser-tab"; category: string }
   | { tag: "browser-loaded"; data: ListObjectsResponse }
+  | { tag: "browser-filter"; q: string }
   ;

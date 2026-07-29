@@ -31,7 +31,7 @@ function sortItems(
   return [...items].sort(cmp);
 }
 
-export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
+export function ProceduresList(props: { store: Store<AppState, AppAction>; embedded?: boolean }) {
   const store = props.store;
   const snap = store.getState();
   const ps = () => snap().objects;
@@ -89,18 +89,20 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
 
   return (
     <>
-      <div style={{ display: "flex", gap: "8px", "align-items": "center", "margin-bottom": "12px" }}>
-        <input
-          class="search-input"
-          style={{ flex: 1 }}
-          type="text"
-          placeholder="Search procedures or objects…"
-          value={ps().proceduresListQ}
-          onInput={(e) => {
-            store.dispatch({ tag: "objects", action: { tag: "procs-list-filter", q: e.currentTarget.value } });
-          }}
-        />
-      </div>
+      <Show when={!props.embedded}>
+        <div style={{ display: "flex", gap: "8px", "align-items": "center", "margin-bottom": "12px" }}>
+          <input
+            class="search-input"
+            style={{ flex: 1 }}
+            type="text"
+            placeholder="Search procedures or objects…"
+            value={ps().proceduresListQ}
+            onInput={(e) => {
+              store.dispatch({ tag: "objects", action: { tag: "procs-list-filter", q: e.currentTarget.value } });
+            }}
+          />
+        </div>
+      </Show>
 
       <div class="filter-pills" style={{ "margin-bottom": "12px" }}>
         <For each={["", "function", "subroutine", "event", "on"]}>

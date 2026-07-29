@@ -1,6 +1,6 @@
 // tests/features/explore.test.ts — Tests for explore feature reducer.
 
-import { describe, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "@pb/platform";
@@ -219,7 +219,7 @@ describe("explore reducer", () => {
     it("browser-tab sets category and loading, fetches for that category", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
       ts.send({ tag: "browser-tab", category: "window" }, (s) => {
-        s.browser = { category: "window", items: [], loading: true };
+        s.browser = { category: "window", items: [], loading: true, q: "" };
       });
     });
 
@@ -231,19 +231,75 @@ describe("explore reducer", () => {
       const env: ExploreEnv = { ...mockEnv, getObjects: () => Effect.send(data) };
       const ts = createTestStore(exploreReducer, env, makeInitialExploreState());
       ts.send({ tag: "browser-tab", category: "window" }, (s) => {
-        s.browser = { category: "window", items: [], loading: true };
+        s.browser = { category: "window", items: [], loading: true, q: "" };
       });
       ts.receive({ tag: "browser-loaded", data }, (s) => {
-        s.browser = { category: "window", items: data.items, loading: false };
+        s.browser = { category: "window", items: data.items, loading: false, q: "" };
       });
     });
 
     it("switching categories refetches for the new category", () => {
       const init = makeInitialExploreState();
-      init.browser = { category: "window", items: [{ name: "w_main", kind: "powerscript", category: "window", file: "app.pbl", ancestor: null }], loading: false };
+      init.browser = { category: "window", items: [{ name: "w_main", kind: "powerscript", category: "window", file: "app.pbl", ancestor: null }], loading: false, q: "" };
       const ts = createTestStore(exploreReducer, mockEnv, init);
       ts.send({ tag: "browser-tab", category: "menu" }, (s) => {
-        s.browser = { category: "menu", items: init.browser.items, loading: true };
+        s.browser = { category: "menu", items: init.browser.items, loading: true, q: "" };
+      });
+    });
+
+    it("browser-tab on 'tables' sets category and does not fetch", () => {
+      const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
+      ts.send({ tag: "browser-tab", category: "tables" }, (s) => {
+        s.browser = { category: "tables", items: [], loading: false, q: "" };
+      });
+    });
+
+    it("browser-tab on 'procedures' sets category and does not fetch", () => {
+      const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
+      ts.send({ tag: "browser-tab", category: "procedures" }, (s) => {
+        s.browser = { category: "procedures", items: [], loading: false, q: "" };
+      });
+    });
+
+    describe("explore/browser-filter", () => {
+      it("sets q and fetches with category+q", () => {
+        const init = makeInitialExploreState();
+        init.browser = { category: "window", items: [], loading: false, q: "" };
+        const ts = createTestStore(exploreReducer, mockEnv, init);
+        ts.send({ tag: "browser-filter", q: "w_" }, (s) => {
+          s.browser = { category: "window", items: [], loading: true, q: "w_" };
+        });
+      });
+
+      it("'all' category omits the category param", () => {
+        let seenParams: Record<string, string | number> | null = null;
+        const env: ExploreEnv = {
+          ...mockEnv,
+          getObjects: (params) => { seenParams = params; return Effect.none(); },
+        };
+        const init = makeInitialExploreState();
+        const ts = createTestStore(exploreReducer, env, init);
+        ts.send({ tag: "browser-filter", q: "fn" }, (s) => {
+          s.browser = { category: "all", items: [], loading: true, q: "fn" };
+        });
+        expect(seenParams).toEqual({ limit: 500, q: "fn" });
+      });
+
+      it("browser-loaded populates items from a filter fetch", () => {
+        const data: ListObjectsResponse = {
+          total: 1, offset: 0, limit: 500,
+          items: [{ name: "w_main", kind: "powerscript", category: "window", file: "app.pbl", ancestor: null }],
+        };
+        const env: ExploreEnv = { ...mockEnv, getObjects: () => Effect.send(data) };
+        const init = makeInitialExploreState();
+        init.browser = { category: "window", items: [], loading: false, q: "" };
+        const ts = createTestStore(exploreReducer, env, init);
+        ts.send({ tag: "browser-filter", q: "w_" }, (s) => {
+          s.browser = { category: "window", items: [], loading: true, q: "w_" };
+        });
+        ts.receive({ tag: "browser-loaded", data }, (s) => {
+          s.browser = { category: "window", items: data.items, loading: false, q: "w_" };
+        });
       });
     });
   });

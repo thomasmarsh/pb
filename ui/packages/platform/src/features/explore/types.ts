@@ -7,6 +7,7 @@ export interface BrowserState {
   category: string;
   items: ObjectRow[];
   loading: boolean;
+  q: string;
 }
 
 export interface SidebarGroups {

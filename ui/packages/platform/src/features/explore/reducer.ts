@@ -40,7 +40,7 @@ function makeInitialExploreState(): ExploreState {
     sidebarGroups: { sourceTree: true, analysisNav: false },
     sidebarCollapsed: false,
     helpOverlayOpen: false,
-    browser: { category: "application", items: [], loading: false },
+    browser: { category: "all", items: [], loading: false, q: "" },
   };
 }
 
@@ -56,6 +56,21 @@ function revealInTree(draft: ExploreState, objectName: string): void {
 
   draft.expandedNodes = next;
   draft.sidebarGroups = { ...draft.sidebarGroups, sourceTree: true };
+}
+
+// ── Browser tab fetch ─────────────────────────────────────────────────────────
+
+// Shared by browser-tab (fresh tab, q reset) and browser-filter (typed
+// query). "all" carries no category param — the object list is unfiltered
+// by category, matching the deleted Objects/Search pages' combined view.
+function fetchBrowserCategory(draft: ExploreState, env: ExploreEnv, category: string, q: string): Effect<ExploreAction> {
+  draft.browser.loading = true;
+  const params: Record<string, string | number> = { limit: 500 };
+  if (q) params.q = q;
+  if (category !== "all") params.category = category;
+  return env.getObjects(params)
+    .map((data): ExploreAction => ({ tag: "browser-loaded", data }))
+    .catch((): ExploreAction => ({ tag: "browser-loaded", data: { total: 0, offset: 0, limit: 500, items: [] } }));
 }
 
 // ── Reducer (mutates draft) ──────────────────────────────────────────────────
@@ -218,18 +233,24 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     draft.helpOverlayOpen = !draft.helpOverlayOpen;
     return null;
 
-  // Browser panel (Plan 210 Phase 2)
-  case "browser-tab":
+  // Browser panel (Plan 210 Phase 2/211 Phase B)
+  case "browser-tab": {
     draft.browser.category = action.category;
-    draft.browser.loading = true;
-    return env.getObjects({ category: action.category, limit: 500 })
-      .map((data): ExploreAction => ({ tag: "browser-loaded", data }))
-      .catch((): ExploreAction => ({ tag: "browser-loaded", data: { total: 0, offset: 0, limit: 500, items: [] } }));
+    draft.browser.q = "";
+    // Tables/Procedures tabs own their state via TableList/ProceduresList's
+    // own mount — the object-list fetch below doesn't apply to them.
+    if (action.category === "tables" || action.category === "procedures") return null;
+    return fetchBrowserCategory(draft, env, action.category, "");
+  }
 
   case "browser-loaded":
     draft.browser.items = action.data.items;
     draft.browser.loading = false;
     return null;
+
+  case "browser-filter":
+    draft.browser.q = action.q;
+    return fetchBrowserCategory(draft, env, draft.browser.category, action.q);
 
   default:
     return null;

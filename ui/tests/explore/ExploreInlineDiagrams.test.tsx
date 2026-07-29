@@ -47,7 +47,7 @@ function makeExploreState(overrides?: Partial<Record<string, unknown>>) {
     sidebarGroups: { sourceTree: true, analysisNav: false },
     sidebarCollapsed: false,
     helpOverlayOpen: false,
-    browser: { category: "application", items: [], loading: false },
+    browser: { category: "application", items: [], loading: false, q: "" },
     ...overrides,
   };
 }

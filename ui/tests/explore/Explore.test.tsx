@@ -10,7 +10,7 @@ const DEFAULT_SIDEBAR = {
   sidebarCollapsed: false,
 };
 
-const BROWSER_STATE = { category: "application", items: [], loading: false };
+const BROWSER_STATE = { category: "application", items: [], loading: false, q: "" };
 
 const sampleLibraries = [
   {

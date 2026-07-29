@@ -30,7 +30,7 @@ function renderTreeNode(
       sidebarGroups: { sourceTree: true, analysisNav: false },
       sidebarCollapsed: false,
       helpOverlayOpen: false,
-      browser: { category: "application", items: [], loading: false },
+      browser: { category: "application", items: [], loading: false, q: "" },
     },
   });
   const result = render(() => (
