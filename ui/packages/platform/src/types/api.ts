@@ -23,6 +23,17 @@ export interface StructureInfo {
   fields: StructureFieldRow[];
 }
 
+export type UseKind = "window_open" | "object_create" | "menu_binding" | "dw_binding" | "function_call";
+
+export interface UseInfo {
+  kind: UseKind;
+  target: string;
+  target_category: string | null;
+  proc_name: string | null;
+  line: number | null;
+  control_name: string | null;
+}
+
 export interface ProcedureRow {
   object: string;
   proc_type: "function" | "subroutine" | "event" | "on";
@@ -79,6 +90,7 @@ export interface ObjectDetailResponse extends ObjectRow {
   dws_used?: string[];
   tables_accessed?: string[];
   structures?: StructureInfo[];
+  uses?: UseInfo[];
   loading?: boolean;
 }
 

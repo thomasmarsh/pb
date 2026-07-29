@@ -112,6 +112,32 @@ describe("ObjectDetail source-first", () => {
     expect(bar?.textContent).not.toContain("Tables");
   });
 
+  it("Uses pill shown when uses non-empty", () => {
+    renderObjectDetail({
+      uses: [{ kind: "window_open", target: "w_continue", target_category: "window", proc_name: "cb_ok", line: 1, control_name: null }],
+    });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("Uses (1)");
+  });
+
+  it("Uses pill hidden when uses empty", () => {
+    renderObjectDetail({ uses: [] });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).not.toContain("Uses");
+  });
+
+  it("clicking Uses pill opens uses panel", () => {
+    renderObjectDetail({
+      uses: [{ kind: "window_open", target: "w_continue", target_category: "window", proc_name: "cb_ok", line: 1, control_name: null }],
+    });
+    const bar = document.querySelector(".analysis-summary-bar")!;
+    const btn = [...bar.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Uses"),
+    )!;
+    fireEvent.click(btn);
+    expect(document.body.textContent).toContain("w_continue");
+  });
+
   it("Metrics pill shown when metrics present", () => {
     renderObjectDetail({
       metrics: {

@@ -124,6 +124,8 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         ))
     obj["structures"] = structures
 
+    obj["uses"] = get_object_uses(conn, name)
+
     callers = rows(conn.execute("SELECT DISTINCT object AS caller FROM call_sites WHERE to_name = ?", [name]))
     obj["callers"] = [c["caller"] for c in callers]
 
@@ -131,11 +133,11 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     obj["callees"] = [c["callee"] for c in callees]
 
     dws = rows(conn.execute(
-        "SELECT DISTINCT c.to_name AS object "
-        "FROM call_sites c "
-        "JOIN objects o ON o.object = c.to_name AND o.kind = 'datawindow' "
-        "WHERE c.object = ? "
-        "ORDER BY c.to_name",
+        "SELECT DISTINCT o.object "
+        "FROM dw_bindings b "
+        "JOIN objects o ON LOWER(o.object) = LOWER(b.dw_name) "
+        "WHERE b.object = ? "
+        "ORDER BY o.object",
         [name],
     ))
     obj["dws_used"] = [d["object"] for d in dws]
@@ -145,15 +147,102 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         "FROM all_sql_tables t "
         "WHERE (t.object = ? AND t.source = 'powerscript') "
         "   OR (t.source = 'datawindow' AND t.object IN ("
-        "       SELECT DISTINCT c.to_name FROM call_sites c "
-        "       JOIN objects o ON o.object = c.to_name AND o.kind = 'datawindow' "
-        "       WHERE c.object = ?)) "
+        "       SELECT DISTINCT o.object FROM dw_bindings b "
+        "       JOIN objects o ON LOWER(o.object) = LOWER(b.dw_name) "
+        "       WHERE b.object = ?)) "
         "ORDER BY t.table_name",
         [name, name],
     ))
     obj["tables_accessed"] = [t["table_name"] for t in tables if t.get("table_name")]
 
     return obj
+
+
+def get_object_uses(conn: duckdb.DuckDBPyConnection, name: str) -> list[dict[str, Any]]:
+    """Statically-resolvable outbound "uses" edges for `name` (Plan 210 Phase 4b).
+
+    Unions window_opens/object_creates/window_menu_bindings/dw_bindings (each
+    scoped to `name` as the source object) with a resolved_calls filter for
+    bare global-function calls, per confirmed real-IDE Browser semantics
+    (doc/pb2025r2/pbug/ch02s01s08s01.html). Every join to `objects` is
+    case-insensitive (LOWER(...)) -- window_opens.target_object mixes casing
+    conventions depending on which classifyLvalueChain resolution branch
+    fired (doc/plan/210-pb-browser-navigation.md's Phase 4b "Known caveat").
+    The resolved_calls arm additionally requires kind != 'inherited' and a
+    bare call_type ('ExCall', no receiver) and excludes category='system'
+    targets: a `call super::create` or a built-in Open/OpenSheet dispatch
+    resolves target_object to the object's own ancestor or to the embedded
+    stdlib's base class (window/powerobject) -- inheritance dispatch, not a
+    reference to a distinct object, and would otherwise flood every window's
+    uses list with its own ancestor. Each row is tagged with a literal
+    Python `kind` string per union arm, not a SQL CASE, per
+    compiler/AGENTS.md's moat "relation reshaping may not decide" rule.
+    """
+    uses: list[dict[str, Any]] = []
+
+    opens = rows(conn.execute(
+        "SELECT w.proc_name, w.line, o.object AS target, o.category AS target_category "
+        "FROM window_opens w JOIN objects o ON LOWER(o.object) = LOWER(w.target_object) "
+        "WHERE w.object = ? ORDER BY w.line",
+        [name],
+    ))
+    uses += [
+        {"kind": "window_open", "target": r["target"], "target_category": r["target_category"],
+         "proc_name": r["proc_name"], "line": r["line"], "control_name": None}
+        for r in opens
+    ]
+
+    creates = rows(conn.execute(
+        "SELECT c.proc_name, c.line, o.object AS target, o.category AS target_category "
+        "FROM object_creates c JOIN objects o ON LOWER(o.object) = LOWER(c.target_object) "
+        "WHERE c.object = ? ORDER BY c.line",
+        [name],
+    ))
+    uses += [
+        {"kind": "object_create", "target": r["target"], "target_category": r["target_category"],
+         "proc_name": r["proc_name"], "line": r["line"], "control_name": None}
+        for r in creates
+    ]
+
+    menus = rows(conn.execute(
+        "SELECT o.object AS target, o.category AS target_category "
+        "FROM window_menu_bindings m JOIN objects o ON LOWER(o.object) = LOWER(m.menu_name) "
+        "WHERE m.object = ?",
+        [name],
+    ))
+    uses += [
+        {"kind": "menu_binding", "target": r["target"], "target_category": r["target_category"],
+         "proc_name": None, "line": None, "control_name": None}
+        for r in menus
+    ]
+
+    dws = rows(conn.execute(
+        "SELECT b.control_name, o.object AS target, o.category AS target_category "
+        "FROM dw_bindings b JOIN objects o ON LOWER(o.object) = LOWER(b.dw_name) "
+        "WHERE b.object = ? ORDER BY b.control_name",
+        [name],
+    ))
+    uses += [
+        {"kind": "dw_binding", "target": r["target"], "target_category": r["target_category"],
+         "proc_name": None, "line": None, "control_name": r["control_name"]}
+        for r in dws
+    ]
+
+    calls = rows(conn.execute(
+        "SELECT rc.proc_name, rc.line, o.object AS target, o.category AS target_category "
+        "FROM resolved_calls rc JOIN objects o ON LOWER(o.object) = LOWER(rc.target_object) "
+        "WHERE rc.object = ? AND rc.target_object IS NOT NULL AND rc.target_object <> rc.object "
+        "AND rc.kind <> 'inherited' AND rc.call_type = 'ExCall' AND o.category <> 'system' "
+        "ORDER BY rc.line",
+        [name],
+    ))
+    uses += [
+        {"kind": "function_call", "target": r["target"], "target_category": r["target_category"],
+         "proc_name": r["proc_name"], "line": r["line"], "control_name": None}
+        for r in calls
+    ]
+
+    return uses
 
 
 def get_known_objects(conn: duckdb.DuckDBPyConnection, object_name: str) -> list[dict[str, Any]]:

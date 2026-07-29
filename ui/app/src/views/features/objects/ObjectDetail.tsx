@@ -12,6 +12,7 @@ import {
 } from "@pb/platform";
 import { ProceduresCard } from "./detail/ProceduresCard.js";
 import { StructuresCard } from "./detail/StructuresCard.js";
+import { UsesCard } from "./detail/UsesCard.js";
 import { SourceCard } from "./detail/SourceCard.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 import type { ContextActions } from "../../components/source/index.js";
@@ -264,6 +265,7 @@ function ObjectDetailContent(props: {
   const [showCallers, setShowCallers] = createSignal(false);
   const [showDWs, setShowDWs] = createSignal(false);
   const [showTables, setShowTables] = createSignal(false);
+  const [showUses, setShowUses] = createSignal(false);
   const [showMetrics, setShowMetrics] = createSignal(false);
   const [showTaint, setShowTaint] = createSignal(false);
   const [showPreview, setShowPreview] = createSignal(false);
@@ -278,6 +280,7 @@ function ObjectDetailContent(props: {
   const callerCount = () => o.callers?.length ?? 0;
   const dwCount = () => o.dws_used?.length ?? 0;
   const tableCount = () => o.tables_accessed?.length ?? 0;
+  const usesCount = () => o.uses?.length ?? 0;
   const hasMetrics = () => o.metrics != null;
 
   const summaryItems = () => [
@@ -298,6 +301,12 @@ function ObjectDetailContent(props: {
       count: tableCount(),
       active: showTables(),
       onClick: () => setShowTables((v) => !v),
+    }] : []),
+    ...(usesCount() > 0 ? [{
+      label: "Uses",
+      count: usesCount(),
+      active: showUses(),
+      onClick: () => setShowUses((v) => !v),
     }] : []),
     ...(hasMetrics() ? [{
       label: "Metrics",
@@ -329,6 +338,7 @@ function ObjectDetailContent(props: {
     setShowCallers(false);
     setShowDWs(false);
     setShowTables(false);
+    setShowUses(false);
     setShowMetrics(false);
     setShowTaint(false);
     setShowPreview(false);
@@ -413,6 +423,12 @@ function ObjectDetailContent(props: {
                 onClick: () => store.dispatch({ tag: "tables", action: { tag: "select", name: tbl } }),
               }))}
             />
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showUses()}>
+          <ContextualPanel title={`Uses (${usesCount()})`} onClose={() => setShowUses(false)}>
+            <UsesCard store={store} uses={o.uses ?? []} />
           </ContextualPanel>
         </Show>
 

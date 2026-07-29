@@ -10,6 +10,7 @@ from pb.api.services.objects import (
     get_object_detail,
     get_object_layout,
     get_object_source,
+    get_object_uses,
     get_resolved_calls,
     get_resolved_var_refs,
     pbl_name,
@@ -161,6 +162,11 @@ def _object_detail_conn_with_inline_structure() -> duckdb.DuckDBPyConnection:
     conn.execute("CREATE TABLE global_vars (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)")
     conn.execute("CREATE TABLE call_sites (file TEXT, object TEXT, proc_name TEXT, to_name TEXT)")
     conn.execute("CREATE TABLE all_sql_tables (file TEXT, object TEXT, source TEXT, table_name TEXT)")
+    conn.execute("CREATE TABLE window_opens (file TEXT, object TEXT, proc_name TEXT, line INTEGER, target_object TEXT)")
+    conn.execute("CREATE TABLE object_creates (file TEXT, object TEXT, proc_name TEXT, line INTEGER, target_object TEXT)")
+    conn.execute("CREATE TABLE window_menu_bindings (file TEXT, object TEXT, menu_name TEXT)")
+    conn.execute("CREATE TABLE dw_bindings (file TEXT, object TEXT, control_name TEXT, dw_name TEXT)")
+    conn.execute("CREATE TABLE resolved_calls (file TEXT, object TEXT, proc_name TEXT, to_name TEXT, call_type TEXT, line INTEGER, target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT)")
     conn.execute("INSERT INTO objects VALUES ('w_fish.srw', 'powerscript', 'w_fish', NULL, 'window')")
     conn.execute("INSERT INTO structures VALUES ('w_fish.srw', 's_fish', 'w_fish')")
     conn.execute(
@@ -183,6 +189,73 @@ def test_get_object_detail_includes_inline_structure_fields():
                 {"var_name": "weight", "var_type": "decimal", "modifiers": None},
             ],
         }
+    ]
+
+
+# ── "Uses" (Plan 210 Phase 4b) ───────────────────────────────────────────────
+# w_misth_final_details_list is real openpay corpus data exercising all five
+# use-kinds at once: it opens 2 windows, creates its own popup menu, binds
+# that menu, binds a DW control, and calls 4 distinct global functions. It
+# also has `call super::create/destroy/open` (resolving to its ancestor
+# w_list) and inherited Open/OpenSheet dispatch (resolving to the builtin
+# `window`/`powerobject` stdlib classes) -- both must NOT appear as uses.
+
+_USES_OBJECT = "w_misth_final_details_list"
+
+
+def test_get_object_uses_real_corpus(db_conn: duckdb.DuckDBPyConnection):
+    uses = get_object_uses(db_conn, _USES_OBJECT)
+    by_kind: dict[str, list[dict]] = {}
+    for u in uses:
+        by_kind.setdefault(u["kind"], []).append(u)
+
+    assert {u["target"] for u in by_kind.get("window_open", [])} == {
+        "wiz_misth_final_details", "wprn_final_atomiki_misth_arg",
+    }
+    assert [u["target"] for u in by_kind.get("object_create", [])] == ["m_misth_final_details_list"]
+    assert [u["target"] for u in by_kind.get("menu_binding", [])] == ["m_misth_final_details_list"]
+    assert by_kind.get("dw_binding") == [
+        {
+            "kind": "dw_binding",
+            "target": "dw_misth_final_details_list",
+            "target_category": "datawindow",
+            "proc_name": None,
+            "line": None,
+            "control_name": "dw",
+        }
+    ]
+    assert {u["target"] for u in by_kind.get("function_call", [])} == {
+        "fn_perm", "fn_sqlerror", "gsc_misth_final_ypal_reset", "trn",
+    }
+    # Ancestor-dispatch (`call super::...`) and builtin-class noise must not leak through.
+    noise = {"w_list", "window", "powerobject"}
+    assert not ({u["target"] for u in uses} & noise)
+
+
+def test_get_object_uses_not_found_returns_empty(db_conn: duckdb.DuckDBPyConnection):
+    assert get_object_uses(db_conn, "__nonexistent__") == []
+
+
+def test_get_object_detail_includes_uses_field(db_conn: duckdb.DuckDBPyConnection):
+    result = get_object_detail(db_conn, _USES_OBJECT)
+    assert result is not None
+    assert result["uses"] == get_object_uses(db_conn, _USES_OBJECT)
+
+
+def test_get_object_detail_dws_used_via_dw_bindings(db_conn: duckdb.DuckDBPyConnection):
+    """BACKLOG 2026-07-22: dws_used must come from dw_bindings, not the old
+    call_sites heuristic (which returned [] for this real object -- a
+    control->DataWindow binding is not a function call)."""
+    result = get_object_detail(db_conn, _USES_OBJECT)
+    assert result is not None
+    assert result["dws_used"] == ["dw_misth_final_details_list"]
+
+
+def test_get_object_detail_tables_accessed_via_dw_bindings(db_conn: duckdb.DuckDBPyConnection):
+    result = get_object_detail(db_conn, _USES_OBJECT)
+    assert result is not None
+    assert result["tables_accessed"] == [
+        "misth_final", "misth_final_ypal", "misth_ypal", "misth_zpkat", "misth_zpperiod",
     ]
 
 
