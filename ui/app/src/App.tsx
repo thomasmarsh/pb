@@ -21,6 +21,7 @@ import { Diagrams } from "./views/features/diagrams/Diagrams.js";
 import { Queries } from "./views/features/queries/Queries.js";
 import { Search } from "./views/features/search/Search.js";
 import { Explore } from "./views/features/explore/Explore.js";
+import { Browser } from "./views/features/explore/Browser.js";
 import { Diagnostics } from "./views/features/diagnostics/Diagnostics.js";
 import { LibraryDetail } from "./views/features/library/LibraryDetail.js";
 import { DeadCode } from "./views/features/analysis/DeadCode.js";
@@ -63,6 +64,7 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "queries"}><Queries store={props.store} /></Show>
       <Show when={snap().nav.route.view === "search"}><Search store={props.store} /></Show>
       <Show when={snap().nav.route.view === "explore"}><Explore store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "browser"}><Browser store={props.store} /></Show>
       <Show when={snap().nav.route.view === "diagnostics"}><Diagnostics store={props.store} /></Show>
       <Show when={snap().nav.route.view === "libraryDetail"}><LibraryDetail store={props.store} /></Show>
       <Show when={snap().nav.route.view === "deadCode"}><DeadCode store={props.store} /></Show>

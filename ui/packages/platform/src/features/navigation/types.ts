@@ -12,6 +12,7 @@ export type Route =
   | { view: "dwDetail";        name: string }
   | { view: "tables"; namespace?: string }
   | { view: "tableDetail";     name: string; namespace?: string }
+  | { view: "browser"; category?: string }
   | { view: "diagrams"; kind?: DiagramKind }
   | { view: "queries"; queryName?: string; queryParams?: Record<string, string>; sqlText?: string }
   | { view: "search" }

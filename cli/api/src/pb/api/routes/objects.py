@@ -23,12 +23,13 @@ async def list_objects_endpoint(
     conn: duckdb.DuckDBPyConnection = Depends(get_db),
     q: str = Query("", description="Search term"),
     kind: str = Query("", description="Filter by kind"),
+    category: str = Query("", description="Filter by category"),
     sort: str = Query("name", description="Sort column"),
     order: str = Query("asc", description="Sort direction"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    return list_objects(conn, q=q, kind=kind, sort=sort, order=order, limit=limit, offset=offset)
+    return list_objects(conn, q=q, kind=kind, category=category, sort=sort, order=order, limit=limit, offset=offset)
 
 
 @router.get("/api/objects/{name}")

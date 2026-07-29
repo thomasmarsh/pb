@@ -31,6 +31,7 @@ function renderTreeNode(
       sidebarCollapsed: false,
       helpOverlayOpen: false,
       tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
+      browser: { category: "application", items: [], loading: false },
     },
   });
   const result = render(() => (

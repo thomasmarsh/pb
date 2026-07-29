@@ -1,7 +1,13 @@
 // features/explore/types.ts — Explore feature state.
 
-import type { ExploreLibrary, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
+import type { ExploreLibrary, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse, ObjectRow } from "../../types/api.js";
 import type { DataWindowFile } from "@pb/interpreter";
+
+export interface BrowserState {
+  category: string;
+  items: ObjectRow[];
+  loading: boolean;
+}
 
 export interface TablesState {
   items: TableSummary[];
@@ -36,5 +42,6 @@ export interface ExploreState {
   sidebarGroups: SidebarGroups;
   sidebarCollapsed: boolean;
   tables: TablesState;
+  browser: BrowserState;
   helpOverlayOpen: boolean;
 }

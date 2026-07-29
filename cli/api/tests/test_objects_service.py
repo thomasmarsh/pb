@@ -46,6 +46,17 @@ def test_get_object_detail_not_found(db_conn: duckdb.DuckDBPyConnection):
     assert get_object_detail(db_conn, "__nonexistent__") is None
 
 
+def test_get_object_detail_stdlib_object(db_conn: duckdb.DuckDBPyConnection):
+    """A System-category (stdlib) object must resolve by name like any other --
+    the exclusion in get_object_detail's WHERE clause only makes sense for the
+    unscoped listing/tree queries, not a lookup keyed on an exact name."""
+    row = db_conn.execute("SELECT object FROM objects WHERE category = 'system' LIMIT 1").fetchone()
+    assert row is not None, "no category='system' object found in the fixture corpus"
+    result = get_object_detail(db_conn, row[0])
+    assert result is not None
+    assert result["category"] == "system"
+
+
 def test_get_object_source_returns_dict(db_conn: duckdb.DuckDBPyConnection):
     result = get_object_source(db_conn, "fn_sqlerror")
     assert result is not None

@@ -4,7 +4,7 @@ import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "@pb/platform";
-import type { ExploreTreeResponse } from "@pb/platform";
+import type { ExploreTreeResponse, ListObjectsResponse } from "@pb/platform";
 
 const mockEnv: ExploreEnv = {
   getExploreTree: () => Effect.none(),
@@ -14,6 +14,7 @@ const mockEnv: ExploreEnv = {
   getObjectSource: () => Effect.none(),
   getTables: () => Effect.none(),
   getTableDetail: () => Effect.none(),
+  getObjects: () => Effect.none(),
   navigate: () => Effect.none(),
 };
 
@@ -212,6 +213,39 @@ describe("explore reducer", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
       ts.send({ tag: "sidebar-reveal", objectName: "nonexistent" }, (s) => {
         s.expandedNodes = new Set();
+      });
+    });
+  });
+
+  describe("browser panel", () => {
+    it("browser-tab sets category and loading, fetches for that category", () => {
+      const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
+      ts.send({ tag: "browser-tab", category: "window" }, (s) => {
+        s.browser = { category: "window", items: [], loading: true };
+      });
+    });
+
+    it("browser-loaded populates items and clears loading", () => {
+      const data: ListObjectsResponse = {
+        total: 1, offset: 0, limit: 500,
+        items: [{ name: "w_main", kind: "powerscript", category: "window", file: "app.pbl", ancestor: null }],
+      };
+      const env: ExploreEnv = { ...mockEnv, getObjects: () => Effect.send(data) };
+      const ts = createTestStore(exploreReducer, env, makeInitialExploreState());
+      ts.send({ tag: "browser-tab", category: "window" }, (s) => {
+        s.browser = { category: "window", items: [], loading: true };
+      });
+      ts.receive({ tag: "browser-loaded", data }, (s) => {
+        s.browser = { category: "window", items: data.items, loading: false };
+      });
+    });
+
+    it("switching categories refetches for the new category", () => {
+      const init = makeInitialExploreState();
+      init.browser = { category: "window", items: [{ name: "w_main", kind: "powerscript", category: "window", file: "app.pbl", ancestor: null }], loading: false };
+      const ts = createTestStore(exploreReducer, mockEnv, init);
+      ts.send({ tag: "browser-tab", category: "menu" }, (s) => {
+        s.browser = { category: "menu", items: init.browser.items, loading: true };
       });
     });
   });

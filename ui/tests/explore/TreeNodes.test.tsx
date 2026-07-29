@@ -13,13 +13,14 @@ const DEFAULT_SIDEBAR = {
 };
 
 const TABLES_STATE = { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false };
+const BROWSER_STATE = { category: "application", items: [], loading: false };
 
 function makeExploreBase() {
   return {
     libraries: [], expandedNodes: new Set<string>(), selectedProc: null, selectedObject: null,
     highlightedProcName: null, selectedDw: null,
     procCache: {}, dwCache: {}, dwLayoutCache: {}, objectSourceCache: {}, loading: false, activeTab: "source" as const,
-    treeFilter: "", highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR,
+    treeFilter: "", highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, browser: BROWSER_STATE, ...DEFAULT_SIDEBAR,
   };
 }
 

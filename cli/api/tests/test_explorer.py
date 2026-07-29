@@ -161,6 +161,33 @@ def test_list_objects_filter_kind(client):
         assert item["kind"] == "datawindow"
 
 
+def test_list_objects_filter_category(client):
+    r = client.get("/api/objects", params={"category": "function"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] > 0
+    for item in data["items"]:
+        assert item["category"] == "function"
+
+
+def test_list_objects_filter_category_system_includes_stdlib(client):
+    r = client.get("/api/objects", params={"category": "system"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] > 0
+    for item in data["items"]:
+        assert item["category"] == "system"
+        assert item["file"].startswith("__stdlib__/")
+
+
+def test_list_objects_default_excludes_stdlib(client):
+    r = client.get("/api/objects")
+    assert r.status_code == 200
+    data = r.json()
+    for item in data["items"]:
+        assert not item["file"].startswith("__stdlib__/")
+
+
 def test_list_objects_search(client):
     r = client.get("/api/objects", params={"q": "fn_"})
     assert r.status_code == 200

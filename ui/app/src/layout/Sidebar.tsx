@@ -16,6 +16,7 @@ import {
   FolderTree,
   LayoutList,
   BarChart2,
+  Layers,
   Sun,
   Moon,
   ChevronLeft,
@@ -30,6 +31,7 @@ const ENTITY_NAV: { label: string; view: string; icon: IconComp }[] = [
   { label: "DataWindows", view: "datawindows",    icon: Grid3X3 },
   { label: "Tables",      view: "tables",         icon: Database },
   { label: "Procedures",  view: "proceduresList", icon: Code2 },
+  { label: "Browser",     view: "browser",        icon: Layers },
 ];
 
 interface AnalysisItem {

@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
-import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
+import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse, ListObjectsResponse } from "../../types/api.js";
 import type { DataWindowFile } from "@pb/interpreter";
 import type { NavigationAction } from "../navigation/types.js";
 
@@ -17,6 +17,7 @@ export interface ExploreEnv {
   getObjectSource(name: string): Effect<ObjectSourceResponse>;
   getTables(): Effect<TableSummary[]>;
   getTableDetail(name: string): Effect<TableDetail>;
+  getObjects(params: Record<string, string | number>): Effect<ListObjectsResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -42,6 +43,7 @@ function makeInitialExploreState(): ExploreState {
     sidebarCollapsed: false,
     helpOverlayOpen: false,
     tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
+    browser: { category: "application", items: [], loading: false },
   };
 }
 
@@ -253,6 +255,19 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
   case "tables-detail-error":
     draft.tables.detail = { error: action.error };
     draft.tables.detailLoading = false;
+    return null;
+
+  // Browser panel (Plan 210 Phase 2)
+  case "browser-tab":
+    draft.browser.category = action.category;
+    draft.browser.loading = true;
+    return env.getObjects({ category: action.category, limit: 500 })
+      .map((data): ExploreAction => ({ tag: "browser-loaded", data }))
+      .catch((): ExploreAction => ({ tag: "browser-loaded", data: { total: 0, offset: 0, limit: 500, items: [] } }));
+
+  case "browser-loaded":
+    draft.browser.items = action.data.items;
+    draft.browser.loading = false;
     return null;
 
   default:

@@ -62,6 +62,9 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
       ];
     }
 
+    case "browser":
+      return [{ icon: ICONS.list, label: "Browser", route }];
+
     case "search":
       return [{ icon: ICONS.list, label: "Search", route }];
 

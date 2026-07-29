@@ -26,6 +26,8 @@ export function print(route: Route): string {
       return route.namespace
         ? "/tables/" + encodeURIComponent(route.namespace) + "/" + encodeURIComponent(route.name)
         : "/tables/" + encodeURIComponent(route.name);
+    case "browser":
+      return route.category ? `/browser?category=${encodeURIComponent(route.category)}` : "/browser";
     case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
     case "diagrams":
       return route.kind ? `/diagrams?kind=${encodeURIComponent(route.kind)}` : "/diagrams";
@@ -92,6 +94,11 @@ export function parse(path: string, search?: string): Route {
     case "library":
       if (segs[1]) return { view: "libraryDetail", name: decodeURIComponent(segs[1]) };
       return { view: "dashboard" };
+    case "browser": {
+      const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
+      const category = new URLSearchParams(raw).get("category");
+      return { view: "browser", ...(category ? { category } : {}) };
+    }
     case "diagrams": {
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
       const sp = new URLSearchParams(raw);

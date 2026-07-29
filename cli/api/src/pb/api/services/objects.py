@@ -30,7 +30,6 @@ def pbl_name(file_path: str) -> str:
 _ALL_OBJECTS_CTE = """
 WITH all_objects AS (
     SELECT object, kind, file, ancestor, category FROM objects
-    WHERE file NOT LIKE '__stdlib__%'
 )
 """
 
@@ -40,6 +39,7 @@ def list_objects(
     *,
     q: str = "",
     kind: str = "",
+    category: str = "",
     sort: str = "name",
     order: str = "asc",
     limit: int = 100,
@@ -53,6 +53,13 @@ def list_objects(
     if kind:
         conditions.append("o.kind = ?")
         params.append(kind)
+    if category:
+        conditions.append("o.category = ?")
+        params.append(category)
+    # The System category *is* the stdlib library -- only exclude it when the
+    # caller isn't specifically browsing System.
+    if category != "system":
+        conditions.append("o.file NOT LIKE '__stdlib__%'")
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     _sort_map = {"name": "object", "kind": "kind", "file": "file"}
@@ -78,7 +85,7 @@ def list_objects(
 
 
 def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor, category FROM objects WHERE object = ? AND file NOT LIKE '__stdlib__%'", [name]))
+    obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor, category FROM objects WHERE object = ?", [name]))
     if not obj_rows:
         return None
     obj = obj_rows[0]
