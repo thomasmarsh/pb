@@ -69,7 +69,7 @@ export function Layout(props: ParentProps<LayoutProps>): JSX.Element {
     document.removeEventListener("pointerup", onPointerUp);
   });
 
-  function toggleGroup(group: "sourceTree" | "entityNav" | "analysisNav"): void {
+  function toggleGroup(group: "sourceTree" | "analysisNav"): void {
     props.store.dispatch({ tag: "explore", action: { tag: "sidebar-toggle-group", group } });
   }
 

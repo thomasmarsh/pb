@@ -27,7 +27,7 @@ describe("datawindows reducer", () => {
         s.q = "test";
         s.loading = true;
       });
-      expect(navigateCalls).toEqual(["datawindows"]);
+      expect(navigateCalls).toEqual(["browser"]);
     });
 
     it("fires getObjects effect via receive", () => {

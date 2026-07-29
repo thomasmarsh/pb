@@ -216,15 +216,15 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
   });
 
   const tiles = createMemo(() => [
-    { label: "Objects",           value: fmt(s()?.objects),    route: { view: "objects" }       as Route },
-    { label: "DataWindows",       value: fmt(dwCount()),        route: { view: "datawindows" }   as Route },
-    { label: "DB Tables",         value: fmt(s()?.tables),     route: { view: "tables" }        as Route },
-    { label: "Procedures",        value: fmt(s()?.procedures), route: { view: "proceduresList" } as Route },
+    { label: "Objects",           value: fmt(s()?.objects),    route: { view: "browser" }       as Route },
+    { label: "DataWindows",       value: fmt(dwCount()),        route: { view: "browser", category: "datawindow" } as Route },
+    { label: "DB Tables",         value: fmt(s()?.tables),     route: { view: "browser", category: "tables" }     as Route },
+    { label: "Procedures",        value: fmt(s()?.procedures), route: { view: "browser", category: "procedures" } as Route },
     { label: "Unreferenced DWs",  value: fmt(s()?.dead_dw),   route: { view: "queries", queryName: "dead-dw" } as Route },
     { label: "Diagnostics",       value: fmt(s()?.parse_error_count ?? 0), route: { view: "diagnostics" } as Route },
     ...(s()?.ddl_loaded ? [
       { label: "Unenforced FKs", value: fmt(s()?.unenforced_fk_count), route: { view: "diagrams", kind: "fk-graph" } as Route },
-      { label: "Dead Columns",   value: fmt(s()?.dead_column_count),   route: { view: "tables" }   as Route },
+      { label: "Dead Columns",   value: fmt(s()?.dead_column_count),   route: { view: "browser", category: "tables" } as Route },
     ] : []),
   ]);
 

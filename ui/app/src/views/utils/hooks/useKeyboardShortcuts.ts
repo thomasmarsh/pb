@@ -65,7 +65,7 @@ export function useKeyboardShortcuts(store: Store<AppState, AppAction>): void {
           store.dispatch({ tag: "explore", action: { tag: "sidebar-focus-group", group: "sourceTree" } });
           break;
         case "2":
-          store.dispatch({ tag: "explore", action: { tag: "sidebar-focus-group", group: "entityNav" } });
+          store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "browser" } } });
           break;
         case "3":
           store.dispatch({ tag: "explore", action: { tag: "sidebar-focus-group", group: "analysisNav" } });

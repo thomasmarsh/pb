@@ -362,29 +362,6 @@ export const utilNavOrderIsStable: Formula = always(() =>
   }),
 );
 
-export const entityNavHasCorrectCountWhenExpanded: Formula = always(() =>
-  whenInitialized(() => {
-    if (!sidebarEntityGroupExpanded.current) return true;
-    return sidebarEntityLinks.current.filter((l) => !l.isAnalysis).length === ENTITY_NAV_LABELS.length;
-  }),
-);
-
-export const entityNavHasAllLabelsWhenExpanded: Formula = always(() =>
-  whenInitialized(() => {
-    if (!sidebarEntityGroupExpanded.current) return true;
-    const labels = sidebarEntityLinks.current.filter((l) => !l.isAnalysis).map((l) => l.label);
-    return ENTITY_NAV_LABELS.every((n) => labels.includes(n));
-  }),
-);
-
-export const entityNavOrderIsStableWhenExpanded: Formula = always(() =>
-  whenInitialized(() => {
-    if (!sidebarEntityGroupExpanded.current) return true;
-    const labels = sidebarEntityLinks.current.filter((l) => !l.isAnalysis).map((l) => l.label);
-    return labels.every((l, i) => l === ENTITY_NAV_LABELS[i]);
-  }),
-);
-
 // ===========================================================================
 // 2. ACTIVE-STATE ↔ ROUTE CONSISTENCY
 // ===========================================================================

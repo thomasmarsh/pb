@@ -6,11 +6,10 @@ import { renderWithStore } from "../helpers.js";
 import { Explore } from "../../app/src/views/features/explore/Explore.js";
 
 const DEFAULT_SIDEBAR = {
-  sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+  sidebarGroups: { sourceTree: true, analysisNav: false },
   sidebarCollapsed: false,
 };
 
-const TABLES_STATE = { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false };
 const BROWSER_STATE = { category: "application", items: [], loading: false };
 
 const sampleLibraries = [
@@ -30,7 +29,7 @@ function makeExplore(overrides?: object) {
     libraries: sampleLibraries, expandedNodes: new Set<string>(), selectedProc: null,
     selectedObject: null, highlightedProcName: null, selectedDw: null,
     procCache: {}, dwCache: {}, dwLayoutCache: {}, objectSourceCache: {}, loading: false, activeTab: "source" as const,
-    treeFilter: "", highlightedLine: null, tables: TABLES_STATE, browser: BROWSER_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR, ...overrides,
+    treeFilter: "", highlightedLine: null, browser: BROWSER_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR, ...overrides,
   };
 }
 

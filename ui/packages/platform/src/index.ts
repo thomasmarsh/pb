@@ -56,6 +56,7 @@ export {
 export type { ExploreEnv } from "./features/explore/reducer.js";
 export type { ExploreState } from "./features/explore/types.js";
 export type { ExploreAction } from "./features/explore/actions.js";
+export { BROWSER_TABS, browserTabLabel } from "./features/explore/browserTabs.js";
 
 // Navigation
 export { navReducer } from "./features/navigation/reducer.js";

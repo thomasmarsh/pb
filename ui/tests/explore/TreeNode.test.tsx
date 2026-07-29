@@ -27,10 +27,9 @@ function renderTreeNode(
       activeTab: "source",
       treeFilter: "",
       highlightedLine: null,
-      sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+      sidebarGroups: { sourceTree: true, analysisNav: false },
       sidebarCollapsed: false,
       helpOverlayOpen: false,
-      tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
       browser: { category: "application", items: [], loading: false },
     },
   });

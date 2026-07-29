@@ -1,6 +1,6 @@
 // features/explore/types.ts — Explore feature state.
 
-import type { ExploreLibrary, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse, ObjectRow } from "../../types/api.js";
+import type { ExploreLibrary, DwDetailResponse, ExploreProcDetail, ObjectSourceResponse, ObjectRow } from "../../types/api.js";
 import type { DataWindowFile } from "@pb/interpreter";
 
 export interface BrowserState {
@@ -9,18 +9,8 @@ export interface BrowserState {
   loading: boolean;
 }
 
-export interface TablesState {
-  items: TableSummary[];
-  filter: string;
-  selected: string | null;
-  detail: TableDetail | { error: string } | null;
-  loading: boolean;
-  detailLoading: boolean;
-}
-
 export interface SidebarGroups {
   sourceTree: boolean;
-  entityNav: boolean;
   analysisNav: boolean;
 }
 
@@ -41,7 +31,6 @@ export interface ExploreState {
   highlightedLine: number | null;
   sidebarGroups: SidebarGroups;
   sidebarCollapsed: boolean;
-  tables: TablesState;
   browser: BrowserState;
   helpOverlayOpen: boolean;
 }

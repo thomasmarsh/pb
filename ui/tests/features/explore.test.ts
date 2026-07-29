@@ -12,8 +12,6 @@ const mockEnv: ExploreEnv = {
   getExploreDatawindow: () => Effect.none(),
   getDwLayout: () => Effect.none(),
   getObjectSource: () => Effect.none(),
-  getTables: () => Effect.none(),
-  getTableDetail: () => Effect.none(),
   getObjects: () => Effect.none(),
   navigate: () => Effect.none(),
 };
@@ -108,7 +106,7 @@ describe("explore reducer", () => {
         s.selectedObject = "w_main";
         s.highlightedProcName = "of_init";
         s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main"]);
-        s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
+        s.sidebarGroups = { sourceTree: true, analysisNav: false };
       });
     });
   });
@@ -135,14 +133,14 @@ describe("explore reducer", () => {
     it("sidebar-toggle-group flips sourceTree from true to false", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
       ts.send({ tag: "sidebar-toggle-group", group: "sourceTree" }, (s) => {
-        s.sidebarGroups = { sourceTree: false, entityNav: false, analysisNav: false };
+        s.sidebarGroups = { sourceTree: false, analysisNav: false };
       });
     });
 
-    it("sidebar-toggle-group flips entityNav from false to true", () => {
+    it("sidebar-toggle-group flips analysisNav from false to true", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ tag: "sidebar-toggle-group", group: "entityNav" }, (s) => {
-        s.sidebarGroups = { sourceTree: true, entityNav: true, analysisNav: false };
+      ts.send({ tag: "sidebar-toggle-group", group: "analysisNav" }, (s) => {
+        s.sidebarGroups = { sourceTree: true, analysisNav: true };
       });
     });
 
@@ -174,7 +172,7 @@ describe("explore reducer", () => {
       const ts = createTestStore(exploreReducer, mockEnv, init);
       ts.send({ tag: "sidebar-reveal", objectName: "w_main" }, (s) => {
         s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main"]);
-        s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
+        s.sidebarGroups = { sourceTree: true, analysisNav: false };
       });
     });
 
@@ -190,7 +188,7 @@ describe("explore reducer", () => {
       const ts = createTestStore(exploreReducer, mockEnv, init);
       ts.send({ tag: "sidebar-reveal", objectName: "w_main", procName: "ue_open" }, (s) => {
         s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main"]);
-        s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
+        s.sidebarGroups = { sourceTree: true, analysisNav: false };
       });
     });
 

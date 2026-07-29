@@ -3,7 +3,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup } from "@solidjs/testing-library";
 import { createTestStore } from "../helpers.js";
-import { TableDetailPanel } from "../../app/src/views/features/explore/Tables.js";
 import { DwDetailPanel } from "../../app/src/views/features/explore/DwDetailPanel.js";
 import { ExploreStoreContext } from "../../app/src/views/features/explore/ExploreContext.js";
 import type { ExploreProcDetail, DwDetailResponse } from "@pb/platform";
@@ -45,67 +44,13 @@ function makeExploreState(overrides?: Partial<Record<string, unknown>>) {
     activeTab: "source" as const,
     treeFilter: "",
     highlightedLine: null,
-    sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+    sidebarGroups: { sourceTree: true, analysisNav: false },
     sidebarCollapsed: false,
     helpOverlayOpen: false,
-    tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
     browser: { category: "application", items: [], loading: false },
     ...overrides,
   };
 }
-
-describe("Explore Tables — InlineDiagram", () => {
-  it("does not show Show in diagram button", () => {
-    vi.stubGlobal("fetch", () => new Promise(() => {}));
-    const { store } = createTestStore({
-      explore: makeExploreState({
-        tables: {
-          items: [{ table_name: "orders", dw_count: 1, file_count: 1 }],
-          filter: "",
-          selected: "orders",
-          detail: {
-            table_name: "orders",
-            dw_count: 1,
-            datawindows: [{ object: "dw_orders", file: "a.srd" }],
-            columns: [],
-            where: [],
-          },
-          loading: false,
-          detailLoading: false,
-        },
-      }),
-    });
-    const { container } = render(() => <TableDetailPanel store={store} />);
-    expect(container.textContent).not.toContain("Show in diagram");
-    vi.restoreAllMocks();
-  });
-
-  it("renders dw-tables InlineDiagram in table detail", async () => {
-    vi.stubGlobal("fetch", () => new Promise(() => {}));
-    const { store } = createTestStore({
-      explore: makeExploreState({
-        tables: {
-          items: [{ table_name: "orders", dw_count: 1, file_count: 1 }],
-          filter: "",
-          selected: "orders",
-          detail: {
-            table_name: "orders",
-            dw_count: 1,
-            datawindows: [{ object: "dw_orders", file: "a.srd" }],
-            columns: [],
-            where: [],
-          },
-          loading: false,
-          detailLoading: false,
-        },
-      }),
-    });
-    const { container } = render(() => <TableDetailPanel store={store} />);
-    await vi.waitUntil(() => container.querySelector(".diagram-container") != null);
-    expect(container.querySelector(".diagram-container")).not.toBeNull();
-    vi.restoreAllMocks();
-  });
-});
 
 const MOCK_DW_DETAIL: DwDetailResponse = {
   name: "dw_orders",

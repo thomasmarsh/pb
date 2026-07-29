@@ -1,6 +1,7 @@
 // features/navigation/breadcrumb.ts — Derive breadcrumb segments from a Route.
 
 import type { Route, BreadcrumbSegment } from "./types.js";
+import { browserTabLabel } from "../explore/browserTabs.js";
 
 // Semantic icon keys — resolved to Lucide components at render time in BreadcrumbBar.
 export const ICONS = {
@@ -21,41 +22,27 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
     case "dashboard":
       return [{ icon: ICONS.library, label: "Dashboard", route }];
 
-    case "objects":
-      return [{ icon: ICONS.list, label: "Objects", route }];
-
-    case "proceduresList":
-      return [{ icon: ICONS.list, label: "Procedures", route }];
-
     case "objectDetail":
       return [
-        { icon: ICONS.list,   label: "Objects",   route: { view: "objects" } },
+        { icon: ICONS.list,   label: "Browser",   route: { view: "browser" } },
         { icon: ICONS.object, label: route.name,  route },
       ];
 
     case "procedureDetail":
       return [
-        { icon: ICONS.list,      label: "Objects",  route: { view: "objects" } },
+        { icon: ICONS.list,      label: "Browser",  route: { view: "browser" } },
         { icon: ICONS.object,    label: route.name, route: { view: "objectDetail", name: route.name } },
         { icon: ICONS.procedure, label: route.proc, route },
       ];
 
-    case "datawindows":
-      return [{ icon: ICONS.list, label: "DataWindows", route }];
-
     case "dwDetail":
       return [
-        { icon: ICONS.list,       label: "DataWindows", route: { view: "datawindows" } },
+        { icon: ICONS.list,       label: browserTabLabel("datawindow"), route: { view: "browser", category: "datawindow" } },
         { icon: ICONS.datawindow, label: route.name,    route },
       ];
 
-    case "tables":
-      return route.namespace
-        ? [{ icon: ICONS.list, label: `Tables — ${route.namespace}`, route }]
-        : [{ icon: ICONS.list, label: "Tables", route }];
-
     case "tableDetail": {
-      const tablesRoute: Route = route.namespace ? { view: "tables", namespace: route.namespace } : { view: "tables" };
+      const tablesRoute: Route = { view: "browser", category: "tables", ...(route.namespace ? { namespace: route.namespace } : {}) };
       return [
         { icon: ICONS.list,  label: route.namespace ? `Tables — ${route.namespace}` : "Tables", route: tablesRoute },
         { icon: ICONS.table, label: route.name,  route },
@@ -63,10 +50,7 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
     }
 
     case "browser":
-      return [{ icon: ICONS.list, label: "Browser", route }];
-
-    case "search":
-      return [{ icon: ICONS.list, label: "Search", route }];
+      return [{ icon: ICONS.list, label: browserTabLabel(route.category), route }];
 
     case "queries":
       return [{ icon: ICONS.ask, label: "Ask", route }];
@@ -97,7 +81,7 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
 
     case "sliceView":
       return [
-        { icon: ICONS.list,      label: "Objects",         route: { view: "objects" } },
+        { icon: ICONS.list,      label: "Browser",         route: { view: "browser" } },
         { icon: ICONS.object,    label: route.object,      route: { view: "objectDetail", name: route.object } },
         { icon: ICONS.procedure, label: route.proc,        route: { view: "procedureDetail", name: route.object, proc: route.proc } },
         { icon: ICONS.analysis,  label: `${route.direction === "backward" ? "Backward" : "Forward"} Slice (line ${route.line})`, route },
@@ -117,7 +101,7 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
 
     case "cfgDiagram":
       return [
-        { icon: ICONS.list,      label: "Objects",          route: { view: "objects" } },
+        { icon: ICONS.list,      label: "Browser",          route: { view: "browser" } },
         { icon: ICONS.object,    label: route.object,        route: { view: "objectDetail", name: route.object } },
         { icon: ICONS.procedure, label: route.proc,          route: { view: "procedureDetail", name: route.object, proc: route.proc } },
         { icon: ICONS.analysis,  label: "CFG",              route },

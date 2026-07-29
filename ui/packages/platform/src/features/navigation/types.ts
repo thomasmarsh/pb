@@ -4,18 +4,13 @@ import type { DiagramKind } from "../../utils/diagram.js";
 
 export type Route =
   | { view: "dashboard" }
-  | { view: "objects" }
   | { view: "objectDetail";    name: string }
   | { view: "procedureDetail"; name: string; proc: string }
-  | { view: "proceduresList" }
-  | { view: "datawindows" }
   | { view: "dwDetail";        name: string }
-  | { view: "tables"; namespace?: string }
   | { view: "tableDetail";     name: string; namespace?: string }
-  | { view: "browser"; category?: string }
+  | { view: "browser"; category?: string; namespace?: string }
   | { view: "diagrams"; kind?: DiagramKind }
   | { view: "queries"; queryName?: string; queryParams?: Record<string, string>; sqlText?: string }
-  | { view: "search" }
   | { view: "explore" }
   | { view: "diagnostics" }
   | { view: "libraryDetail"; name: string }

@@ -1,6 +1,6 @@
 // features/explore/actions.ts — Explore feature actions (self-contained).
 
-import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse, ListObjectsResponse } from "../../types/api.js";
+import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, ObjectSourceResponse, ListObjectsResponse } from "../../types/api.js";
 import type { DataWindowFile } from "@pb/interpreter";
 
 export type ExploreAction =
@@ -23,17 +23,11 @@ export type ExploreAction =
   | { tag: "tab"; tab: "source" | "ast" | "sql" | "diagram" }
   | { tag: "filter"; q: string }
   | { tag: "highlight-line"; line: number | null }
-  | { tag: "sidebar-toggle-group"; group: "sourceTree" | "entityNav" | "analysisNav" }
+  | { tag: "sidebar-toggle-group"; group: "sourceTree" | "analysisNav" }
   | { tag: "sidebar-set-collapsed"; collapsed: boolean }
   | { tag: "sidebar-reveal"; objectName: string; procName?: string }
-  | { tag: "sidebar-focus-group"; group: "sourceTree" | "entityNav" | "analysisNav" }
+  | { tag: "sidebar-focus-group"; group: "sourceTree" | "analysisNav" }
   | { tag: "help-overlay-toggle" }
   | { tag: "browser-tab"; category: string }
   | { tag: "browser-loaded"; data: ListObjectsResponse }
-  | { tag: "tables-load" }
-  | { tag: "tables-loaded"; items: TableSummary[] }
-  | { tag: "tables-filter"; q: string }
-  | { tag: "tables-select"; tableName: string }
-  | { tag: "tables-detail-loaded"; tableName: string; detail: TableDetail }
-  | { tag: "tables-detail-error"; tableName: string; error: string }
   ;

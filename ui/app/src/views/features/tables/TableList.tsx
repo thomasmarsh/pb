@@ -11,7 +11,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
   const ts = () => snap().tables;
   const routeNamespace = () => {
     const r = snap().nav.route;
-    return r.view === "tables" ? r.namespace : undefined;
+    return r.view === "browser" && r.category === "tables" ? r.namespace : undefined;
   };
 
   onMount(() => {

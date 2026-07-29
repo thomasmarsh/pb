@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
-import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse, ListObjectsResponse } from "../../types/api.js";
+import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, ObjectSourceResponse, ListObjectsResponse } from "../../types/api.js";
 import type { DataWindowFile } from "@pb/interpreter";
 import type { NavigationAction } from "../navigation/types.js";
 
@@ -15,8 +15,6 @@ export interface ExploreEnv {
   getExploreDatawindow(name: string): Effect<DwDetailResponse>;
   getDwLayout(name: string): Effect<DataWindowFile>;
   getObjectSource(name: string): Effect<ObjectSourceResponse>;
-  getTables(): Effect<TableSummary[]>;
-  getTableDetail(name: string): Effect<TableDetail>;
   getObjects(params: Record<string, string | number>): Effect<ListObjectsResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
@@ -39,10 +37,9 @@ function makeInitialExploreState(): ExploreState {
     activeTab: "source",
     treeFilter: "",
     highlightedLine: null,
-    sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+    sidebarGroups: { sourceTree: true, analysisNav: false },
     sidebarCollapsed: false,
     helpOverlayOpen: false,
-    tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
     browser: { category: "application", items: [], loading: false },
   };
 }
@@ -219,42 +216,6 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
 
   case "help-overlay-toggle":
     draft.helpOverlayOpen = !draft.helpOverlayOpen;
-    return null;
-
-  // Tables browser (state kept; UI now accessed via Entity Navigation → Tables route)
-  case "tables-load":
-    draft.tables.loading = true;
-    return env.getTables()
-      .map((items): ExploreAction => ({ tag: "tables-loaded", items }))
-      .catch((): ExploreAction => ({ tag: "tables-loaded", items: [] }));
-
-  case "tables-loaded":
-    draft.tables.items = action.items;
-    draft.tables.loading = false;
-    return null;
-
-  case "tables-filter":
-    draft.tables.filter = action.q;
-    return null;
-
-  case "tables-select":
-    draft.selectedDw = null;
-    draft.selectedProc = null;
-    draft.tables.selected = action.tableName;
-    draft.tables.detail = null;
-    draft.tables.detailLoading = true;
-    return env.getTableDetail(action.tableName)
-      .map((detail): ExploreAction => ({ tag: "tables-detail-loaded", tableName: action.tableName, detail }))
-      .catch((e): ExploreAction => ({ tag: "tables-detail-error", tableName: action.tableName, error: String(e) }));
-
-  case "tables-detail-loaded":
-    draft.tables.detail = action.detail;
-    draft.tables.detailLoading = false;
-    return null;
-
-  case "tables-detail-error":
-    draft.tables.detail = { error: action.error };
-    draft.tables.detailLoading = false;
     return null;
 
   // Browser panel (Plan 210 Phase 2)

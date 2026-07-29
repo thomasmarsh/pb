@@ -29,10 +29,10 @@ describe("navigation reducer", () => {
     it("sets route to the target route", () => {
       const env = makeNavEnv();
       const ts = createTestStore(navReducer, env, makeInitial());
-      ts.send({ tag: "navigate", route: { view: "objects" } }, (s) => {
-        s.route = { view: "objects" };
-        s.crumbs = crumbsForRoute({ view: "objects" });
-        s.history = [{ view: "dashboard" }, { view: "objects" }];
+      ts.send({ tag: "navigate", route: { view: "browser" } }, (s) => {
+        s.route = { view: "browser" };
+        s.crumbs = crumbsForRoute({ view: "browser" });
+        s.history = [{ view: "dashboard" }, { view: "browser" }];
         s.historyIdx = 1;
       });
     });
@@ -40,13 +40,13 @@ describe("navigation reducer", () => {
     it("calls pushUrl with the correct path", () => {
       const env = makeNavEnv();
       const ts = createTestStore(navReducer, env, makeInitial());
-      ts.send({ tag: "navigate", route: { view: "objects" } });
-      expect(env.lastPush).toBe("/objects");
+      ts.send({ tag: "navigate", route: { view: "browser" } });
+      expect(env.lastPush).toBe("/browser");
     });
 
     it("dashboard maps to /", () => {
       const env = makeNavEnv();
-      const ts = createTestStore(navReducer, env, makeInitial({ view: "objects" }));
+      const ts = createTestStore(navReducer, env, makeInitial({ view: "browser" }));
       ts.send({ tag: "navigate", route: { view: "dashboard" } });
       expect(env.lastPush).toBe("/");
     });
@@ -81,14 +81,13 @@ describe("navigation reducer", () => {
     it("all routes map to correct paths", () => {
       const cases: [Route, string][] = [
         [{ view: "dashboard" },                                    "/"],
-        [{ view: "objects" },                                      "/objects"],
+        [{ view: "browser" },                                      "/browser"],
+        [{ view: "browser", category: "datawindow" },              "/browser?category=datawindow"],
         [{ view: "objectDetail",    name: "Foo" },                 "/objects/Foo"],
         [{ view: "procedureDetail", name: "Foo", proc: "Bar" },    "/objects/Foo/Bar"],
-        [{ view: "datawindows" },                                  "/datawindows"],
         [{ view: "dwDetail",        name: "Baz" },                 "/datawindows/Baz"],
         [{ view: "diagrams" },                                     "/diagrams"],
         [{ view: "queries" },                                      "/queries"],
-        [{ view: "search" },                                       "/search"],
         [{ view: "explore" },                                      "/explore"],
         [{ view: "deadCode" },                                     "/dead-code"],
         [{ view: "taintExplorer" },                                "/taint"],
@@ -106,11 +105,11 @@ describe("navigation reducer", () => {
   describe("crumbs derived on navigate", () => {
     it("dashboard crumb has Dashboard label", () => {
       const env = makeNavEnv();
-      const ts = createTestStore(navReducer, env, makeInitial({ view: "objects" }));
+      const ts = createTestStore(navReducer, env, makeInitial({ view: "browser" }));
       ts.send({ tag: "navigate", route: { view: "dashboard" } }, (s) => {
         s.route = { view: "dashboard" };
         s.crumbs = crumbsForRoute({ view: "dashboard" });
-        s.history = [{ view: "objects" }, { view: "dashboard" }];
+        s.history = [{ view: "browser" }, { view: "dashboard" }];
         s.historyIdx = 1;
       });
     });
@@ -143,10 +142,10 @@ describe("navigation reducer", () => {
     it("grows on each navigate", () => {
       const env = makeNavEnv();
       const ts = createTestStore(navReducer, env, makeInitial());
-      ts.send({ tag: "navigate", route: { view: "objects" } }, (s) => {
-        s.route = { view: "objects" };
-        s.crumbs = crumbsForRoute({ view: "objects" });
-        s.history = [{ view: "dashboard" }, { view: "objects" }];
+      ts.send({ tag: "navigate", route: { view: "browser" } }, (s) => {
+        s.route = { view: "browser" };
+        s.crumbs = crumbsForRoute({ view: "browser" });
+        s.history = [{ view: "dashboard" }, { view: "browser" }];
         s.historyIdx = 1;
       });
     });
@@ -154,14 +153,14 @@ describe("navigation reducer", () => {
     it("navigate from back position truncates forward history", () => {
       const env = makeNavEnv();
       const ts = createTestStore(navReducer, env, makeInitial());
-      ts.send({ tag: "navigate", route: { view: "objects" } });
-      ts.send({ tag: "navigate", route: { view: "datawindows" } });
+      ts.send({ tag: "navigate", route: { view: "browser" } });
+      ts.send({ tag: "navigate", route: { view: "browser", category: "datawindow" } });
       ts.send({ tag: "back" });
-      // Now navigate to a new destination — forward history (datawindows) is discarded
-      ts.send({ tag: "navigate", route: { view: "tables" } }, (s) => {
-        s.route = { view: "tables" };
-        s.crumbs = crumbsForRoute({ view: "tables" });
-        s.history = [{ view: "dashboard" }, { view: "objects" }, { view: "tables" }];
+      // Now navigate to a new destination — forward history (datawindow category) is discarded
+      ts.send({ tag: "navigate", route: { view: "browser", category: "tables" } }, (s) => {
+        s.route = { view: "browser", category: "tables" };
+        s.crumbs = crumbsForRoute({ view: "browser", category: "tables" });
+        s.history = [{ view: "dashboard" }, { view: "browser" }, { view: "browser", category: "tables" }];
         s.historyIdx = 2;
       });
     });
@@ -171,7 +170,7 @@ describe("navigation reducer", () => {
     it("goes back one step in history", () => {
       const env = makeNavEnv();
       const ts = createTestStore(navReducer, env, makeInitial());
-      ts.send({ tag: "navigate", route: { view: "objects" } });
+      ts.send({ tag: "navigate", route: { view: "browser" } });
       ts.send({ tag: "back" }, (s) => {
         s.route = { view: "dashboard" };
         s.crumbs = crumbsForRoute({ view: "dashboard" });
@@ -238,11 +237,11 @@ describe("navigation reducer", () => {
       const ts = createTestStore(navReducer, env, makeInitial());
       const queryRoute: Route = { view: "queries", queryName: "top" };
       ts.send({ tag: "navigate-from-ask", route: { view: "objectDetail", name: "w_pay" }, queryName: "top", queryRoute });
-      ts.send({ tag: "navigate", route: { view: "objects" } }, (s) => {
-        s.route = { view: "objects" };
-        s.crumbs = crumbsForRoute({ view: "objects" });
+      ts.send({ tag: "navigate", route: { view: "browser" } }, (s) => {
+        s.route = { view: "browser" };
+        s.crumbs = crumbsForRoute({ view: "browser" });
         s.askContext = null;
-        s.history = [{ view: "dashboard" }, { view: "objectDetail", name: "w_pay" }, { view: "objects" }];
+        s.history = [{ view: "dashboard" }, { view: "objectDetail", name: "w_pay" }, { view: "browser" }];
         s.historyIdx = 2;
       });
     });
@@ -252,11 +251,11 @@ describe("navigation reducer", () => {
     it("goes forward after back", () => {
       const env = makeNavEnv();
       const ts = createTestStore(navReducer, env, makeInitial());
-      ts.send({ tag: "navigate", route: { view: "objects" } });
+      ts.send({ tag: "navigate", route: { view: "browser" } });
       ts.send({ tag: "back" });
       ts.send({ tag: "forward" }, (s) => {
-        s.route = { view: "objects" };
-        s.crumbs = crumbsForRoute({ view: "objects" });
+        s.route = { view: "browser" };
+        s.crumbs = crumbsForRoute({ view: "browser" });
         s.historyIdx = 1;
       });
     });
@@ -264,7 +263,7 @@ describe("navigation reducer", () => {
     it("does nothing at end of history", () => {
       const env = makeNavEnv();
       const ts = createTestStore(navReducer, env, makeInitial());
-      ts.send({ tag: "navigate", route: { view: "objects" } });
+      ts.send({ tag: "navigate", route: { view: "browser" } });
       ts.send({ tag: "forward" });
     });
   });

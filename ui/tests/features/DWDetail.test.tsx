@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
-import { DWDetail } from "../../app/src/views/features/datawindows/DataWindows.js";
+import { DWDetail } from "../../app/src/views/features/datawindows/DWDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialDatawindowsState } from "@pb/platform";
 import type { DwDetailResponse } from "@pb/platform";

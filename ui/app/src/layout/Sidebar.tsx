@@ -6,15 +6,9 @@ import type { AppAction } from "../actions.js";
 import { type Route, type IconComp } from "@pb/platform";
 import {
   LayoutDashboard,
-  Box,
-  Grid3X3,
-  Database,
-  Code2,
   MessageSquare,
-  Search,
   AlertTriangle,
   FolderTree,
-  LayoutList,
   BarChart2,
   Layers,
   Sun,
@@ -25,14 +19,6 @@ import {
   Play,
 } from "@pb/platform";
 import { LibraryNode } from "../views/features/explore/TreeNodes.js";
-
-const ENTITY_NAV: { label: string; view: string; icon: IconComp }[] = [
-  { label: "Objects",     view: "objects",        icon: Box },
-  { label: "DataWindows", view: "datawindows",    icon: Grid3X3 },
-  { label: "Tables",      view: "tables",         icon: Database },
-  { label: "Procedures",  view: "proceduresList", icon: Code2 },
-  { label: "Browser",     view: "browser",        icon: Layers },
-];
 
 interface AnalysisItem {
   label: string;
@@ -54,7 +40,7 @@ const ANALYSIS_NAV: AnalysisItem[] = [
 const UTIL_NAV: { label: string; view: string; icon: IconComp }[] = [
   { label: "Dashboard",    view: "dashboard", icon: LayoutDashboard },
   { label: "Ask",          view: "queries",   icon: MessageSquare },
-  { label: "Search",       view: "search",    icon: Search },
+  { label: "Browser",      view: "browser",   icon: Layers },
   { label: "Diagnostics",  view: "diagnostics",    icon: AlertTriangle },
 ];
 
@@ -63,10 +49,7 @@ const RUNTIME_NAV: { label: string; view: string; icon: IconComp }[] = [
 ];
 
 const VIEW_GROUPS: Record<string, string[]> = {
-  objects:        ["objects", "objectDetail", "procedureDetail"],
-  proceduresList: ["proceduresList"],
-  datawindows:    ["datawindows", "dwDetail"],
-  tables:         ["tables", "tableDetail"],
+  browser: ["browser", "objectDetail", "procedureDetail", "dwDetail", "tableDetail"],
 };
 
 function isActive(itemView: string, currentView: string): boolean {
@@ -76,11 +59,7 @@ function isActive(itemView: string, currentView: string): boolean {
 }
 
 function navigateTo(store: Store<AppState, AppAction>, view: string): void {
-  if (view === "proceduresList") {
-    store.dispatch({ tag: "objects", action: { tag: "procs-list-load" } });
-  } else {
-    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view } as Route } });
-  }
+  store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view } as Route } });
 }
 
 function PhaseBadge(props: { phase: number; gated: boolean }): JSX.Element {
@@ -138,9 +117,9 @@ function AccordionGroup(props: {
 interface SidebarProps {
   store: Store<AppState, AppAction>;
   collapsed: boolean;
-  sidebarGroups: { sourceTree: boolean; entityNav: boolean; analysisNav: boolean };
+  sidebarGroups: { sourceTree: boolean; analysisNav: boolean };
   currentView: string;
-  onToggleGroup: (group: "sourceTree" | "entityNav" | "analysisNav") => void;
+  onToggleGroup: (group: "sourceTree" | "analysisNav") => void;
   onSetCollapsed: (collapsed: boolean) => void;
 }
 
@@ -200,11 +179,6 @@ export function Sidebar(props: SidebarProps): JSX.Element {
           ><FolderTree size={16} /></button>
           <button
             class="sidebar-rail-icon"
-            title="Entity Navigation"
-            onClick={() => { props.onSetCollapsed(false); if (!props.sidebarGroups.entityNav) props.onToggleGroup("entityNav"); }}
-          ><LayoutList size={16} /></button>
-          <button
-            class="sidebar-rail-icon"
             title="Analysis Navigation"
             onClick={() => { props.onSetCollapsed(false); if (!props.sidebarGroups.analysisNav) props.onToggleGroup("analysisNav"); }}
           ><BarChart2 size={16} /></button>
@@ -262,28 +236,6 @@ export function Sidebar(props: SidebarProps): JSX.Element {
                 </Show>
               </Show>
             </div>
-          </AccordionGroup>
-
-          <AccordionGroup
-            label="Entity Navigation"
-            expanded={props.sidebarGroups.entityNav}
-            onToggle={() => props.onToggleGroup("entityNav")}
-            icon={LayoutList}
-          >
-            <nav class="sidebar-entity-nav">
-              <For each={ENTITY_NAV}>
-                {(item) => (
-                  <a
-                    href="#"
-                    class={`sidebar-entity-link${isActive(item.view, props.currentView) ? " active" : ""}`}
-                    onClick={(e) => { e.preventDefault(); navigateTo(store, item.view); }}
-                  >
-                    <span class="icon"><Dynamic component={item.icon} size={15} /></span>
-                    <span>{item.label}</span>
-                  </a>
-                )}
-              </For>
-            </nav>
           </AccordionGroup>
 
           <AccordionGroup

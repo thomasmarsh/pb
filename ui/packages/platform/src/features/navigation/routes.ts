@@ -8,15 +8,10 @@ export type { Route };
 export function print(route: Route): string {
   switch (route.view) {
     case "dashboard":        return "/";
-    case "objects":          return "/objects";
     case "objectDetail":     return "/objects/"     + encodeURIComponent(route.name);
     case "procedureDetail":  return "/objects/"     + encodeURIComponent(route.name)
                                     + "/"           + encodeURIComponent(route.proc);
-    case "proceduresList":   return "/procedures";
-    case "datawindows":      return "/datawindows";
     case "dwDetail":         return "/datawindows/" + encodeURIComponent(route.name);
-    case "tables":
-      return route.namespace ? `/tables?ns=${encodeURIComponent(route.namespace)}` : "/tables";
     case "tableDetail":
       // Namespace is a path segment, not a query param: a table's identity
       // is (namespace, name), not name-filtered-by-namespace. `/tables/foo`
@@ -26,8 +21,13 @@ export function print(route: Route): string {
       return route.namespace
         ? "/tables/" + encodeURIComponent(route.namespace) + "/" + encodeURIComponent(route.name)
         : "/tables/" + encodeURIComponent(route.name);
-    case "browser":
-      return route.category ? `/browser?category=${encodeURIComponent(route.category)}` : "/browser";
+    case "browser": {
+      const p = new URLSearchParams();
+      if (route.category) p.set("category", route.category);
+      if (route.namespace) p.set("ns", route.namespace);
+      const qs = p.toString();
+      return qs ? `/browser?${qs}` : "/browser";
+    }
     case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
     case "diagrams":
       return route.kind ? `/diagrams?kind=${encodeURIComponent(route.kind)}` : "/diagrams";
@@ -42,7 +42,6 @@ export function print(route: Route): string {
       }
       return "/queries?" + p.toString();
     }
-    case "search":           return "/search";
     case "explore":          return "/explore";
     case "diagnostics":      return "/diagnostics";
     case "deadCode":         return "/dead-code";
@@ -72,10 +71,10 @@ export function parse(path: string, search?: string): Route {
                              name: decodeURIComponent(segs[1]!),
                              proc: decodeURIComponent(segs[2]) };
       if (segs[1]) return { view: "objectDetail", name: decodeURIComponent(segs[1]) };
-      return { view: "objects" };
+      return { view: "browser" };
     case "datawindows":
       if (segs[1]) return { view: "dwDetail", name: decodeURIComponent(segs[1]) };
-      return { view: "datawindows" };
+      return { view: "browser", category: "datawindow" };
     case "tables": {
       // /tables/{namespace}/{table} (canonical) vs /tables/{table} (provisional,
       // unresolved) — disambiguated by segment count, same convention as
@@ -89,15 +88,17 @@ export function parse(path: string, search?: string): Route {
       }
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
       const ns = new URLSearchParams(raw).get("ns");
-      return { view: "tables", ...(ns ? { namespace: ns } : {}) };
+      return { view: "browser", category: "tables", ...(ns ? { namespace: ns } : {}) };
     }
     case "library":
       if (segs[1]) return { view: "libraryDetail", name: decodeURIComponent(segs[1]) };
       return { view: "dashboard" };
     case "browser": {
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
-      const category = new URLSearchParams(raw).get("category");
-      return { view: "browser", ...(category ? { category } : {}) };
+      const sp = new URLSearchParams(raw);
+      const category = sp.get("category");
+      const ns = sp.get("ns");
+      return { view: "browser", ...(category ? { category } : {}), ...(ns ? { namespace: ns } : {}) };
     }
     case "diagrams": {
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
@@ -121,7 +122,7 @@ export function parse(path: string, search?: string): Route {
       }
       return { view: "queries", queryName: q, queryParams: params };
     }
-    case "search":     return { view: "search" };
+    case "search":     return { view: "browser" };
     case "explore":    return { view: "explore" };
     case "diagnostics": return { view: "diagnostics" };
     case "dead-code":    return { view: "deadCode" };
@@ -150,7 +151,7 @@ export function parse(path: string, search?: string): Route {
       return { view: "dashboard" };
     case "reports":      return { view: "formalReports" };
     case "launch":       return { view: "launch" };
-    case "procedures":   return { view: "proceduresList" };
+    case "procedures":   return { view: "browser", category: "procedures" };
     case "analysis":
       if (segs[1] === "cfg" && segs[2] && segs[3]) {
         return {

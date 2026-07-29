@@ -52,7 +52,7 @@ function fireSearch(draft: TablesState, env: TablesEnv, q: string, namespace: st
   draft.loading = true;
   env.navigate({
     tag: "navigate",
-    route: namespace ? { view: "tables", namespace } : { view: "tables" },
+    route: namespace ? { view: "browser", category: "tables", namespace } : { view: "browser", category: "tables" },
   });
   return env.getTables(namespace)
     .map((items): TablesAction => ({ tag: "loaded", items }));
@@ -149,7 +149,7 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
     draft.error = null;
     env.navigate({
       tag: "navigate",
-      route: draft.namespace ? { view: "tables", namespace: draft.namespace } : { view: "tables" },
+      route: draft.namespace ? { view: "browser", category: "tables", namespace: draft.namespace } : { view: "browser", category: "tables" },
     });
     return null;
   case "column-usage-load": {

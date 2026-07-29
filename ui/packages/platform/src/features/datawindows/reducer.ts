@@ -26,11 +26,11 @@ function reduce(draft: DatawindowsState, action: DatawindowsAction, env: Datawin
   switch (action.tag) {
   case "back-to-datawindows":
     draft.dwDetail = null;
-    return env.navigate({ tag: "navigate", route: { view: "datawindows" } });
+    return env.navigate({ tag: "navigate", route: { view: "browser", category: "datawindow" } });
   case "search":
     draft.q = action.q;
     draft.loading = true;
-    env.navigate({ tag: "navigate", route: { view: "datawindows" } });
+    env.navigate({ tag: "navigate", route: { view: "browser", category: "datawindow" } });
     return env.getObjects({ q: action.q, kind: "datawindow", limit: 200 })
       .map((data): DatawindowsAction => ({ tag: "loaded", data }));
   case "loaded":

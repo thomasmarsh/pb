@@ -48,7 +48,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     draft.astData = null;
     draft.layout = null;
     draft.procedureDetail = null;
-    return env.navigate({ tag: "navigate", route: { view: "objects" } });
+    return env.navigate({ tag: "navigate", route: { view: "browser" } });
   case "search": {
     draft.q = action.q;
     draft.offset = 0;
@@ -183,11 +183,11 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "procs-list-load":
     if (draft.proceduresList !== null) {
-      env.navigate({ tag: "navigate", route: { view: "proceduresList" } });
+      env.navigate({ tag: "navigate", route: { view: "browser", category: "procedures" } });
       return null;
     }
     draft.proceduresListLoading = true;
-    env.navigate({ tag: "navigate", route: { view: "proceduresList" } });
+    env.navigate({ tag: "navigate", route: { view: "browser", category: "procedures" } });
     return env.getProcedures()
       .map((data): ObjectsAction => ({ tag: "procs-list-loaded", data }))
       .catch((e): ObjectsAction => ({ tag: "procs-list-error", error: errMsg(e) }));

@@ -6,9 +6,9 @@ import { parse, print } from "@pb/platform";
 import type { Route, ViewName } from "@pb/platform";
 
 const viewNames: ViewName[] = [
-  "dashboard", "objects", "objectDetail", "procedureDetail",
-  "datawindows", "dwDetail", "tables", "tableDetail",
-  "diagrams", "queries", "search", "explore", "diagnostics",
+  "dashboard", "objectDetail", "procedureDetail",
+  "dwDetail", "tableDetail", "browser",
+  "diagrams", "queries", "explore", "diagnostics",
 ];
 
 describe("routes — property-based", () => {
@@ -28,12 +28,9 @@ describe("routes — property-based", () => {
   it("round-trip: print then parse preserves simple routes", () => {
     const simpleRoutes: Route[] = [
       { view: "dashboard" },
-      { view: "objects" },
-      { view: "datawindows" },
-      { view: "tables" },
+      { view: "browser" },
       { view: "diagrams" },
       { view: "queries" },
-      { view: "search" },
       { view: "explore" },
       { view: "diagnostics" },
     ];

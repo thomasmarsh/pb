@@ -8,11 +8,10 @@ import { createTestStore } from "../helpers.js";
 import { ProcNode, ObjectNode, LibraryNode } from "../../app/src/views/features/explore/TreeNodes.js";
 
 const DEFAULT_SIDEBAR = {
-  sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+  sidebarGroups: { sourceTree: true, analysisNav: false },
   sidebarCollapsed: false,
 };
 
-const TABLES_STATE = { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false };
 const BROWSER_STATE = { category: "application", items: [], loading: false };
 
 function makeExploreBase() {
@@ -20,7 +19,7 @@ function makeExploreBase() {
     libraries: [], expandedNodes: new Set<string>(), selectedProc: null, selectedObject: null,
     highlightedProcName: null, selectedDw: null,
     procCache: {}, dwCache: {}, dwLayoutCache: {}, objectSourceCache: {}, loading: false, activeTab: "source" as const,
-    treeFilter: "", highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, browser: BROWSER_STATE, ...DEFAULT_SIDEBAR,
+    treeFilter: "", highlightedLine: null, helpOverlayOpen: false, browser: BROWSER_STATE, ...DEFAULT_SIDEBAR,
   };
 }
 

@@ -8,8 +8,8 @@ describe("parse", () => {
     expect(parse("/")).toEqual({ view: "dashboard" });
   });
 
-  it('"/objects" resolves to objects', () => {
-    expect(parse("/objects")).toEqual({ view: "objects" });
+  it('"/objects" resolves to browser', () => {
+    expect(parse("/objects")).toEqual({ view: "browser" });
   });
 
   it('"/objects/MyWindow" resolves to objectDetail', () => {
@@ -22,16 +22,24 @@ describe("parse", () => {
     });
   });
 
-  it('"/datawindows" resolves to datawindows', () => {
-    expect(parse("/datawindows")).toEqual({ view: "datawindows" });
+  it('"/datawindows" resolves to browser with datawindow category', () => {
+    expect(parse("/datawindows")).toEqual({ view: "browser", category: "datawindow" });
   });
 
   it('"/datawindows/MyDW" resolves to dwDetail', () => {
     expect(parse("/datawindows/MyDW")).toEqual({ view: "dwDetail", name: "MyDW" });
   });
 
-  it('"/tables" resolves to tables', () => {
-    expect(parse("/tables")).toEqual({ view: "tables" });
+  it('"/tables" resolves to browser with tables category', () => {
+    expect(parse("/tables")).toEqual({ view: "browser", category: "tables" });
+  });
+
+  it('"/tables" with ?ns=X resolves to browser with tables category and namespace', () => {
+    expect(parse("/tables", "?ns=dbo")).toEqual({ view: "browser", category: "tables", namespace: "dbo" });
+  });
+
+  it('"/procedures" resolves to browser with procedures category', () => {
+    expect(parse("/procedures")).toEqual({ view: "browser", category: "procedures" });
   });
 
   it('"/tables/MY_TABLE" resolves to tableDetail', () => {
@@ -74,8 +82,8 @@ describe("parse", () => {
     });
   });
 
-  it('"/search" resolves to search', () => {
-    expect(parse("/search")).toEqual({ view: "search" });
+  it('"/search" resolves to browser', () => {
+    expect(parse("/search")).toEqual({ view: "browser" });
   });
 
   it('"/explore" resolves to explore', () => {
@@ -104,8 +112,23 @@ describe("print", () => {
     expect(print({ view: "dashboard" })).toBe("/");
   });
 
-  it('objects maps to "/objects"', () => {
-    expect(print({ view: "objects" })).toBe("/objects");
+  it('browser maps to "/browser"', () => {
+    expect(print({ view: "browser" })).toBe("/browser");
+  });
+
+  it('browser with category maps to "/browser?category={category}"', () => {
+    expect(print({ view: "browser", category: "datawindow" })).toBe("/browser?category=datawindow");
+  });
+
+  it('browser with category and namespace maps to "/browser?category={category}&ns={namespace}"', () => {
+    expect(print({ view: "browser", category: "tables", namespace: "dbo" })).toBe("/browser?category=tables&ns=dbo");
+  });
+
+  it('round-trip: browser with category and namespace preserves route', () => {
+    const route = { view: "browser" as const, category: "tables", namespace: "dbo" };
+    const printed = print(route);
+    const [pathname, search] = printed.split("?");
+    expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
   });
 
   it('objectDetail maps to "/objects/{name}"', () => {
@@ -120,10 +143,6 @@ describe("print", () => {
     expect(print({ view: "dwDetail", name: "MyDW" })).toBe("/datawindows/MyDW");
   });
 
-  it('tables maps to "/tables"', () => {
-    expect(print({ view: "tables" })).toBe("/tables");
-  });
-
   it('tableDetail maps to "/tables/{name}"', () => {
     expect(print({ view: "tableDetail", name: "MY_TABLE" })).toBe("/tables/MY_TABLE");
   });
@@ -131,10 +150,6 @@ describe("print", () => {
   it('round-trip: tableDetail preserves name', () => {
     const route = { view: "tableDetail" as const, name: "schema.orders" };
     expect(parse(print(route))).toEqual(route);
-  });
-
-  it('datawindows maps to "/datawindows"', () => {
-    expect(print({ view: "datawindows" })).toBe("/datawindows");
   });
 
   it('diagrams with kind maps to "/diagrams?kind={kind}"', () => {

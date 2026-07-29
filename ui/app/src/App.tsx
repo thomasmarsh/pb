@@ -11,15 +11,12 @@ import { Layout } from "./layout/Layout.js";
 import { GlobalSearch } from "./views/components/GlobalSearch.js";
 import { HelpOverlay } from "./layout/HelpOverlay.js";
 import { Dashboard } from "./views/features/dashboard/Dashboard.js";
-import { Objects } from "./views/features/objects/Objects.js";
 import { ObjectDetail } from "./views/features/objects/ObjectDetail.js";
 import { ProcedureDetail } from "./views/features/objects/ProcedureDetail.js";
-import { ProceduresList } from "./views/features/objects/ProceduresList.js";
-import { DataWindows, DWDetail } from "./views/features/datawindows/DataWindows.js";
-import { Tables } from "./views/features/tables/Tables.js";
+import { DWDetail } from "./views/features/datawindows/DWDetail.js";
+import { TableDetail } from "./views/features/tables/TableDetail.js";
 import { Diagrams } from "./views/features/diagrams/Diagrams.js";
 import { Queries } from "./views/features/queries/Queries.js";
-import { Search } from "./views/features/search/Search.js";
 import { Explore } from "./views/features/explore/Explore.js";
 import { Browser } from "./views/features/explore/Browser.js";
 import { Diagnostics } from "./views/features/diagnostics/Diagnostics.js";
@@ -53,16 +50,12 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
   return (
     <Layout store={props.store}>
       <Show when={snap().nav.route.view === "dashboard"}><Dashboard store={props.store} /></Show>
-      <Show when={snap().nav.route.view === "objects"}><Objects store={props.store} /></Show>
       <Show when={snap().nav.route.view === "objectDetail"}><ObjectDetail store={props.store} /></Show>
       <Show when={snap().nav.route.view === "procedureDetail"}><ProcedureDetail store={props.store} /></Show>
-      <Show when={snap().nav.route.view === "proceduresList"}><ProceduresList store={props.store} /></Show>
-      <Show when={snap().nav.route.view === "datawindows"}><DataWindows store={props.store} /></Show>
       <Show when={snap().nav.route.view === "dwDetail"}><DWDetail store={props.store} /></Show>
-      <Show when={snap().nav.route.view === "tables" || snap().nav.route.view === "tableDetail"}><Tables store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "tableDetail"}><TableDetail store={props.store} /></Show>
       <Show when={snap().nav.route.view === "diagrams"}><Diagrams store={props.store} /></Show>
       <Show when={snap().nav.route.view === "queries"}><Queries store={props.store} /></Show>
-      <Show when={snap().nav.route.view === "search"}><Search store={props.store} /></Show>
       <Show when={snap().nav.route.view === "explore"}><Explore store={props.store} /></Show>
       <Show when={snap().nav.route.view === "browser"}><Browser store={props.store} /></Show>
       <Show when={snap().nav.route.view === "diagnostics"}><Diagnostics store={props.store} /></Show>

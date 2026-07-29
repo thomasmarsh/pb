@@ -154,7 +154,7 @@ describe("tables reducer", () => {
         s.namespace = "clims";
         s.loading = true;
       });
-      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+      expect(navigateRoutes).toEqual([{ view: "browser", category: "tables", namespace: "clims" }]);
       expect(tablesCalls).toEqual(["clims"]);
       ts.receive({ tag: "loaded", items }, (s) => {
         s.items = items;
@@ -219,7 +219,7 @@ describe("tables reducer", () => {
         s.total = 1;
         s.loading = false;
       });
-      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+      expect(navigateRoutes).toEqual([{ view: "browser", category: "tables", namespace: "clims" }]);
     });
 
     it("remount with matching namespace and items already loaded skips the search fetch", () => {
@@ -268,7 +268,7 @@ describe("tables reducer", () => {
         s.q = "ord";
         s.loading = true;
       });
-      expect(navigateCalls).toEqual(["tables"]);
+      expect(navigateCalls).toEqual(["browser"]);
     });
 
     it("fires getTables effect; receive populates items", () => {
@@ -301,7 +301,7 @@ describe("tables reducer", () => {
         s.namespace = "clims";
         s.loading = true;
       });
-      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+      expect(navigateRoutes).toEqual([{ view: "browser", category: "tables", namespace: "clims" }]);
       expect(tablesCalls).toEqual(["clims"]);
       ts.receive({ tag: "loaded", items }, (s) => {
         s.items = items;
@@ -478,7 +478,7 @@ describe("tables reducer", () => {
         s.detail = null;
         s.error  = null;
       });
-      expect(navigateRoutes).toEqual([{ view: "tables" }]);
+      expect(navigateRoutes).toEqual([{ view: "browser", category: "tables" }]);
     });
 
     it("preserves the scoping namespace when navigating back to the scoped tables route", () => {
@@ -497,7 +497,7 @@ describe("tables reducer", () => {
         s.detail = null;
         s.error  = null;
       });
-      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+      expect(navigateRoutes).toEqual([{ view: "browser", category: "tables", namespace: "clims" }]);
     });
 
     it("clears error when navigating back", () => {
