@@ -111,6 +111,35 @@ def test_get_resolved_calls_scoped_to_object(db_conn: duckdb.DuckDBPyConnection)
     assert get_resolved_calls(db_conn, "__nonexistent__") == []
 
 
+def test_get_resolved_calls_returns_target_signature_columns(db_conn: duckdb.DuckDBPyConnection):
+    """The source-hover tooltip renders a PB QuickInfo-style signature header
+    (`<Function> name (params) returns type`), which needs the *target*
+    procedure's own signature alongside the call-resolution metadata."""
+    row = db_conn.execute(
+        "SELECT rc.object FROM resolved_calls rc "
+        "JOIN procedures p ON LOWER(p.object) = LOWER(rc.target_object) "
+        "AND LOWER(p.proc_name) = LOWER(rc.target_proc) "
+        "WHERE p.params IS NOT NULL "
+        "GROUP BY rc.object ORDER BY count(*) DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no resolved_calls row in fixture corpus has a target with known params"
+    result = get_resolved_calls(db_conn, row[0])
+    with_sig = [c for c in result if c["target_params"] is not None]
+    assert len(with_sig) > 0
+    assert with_sig[0]["target_proc_type"] in ("function", "subroutine", "event", "on")
+
+
+def test_get_resolved_calls_target_signature_null_when_unresolved(db_conn: duckdb.DuckDBPyConnection):
+    row = db_conn.execute(
+        "SELECT object FROM resolved_calls WHERE kind = 'unresolved' LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no unresolved resolved_calls row in fixture corpus"
+    result = get_resolved_calls(db_conn, row[0])
+    unresolved = [c for c in result if c["kind"] == "unresolved"]
+    assert len(unresolved) > 0
+    assert unresolved[0]["target_proc_type"] is None
+
+
 def test_get_resolved_var_refs_returns_span_columns(db_conn: duckdb.DuckDBPyConnection):
     row = db_conn.execute(
         "SELECT object FROM resolved_var_refs GROUP BY object ORDER BY count(*) DESC LIMIT 1"

@@ -14,6 +14,13 @@ export const PROC_BADGE_COLORS: Record<string, string> = {
   on: "#4ade80",
 };
 
+const PROC_TYPE_LABELS: Record<string, string> = {
+  function: "Function",
+  subroutine: "Subroutine",
+  event: "Event",
+  on: "On",
+};
+
 export interface TooltipContent { html: string; color: string }
 
 export function buildObjectTooltip(
@@ -41,7 +48,22 @@ export function buildProcTooltip(
   counts: { caller_count: number; callee_count: number } | undefined,
 ): TooltipContent {
   const color = call ? CALL_KIND_COLORS[call.kind] : "#a78bfa";
-  let html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
+  let html: string;
+  if (call?.target_proc_type) {
+    const kindColor = PROC_BADGE_COLORS[call.target_proc_type] ?? color;
+    const label = PROC_TYPE_LABELS[call.target_proc_type] ?? call.target_proc_type;
+    const name = call.target_proc ?? call.to_name;
+    const returns = call.target_return_type
+      ? ` <span class="qi-kw">returns</span> <span class="qi-type">${call.target_return_type}</span>`
+      : "";
+    html = `<div class="tt-name">` +
+      `<span class="qi-kind" style="color:${kindColor}">‹${label}›</span> ` +
+      `<span class="qi-name">${name}</span> ` +
+      `<span class="qi-params">(${call.target_params ?? ""})</span>${returns}` +
+      `</div>`;
+  } else {
+    html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
+  }
   if (call) {
     const target = call.target_object
       ? `${call.target_object}.${call.target_proc ?? call.to_name}`

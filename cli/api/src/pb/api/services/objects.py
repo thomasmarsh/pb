@@ -251,12 +251,27 @@ def get_known_objects(conn: duckdb.DuckDBPyConnection, object_name: str) -> list
 
 
 def get_resolved_calls(conn: duckdb.DuckDBPyConnection, object_name: str) -> list[dict[str, Any]]:
-    """Resolved call sites within `object_name`'s source, span-keyed for identifier-linking."""
+    """Resolved call sites within `object_name`'s source, span-keyed for identifier-linking.
+
+    `target_proc_type`/`target_params`/`target_return_type` carry the resolved
+    target's own signature (from `procedures`) so the source-hover tooltip can
+    render a PB QuickInfo-style header, not just the resolution kind/confidence.
+    Scalar subqueries (rather than a JOIN) keep one row per call site even when
+    `target_proc` matches an overloaded procedure name, mirroring
+    `get_procedure_detail`'s "first match wins" precedent.
+    """
     return rows(
         conn.execute(
-            "SELECT proc_name, to_name, call_type, line, target_object, target_proc, kind, confidence, "
-            "to_name_start_line, to_name_start_col, to_name_end_line, to_name_end_col "
-            "FROM resolved_calls WHERE object = ? ORDER BY line, to_name_start_col",
+            "SELECT rc.proc_name, rc.to_name, rc.call_type, rc.line, rc.target_object, rc.target_proc, "
+            "rc.kind, rc.confidence, "
+            "rc.to_name_start_line, rc.to_name_start_col, rc.to_name_end_line, rc.to_name_end_col, "
+            "(SELECT p.proc_type FROM procedures p WHERE LOWER(p.object) = LOWER(rc.target_object) "
+            "AND LOWER(p.proc_name) = LOWER(rc.target_proc) LIMIT 1) AS target_proc_type, "
+            "(SELECT p.params FROM procedures p WHERE LOWER(p.object) = LOWER(rc.target_object) "
+            "AND LOWER(p.proc_name) = LOWER(rc.target_proc) LIMIT 1) AS target_params, "
+            "(SELECT p.return_type FROM procedures p WHERE LOWER(p.object) = LOWER(rc.target_object) "
+            "AND LOWER(p.proc_name) = LOWER(rc.target_proc) LIMIT 1) AS target_return_type "
+            "FROM resolved_calls rc WHERE rc.object = ? ORDER BY rc.line, rc.to_name_start_col",
             [object_name],
         )
     )

@@ -13,6 +13,7 @@ function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
     proc_name: "f_go", to_name: "f_validate", call_type: "ExCall", line: 10,
     target_object: "w_other", target_proc: "f_validate", kind: "virtual", confidence: "high",
     to_name_start_line: 10, to_name_start_col: 5, to_name_end_line: 10, to_name_end_col: 15,
+    target_proc_type: null, target_params: null, target_return_type: null,
     ...overrides,
   };
 }

@@ -10,6 +10,7 @@ function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
     proc_name: "f_caller", to_name: "f_go", call_type: "ExCall", line: 3,
     target_object: "w_test", target_proc: "f_go", kind: "virtual", confidence: "high",
     to_name_start_line: 3, to_name_start_col: 1, to_name_end_line: 3, to_name_end_col: 5,
+    target_proc_type: null, target_params: null, target_return_type: null,
     ...overrides,
   };
 }
@@ -84,6 +85,30 @@ describe("buildProcTooltip", () => {
     const t = buildProcTooltip("f_go", makeCall(), { caller_count: 4, callee_count: 2 });
     expect(t.html).toContain("Callers: 4");
     expect(t.html).toContain("Callees: 2");
+  });
+
+  it("renders a PB-style signature header when target signature is present", () => {
+    const t = buildProcTooltip("triggerevent", makeCall({
+      target_object: "w_test", target_proc: "triggerevent",
+      target_proc_type: "function", target_params: "trigevent e", target_return_type: "integer",
+    }), undefined);
+    expect(t.html).toContain("Function");
+    expect(t.html).toContain("(trigevent e)");
+    expect(t.html).toContain("returns");
+    expect(t.html).toContain("integer");
+  });
+
+  it("omits 'returns' for a void/subroutine target", () => {
+    const t = buildProcTooltip("of_run", makeCall({
+      target_proc_type: "subroutine", target_params: "", target_return_type: null,
+    }), undefined);
+    expect(t.html).not.toContain("returns");
+  });
+
+  it("falls back to the plain header when target signature is absent", () => {
+    const t = buildProcTooltip("f_go", makeCall({ target_proc_type: null }), undefined);
+    expect(t.html).not.toContain("qi-kind");
+    expect(t.html).toContain("virtual");
   });
 });
 

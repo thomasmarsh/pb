@@ -23,6 +23,9 @@ const resolvedCall: ResolvedCallInfo = {
   to_name_start_col: 1,
   to_name_end_line: 1,
   to_name_end_col: 9,
+  target_proc_type: null,
+  target_params: null,
+  target_return_type: null,
 };
 
 function renderViewer(opts: {

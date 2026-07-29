@@ -123,6 +123,9 @@ export interface ResolvedCallInfo {
   to_name_start_col: number | null;
   to_name_end_line: number | null;
   to_name_end_col: number | null;
+  target_proc_type: string | null;
+  target_params: string | null;
+  target_return_type: string | null;
 }
 
 // Canonical resolved variable/property cross-reference (PB.Analysis.TypeResolve.ResolvedVarRef),
