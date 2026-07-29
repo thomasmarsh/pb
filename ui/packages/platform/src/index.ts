@@ -243,12 +243,14 @@ export {
 export {
   PROC_COLORS,
   PROC_BADGE_COLORS,
+  PROC_TYPE_LABELS,
   buildObjectTooltip,
   buildProcTooltip,
   buildVarTooltip,
   buildProcBarTooltip,
+  renderQuickInfoHeader,
 } from "./components/source/pure/tooltip.js";
-export type { TooltipContent } from "./components/source/pure/tooltip.js";
+export type { TooltipContent, QuickInfoDecl } from "./components/source/pure/tooltip.js";
 
 // UI
 export { BackButton } from "./components/ui/BackButton.js";

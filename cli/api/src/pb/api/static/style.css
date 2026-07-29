@@ -668,14 +668,14 @@ body {
     font-family: 'Inter', sans-serif;
 }
 .source-proc-tooltip.visible { display: block; }
-.source-proc-tooltip .tt-name { font-weight: 600; margin-bottom: 4px; }
-.source-proc-tooltip .tt-meta { color: var(--text-muted); font-size: 11px; }
-.source-proc-tooltip .tt-cc { margin-top: 4px; }
-.source-proc-tooltip .qi-kind { font-weight: 600; }
-.source-proc-tooltip .qi-name { color: var(--text-primary); font-weight: 600; }
-.source-proc-tooltip .qi-params { font-family: 'SF Mono', Menlo, monospace; color: var(--text-muted); }
-.source-proc-tooltip .qi-kw { color: var(--text-muted); font-style: italic; }
-.source-proc-tooltip .qi-type { color: #4ec9b0; }
+.tt-name { font-weight: 600; margin-bottom: 4px; }
+.tt-meta { color: var(--text-muted); font-size: 11px; }
+.tt-cc { margin-top: 4px; }
+.qi-kind { font-weight: 600; }
+.qi-name { color: var(--text-primary); font-weight: 600; }
+.qi-params { font-family: 'SF Mono', Menlo, monospace; color: var(--text-muted); }
+.qi-kw { color: var(--text-muted); font-style: italic; }
+.qi-type { color: #4ec9b0; }
 .context-menu {
     background: var(--bg-card);
     border: 1px solid var(--border);

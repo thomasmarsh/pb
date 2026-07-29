@@ -14,7 +14,7 @@ export const PROC_BADGE_COLORS: Record<string, string> = {
   on: "#4ade80",
 };
 
-const PROC_TYPE_LABELS: Record<string, string> = {
+export const PROC_TYPE_LABELS: Record<string, string> = {
   function: "Function",
   subroutine: "Subroutine",
   event: "Event",
@@ -22,6 +22,23 @@ const PROC_TYPE_LABELS: Record<string, string> = {
 };
 
 export interface TooltipContent { html: string; color: string }
+
+export type QuickInfoDecl =
+  | { shape: "callable"; kindLabel: string; kindColor: string; name: string; params: string; returnType: string | null }
+  | { shape: "value"; kindLabel: string; kindColor: string; name: string; type: string | null };
+
+export function renderQuickInfoHeader(decl: QuickInfoDecl): string {
+  const kind = `<span class="qi-kind" style="color:${decl.kindColor}">‹${decl.kindLabel}›</span>`;
+  const name = `<span class="qi-name">${decl.name}</span>`;
+  if (decl.shape === "callable") {
+    const returns = decl.returnType
+      ? ` <span class="qi-kw">returns</span> <span class="qi-type">${decl.returnType}</span>`
+      : "";
+    return `<div class="tt-name">${kind} ${name} <span class="qi-params">(${decl.params})</span>${returns}</div>`;
+  }
+  const type = decl.type ? ` <span class="qi-params">(${decl.type})</span>` : "";
+  return `<div class="tt-name">${kind} ${name}${type}</div>`;
+}
 
 export function buildObjectTooltip(
   linkName: string,
@@ -50,17 +67,14 @@ export function buildProcTooltip(
   const color = call ? CALL_KIND_COLORS[call.kind] : "#a78bfa";
   let html: string;
   if (call?.target_proc_type) {
-    const kindColor = PROC_BADGE_COLORS[call.target_proc_type] ?? color;
-    const label = PROC_TYPE_LABELS[call.target_proc_type] ?? call.target_proc_type;
-    const name = call.target_proc ?? call.to_name;
-    const returns = call.target_return_type
-      ? ` <span class="qi-kw">returns</span> <span class="qi-type">${call.target_return_type}</span>`
-      : "";
-    html = `<div class="tt-name">` +
-      `<span class="qi-kind" style="color:${kindColor}">‹${label}›</span> ` +
-      `<span class="qi-name">${name}</span> ` +
-      `<span class="qi-params">(${call.target_params ?? ""})</span>${returns}` +
-      `</div>`;
+    html = renderQuickInfoHeader({
+      shape: "callable",
+      kindLabel: PROC_TYPE_LABELS[call.target_proc_type] ?? call.target_proc_type,
+      kindColor: PROC_BADGE_COLORS[call.target_proc_type] ?? color,
+      name: call.target_proc ?? call.to_name,
+      params: call.target_params ?? "",
+      returnType: call.target_return_type,
+    });
   } else {
     html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
   }
@@ -92,19 +106,11 @@ const VAR_KIND_COLORS: Record<ResolvedVarRefInfo["kind"], string> = {
   unresolved: "#6b7280",
 };
 
-const VAR_KIND_BADGES: Record<ResolvedVarRefInfo["kind"], string> = {
-  local: `<span class="badge badge-var">local</span>`,
-  param: `<span class="badge badge-param">param</span>`,
-  instance: `<span class="badge badge-instance">instance</span>`,
-  global: `<span class="badge badge-global">global</span>`,
-  control: `<span class="badge badge-control">control</span>`,
-  class: `<span class="badge badge-class">class</span>`,
-  class_static: `<span class="badge badge-class">class static</span>`,
-  builtin_property: `<span class="badge badge-builtin">builtin</span>`,
-  dw_column: `<span class="badge badge-dwcolumn">dw column</span>`,
-  dw_control: `<span class="badge badge-dwcolumn">dw control</span>`,
-  dw_property: `<span class="badge badge-dwproperty">dw property</span>`,
-  unresolved: `<span class="badge">unresolved</span>`,
+const VAR_KIND_LABELS: Record<ResolvedVarRefInfo["kind"], string> = {
+  local: "Local", param: "Param", instance: "Instance", global: "Global",
+  control: "Control", class: "Class", class_static: "Class Static",
+  builtin_property: "Builtin Property", dw_column: "DW Column",
+  dw_control: "DW Control", dw_property: "DW Property", unresolved: "Unresolved",
 };
 
 export function buildVarTooltip(
@@ -113,12 +119,13 @@ export function buildVarTooltip(
 ): TooltipContent | null {
   if (!ref) return null;
   const color = VAR_KIND_COLORS[ref.kind];
-  const badge = VAR_KIND_BADGES[ref.kind];
-  let html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
-  html += `<div class="tt-cc">${badge}</div>`;
-  if (ref.declared_type) {
-    html += `<div class="tt-meta">${ref.declared_type}</div>`;
-  }
+  let html = renderQuickInfoHeader({
+    shape: "value",
+    kindLabel: VAR_KIND_LABELS[ref.kind],
+    kindColor: color,
+    name: linkName,
+    type: ref.declared_type,
+  });
   if (ref.target_object) {
     html += `<div class="tt-meta" style="color:#5B8DD9">${ref.target_object}</div>`;
   }
@@ -135,10 +142,14 @@ export function buildProcBarTooltip(
   const displayName = p.owner && p.owner !== viewedObjectName
     ? `${p.owner} · ${p.name}` : p.name;
   const cc = p.cyclomatic != null ? `CC: ${p.cyclomatic}` : "";
-  const ret = p.return_type ? ` → ${p.return_type}` : "";
-  return `<div class="tt-name" style="color:${badgeColor}">${displayName}</div>` +
-    `<div class="tt-meta">${p.proc_type} ${p.modifiers ?? ""}${ret}</div>` +
-    (p.params ? `<div class="tt-meta">(${p.params})</div>` : "") +
+  return renderQuickInfoHeader({
+    shape: "callable",
+    kindLabel: PROC_TYPE_LABELS[p.proc_type] ?? p.proc_type,
+    kindColor: badgeColor,
+    name: displayName,
+    params: p.params ?? "",
+    returnType: p.return_type,
+  }) +
     `<div class="tt-meta">Lines ${p.start_line}–${p.end_line}</div>` +
     (cc ? `<div class="tt-cc"><span class="badge badge-cc">${cc}</span></div>` : "") +
     (counts ? `<div class="tt-meta">Callers: ${counts.caller_count} · Callees: ${counts.callee_count}</div>` : "");

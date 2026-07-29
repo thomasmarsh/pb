@@ -8,6 +8,7 @@ import type { AppAction } from "../../../actions.js";
 import {
   CodeBlock, Loading, DetailHeader, BackButton, EntityListCard,
   AnalysisSummaryBar, ContextualPanel,
+  renderQuickInfoHeader, PROC_TYPE_LABELS, PROC_BADGE_COLORS,
 } from "@pb/platform";
 import type { SummaryItem } from "@pb/platform";
 import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
@@ -144,11 +145,17 @@ function ProcedureDetailContent(props: {
   }
 
   const subtitle = (
-    <div style={{ "font-size": "12px", color: "var(--text-muted)" }}>
-      {p.modifiers && <span>{p.modifiers} </span>}
-      {p.params && <span>({p.params}) </span>}
-      {p.return_type && <span>returns {p.return_type} </span>}
-    </div>
+    <div
+      style={{ "font-size": "12px" }}
+      innerHTML={renderQuickInfoHeader({
+        shape: "callable",
+        kindLabel: PROC_TYPE_LABELS[p.proc_type] ?? p.proc_type,
+        kindColor: PROC_BADGE_COLORS[p.proc_type] ?? "var(--accent)",
+        name: p.name,
+        params: p.params ?? "",
+        returnType: p.return_type,
+      })}
+    />
   );
 
   return (
@@ -157,12 +164,7 @@ function ProcedureDetailContent(props: {
         name={`${p.object}.`}
         badgeClass={`badge-${bc}`}
         badgeLabel={p.proc_type}
-        subtitle={
-          <>
-            <span style={{ color: "var(--accent)" }}>{p.name}</span>{" "}
-            {subtitle}
-          </>
-        }
+        subtitle={subtitle}
       />
 
       <AnalysisSummaryBar items={summaryItems()} />

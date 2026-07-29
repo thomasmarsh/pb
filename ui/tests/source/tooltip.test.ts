@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   buildObjectTooltip, buildProcTooltip, buildVarTooltip, buildProcBarTooltip,
+  renderQuickInfoHeader,
   PROC_COLORS, PROC_BADGE_COLORS,
 } from "@pb/platform";
-import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo, QuickInfoDecl } from "@pb/platform";
 
 function makeCall(overrides: Partial<ResolvedCallInfo> = {}): ResolvedCallInfo {
   return {
@@ -31,6 +32,50 @@ describe("PROC_COLORS / PROC_BADGE_COLORS", () => {
       expect(PROC_COLORS[t]).toBeDefined();
       expect(PROC_BADGE_COLORS[t]).toBeDefined();
     }
+  });
+});
+
+describe("renderQuickInfoHeader", () => {
+  it("renders callable shape with return type", () => {
+    const decl: QuickInfoDecl = {
+      shape: "callable", kindLabel: "Function", kindColor: "#a78bfa",
+      name: "of_go", params: "ai_x integer", returnType: "boolean",
+    };
+    const html = renderQuickInfoHeader(decl);
+    expect(html).toContain("‹Function›");
+    expect(html).toContain('<span class="qi-name">of_go</span>');
+    expect(html).toContain("(ai_x integer)");
+    expect(html).toContain("returns");
+    expect(html).toContain("boolean");
+  });
+
+  it("renders callable shape without return type", () => {
+    const decl: QuickInfoDecl = {
+      shape: "callable", kindLabel: "Subroutine", kindColor: "#fb923c",
+      name: "of_run", params: "", returnType: null,
+    };
+    const html = renderQuickInfoHeader(decl);
+    expect(html).not.toContain("returns");
+  });
+
+  it("renders value shape with type", () => {
+    const decl: QuickInfoDecl = {
+      shape: "value", kindLabel: "Instance", kindColor: "#98c379",
+      name: "ii_count", type: "integer",
+    };
+    const html = renderQuickInfoHeader(decl);
+    expect(html).toContain("‹Instance›");
+    expect(html).toContain('<span class="qi-name">ii_count</span>');
+    expect(html).toContain("(integer)");
+  });
+
+  it("renders value shape without type", () => {
+    const decl: QuickInfoDecl = {
+      shape: "value", kindLabel: "Local", kindColor: "#9cdcfe",
+      name: "li_x", type: null,
+    };
+    const html = renderQuickInfoHeader(decl);
+    expect(html).not.toContain("qi-params");
   });
 });
 
@@ -117,31 +162,31 @@ describe("buildVarTooltip", () => {
     expect(buildVarTooltip("li_x", undefined)).toBeNull();
   });
 
-  it("uses parameter color for params", () => {
+  it("uses parameter color and label for params", () => {
     const t = buildVarTooltip("as_name", makeVarRef({ kind: "param" }));
     expect(t?.color).toBe("#4fc1ff");
-    expect(t?.html).toContain("badge-param");
+    expect(t?.html).toContain("‹Param›");
   });
 
-  it("uses local color for locals", () => {
+  it("uses local color and label for locals", () => {
     const t = buildVarTooltip("li_x", makeVarRef({ kind: "local" }));
     expect(t?.color).toBe("#9cdcfe");
-    expect(t?.html).toContain("badge-var");
+    expect(t?.html).toContain("‹Local›");
   });
 
-  it("uses a distinct instance color and badge (not the keyword purple)", () => {
+  it("uses a distinct instance color and label (not the keyword purple)", () => {
     const t = buildVarTooltip("ii_count", makeVarRef({ kind: "instance" }));
     expect(t?.color).toBe("#98c379");
     expect(t?.color).not.toBe("#c586c0");
-    expect(t?.html).toContain("badge-instance");
+    expect(t?.html).toContain("‹Instance›");
   });
 
-  it("uses a distinct dw_column color and badge, distinguishable from builtin_property (Plan 196 Phase 4 item 1)", () => {
+  it("uses a distinct dw_column color and DW-aware label, distinguishable from builtin_property (Plan 196 Phase 4 item 1)", () => {
     const t = buildVarTooltip("kodfinal", makeVarRef({ kind: "dw_column", declared_type: "string" }));
     expect(t?.color).toBe("#4dd0e1");
     expect(t?.color).not.toBe("#dcdcaa");
-    expect(t?.html).toContain("badge-dwcolumn");
-    expect(t?.html).toContain("string");
+    expect(t?.html).toContain("‹DW Column›");
+    expect(t?.html).toContain("(string)");
   });
 
   it("includes target_object when present", () => {
@@ -149,14 +194,14 @@ describe("buildVarTooltip", () => {
     expect(t?.html).toContain("w_child");
   });
 
-  it("includes declared_type when present", () => {
+  it("includes declared_type in the header when present", () => {
     const t = buildVarTooltip("li_x", makeVarRef({ kind: "local", declared_type: "long" }));
-    expect(t?.html).toContain("long");
+    expect(t?.html).toContain("(long)");
   });
 
-  it("omits a declared_type line when null", () => {
+  it("omits the parenthesized type when declared_type is null", () => {
     const t = buildVarTooltip("ii_count", makeVarRef({ kind: "builtin_property", declared_type: null }));
-    expect(t?.html).not.toContain("tt-meta\">null");
+    expect(t?.html).not.toContain("qi-params");
   });
 });
 
@@ -202,7 +247,7 @@ describe("buildProcBarTooltip", () => {
       start_line: 1, end_line: 5, cyclomatic: 1,
     };
     const html = buildProcBarTooltip(ev, undefined, "#fff", "w_foo");
-    expect(html).toContain(">open<");
+    expect(html).toContain('<span class="qi-name">open</span>');
     expect(html).not.toContain("w_foo · open");
   });
 });
