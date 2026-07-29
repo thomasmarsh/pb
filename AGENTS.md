@@ -80,6 +80,14 @@ signature index.** Use `rg` to find the relevant module and read it directly
   current-state metrics and status; update plan files referencing superseded
   counts/signatures/status; append any new scope found to BACKLOG — never
   discard it silently.
+- **BACKLOG.md entries stay short — one wrapped-prose line, roughly under
+  400 characters.** Full narration (bug root-causes, verification numbers,
+  session-by-session history) belongs in that item's `doc/plan/NNN-*.md`
+  plan file, cited inline as `(doc/plan/NNN-slug.md)` — create the plan file
+  if one doesn't exist yet, rather than writing the narration into BACKLOG
+  itself. `doc/plan/` is gitignored, so BACKLOG.md has no git history of its
+  own; the plan file is the durable record, not this file. Never put prose
+  in a markdown table cell, only use flat bullet list.
 
 ---
 
