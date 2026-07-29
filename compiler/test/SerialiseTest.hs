@@ -34,7 +34,7 @@ hasField _ _          = False
 emptySrFile :: SrFile
 emptySrFile = SrFile
   { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
-  , srVariables = [], srGlobalInstances = [], srTypeBlocks = []
+  , srVariables = [], srGlobalInstances = [], srTypeBlocks = [], srStructureBlocks = []
   , srOnBlocks = [], srEvents = [], srFunctions = [], srSubroutines = []
   }
 

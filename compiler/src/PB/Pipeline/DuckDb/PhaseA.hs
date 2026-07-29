@@ -1,6 +1,7 @@
 module PB.Pipeline.DuckDb.PhaseA
   ( -- Row types
     ObjectRow (..)
+  , StructureRow (..)
   , ProcRow (..)
   , DwObjectRow (..)
   , DwControlRow (..)
@@ -22,6 +23,7 @@ module PB.Pipeline.DuckDb.PhaseA
   , identifierTokenRows
   -- Phase A appenders
   , appendObjects
+  , appendStructures
   , appendProcedures
   , appendDwObjects
   , appendDwControls
@@ -81,6 +83,15 @@ data ObjectRow = ObjectRow
   , orTypeBlocksJson :: Maybe Text
   , orConfidence     :: Text
   , orCategory       :: Text
+  } deriving (Eq, Show)
+
+-- | One row per 'PB.AST.SourceFile.StructureBlock' -- see the @structures@
+-- table's doc comment in 'PB.Pipeline.DuckDb.initSchema' for the
+-- 'srOwner' nesting convention.
+data StructureRow = StructureRow
+  { srFile   :: Text
+  , srObject :: Text
+  , srOwner  :: Maybe Text
   } deriving (Eq, Show)
 
 data ProcRow = ProcRow
@@ -276,6 +287,14 @@ appendObjects pool rows = appendRow pool "objects" $ \app ->
     aMaybeText app (orTypeBlocksJson r)
     aText      app (orConfidence     r)
     aText      app (orCategory       r)
+
+appendStructures :: AppenderPool -> [StructureRow] -> IO ()
+appendStructures _    [] = pure ()
+appendStructures pool rows = appendRow pool "structures" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (srFile   r)
+    aText      app (srObject r)
+    aMaybeText app (srOwner  r)
 
 appendProcedures :: AppenderPool -> [ProcRow] -> IO ()
 appendProcedures _    [] = pure ()

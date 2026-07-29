@@ -35,6 +35,7 @@ module PB.Analysis.TypeResolve
   , extractVarRefs
   , extractDwVarRefs
   , extractGlobalVars
+  , extractStructureFields
   , extractDwControlBindings
   , resolveTypes
   , resolveGlobalTypes
@@ -1024,6 +1025,27 @@ extractGlobalVars file obj sf =
         | gi <- gis
         ]
 
+-- | Extract every structure's field list as 'GlobalVar' rows, keyed by the
+-- structure's own name rather than the file's primary object -- a
+-- structure's fields are conceptually its instance variables, so this
+-- reuses 'global_vars'' shape\/table rather than a bespoke one (mirrors
+-- 'declGlobals' above, sourced from 'srStructureBlocks' in place of
+-- 'srVariables'). Covers every 'StructureBlock' in the file, inline or
+-- standalone alike.
+extractStructureFields :: Text -> SrFile -> [GlobalVar]
+extractStructureFields file sf =
+  [ GlobalVar
+      { gvFile   = file
+      , gvObject = identOrig (sbName sb)
+      , gvName   = identOrig (vdName d)
+      , gvType   = vdType d
+      , gvMods   = vdModifiers d
+      , gvPbType = parseTypeTextAt (vdTypeSpan d) (vdType d)
+      }
+  | sb <- srStructureBlocks sf
+  , d  <- sbFields sb
+  ]
+
 -- | A control (or an object's own outer 'TypeBlock') whose 'dataobject'
 -- property is a literal string. Static-only: this does not follow runtime
 -- aliasing (e.g. @idw_epidom = tab1.page1.uo_epidom.dw@, seen in
@@ -1056,7 +1078,14 @@ extractDwControlBindings file sf =
 -- ---------------------------------------------------------------------------
 -- Workspace-level graph builders
 
--- | All window/userobject-derived type names (not structures).
+-- | All window/userobject-derived type names (not structures). A
+-- body-declared structure ('srStructureBlocks') never reaches
+-- 'srAllTypeDecls' at all (its 'StructureBlock' is a distinct node from
+-- 'TypeBlock'), so the ancestor filter here only guards the residual case
+-- of a structure that is named in a forward block
+-- ('PB.AST.SourceFile.ForwardBlock' entries still parse via the generic
+-- 'PB.Grammar.File.pTypeBlock', so @ancestor == "structure"@ can still
+-- appear there) but never has its own body declaration in this file.
 buildObjectSet :: [SrFile] -> IdentSet
 buildObjectSet = identSetFromList . concatMap fileObjs
   where
@@ -1066,15 +1095,18 @@ buildObjectSet = identSetFromList . concatMap fileObjs
       , T.toLower (tdAncestor td) /= "structure"
       ]
 
--- | All structure-derived type names (user-defined value types).
+-- | All structure-derived type names (user-defined value types): every
+-- body-declared 'StructureBlock' (inline or standalone @.srs@), plus the
+-- forward-only edge case described on 'buildObjectSet'.
 buildUserTypeSet :: [SrFile] -> IdentSet
 buildUserTypeSet = identSetFromList . concatMap fileUserTypes
   where
     fileUserTypes sf =
-      [ tdName td
-      | td <- srAllTypeDecls sf
-      , T.toLower (tdAncestor td) == "structure"
-      ]
+      map sbName (srStructureBlocks sf)
+      <> [ tdName td
+         | td <- srAllTypeDecls sf
+         , T.toLower (tdAncestor td) == "structure"
+         ]
 
 -- ---------------------------------------------------------------------------
 -- Type resolution

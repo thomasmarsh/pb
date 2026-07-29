@@ -3,13 +3,13 @@ module FileTest (tests) where
 import PB.Prelude
 import PB.Grammar.File        ( pForwardBlock, pPrototypesBlock, pVariablesBlock, pTypeDecl, pVarDecl
                               , pGlobalInstance
-                              , pTypeBlock, pOnBlock, pEventBlock, pFunctionBlock, pSubroutineBlock
+                              , pTypeBlock, pStructureBlock, pOnBlock, pEventBlock, pFunctionBlock, pSubroutineBlock
                               , parseSrFile
                               , parseParamsAndThrows
                               )
 import PB.Grammar.Stream      (FileParser, StmtStream (..))
 import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
-                              , TypeDecl (..), TypeBlock (..), mkTypeDecl
+                              , TypeDecl (..), TypeBlock (..), StructureBlock (..), mkTypeDecl
                               , VariablesBlock (..), VarScope (..), VarDecl (..)
                               , GlobalInstance (..)
                               , Param (..)
@@ -653,6 +653,52 @@ tests = testGroup "Grammar.File"
     , testProperty "tbAncestor always non-empty" prop_typeBlock_ancestor_nonempty
     ]
 
+  , testGroup "pStructureBlock"
+    [ testCase "positive: type Name from structure, field list" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "os_data"), (TkDeclKw, "from"), (TkIdent, "structure")]
+              , mkStmt [(TkDatatype, "long"),   (TkIdent, "i_count")]
+              , mkStmt [(TkDatatype, "string"), (TkIdent, "s_string_data")]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        runSection pStructureBlock stmts @?=
+          Right (StructureBlock "os_data"
+                   [ VarDecl [] "long"   (SourceSpan 1 1 1 1) "i_count"
+                   , VarDecl [] "string" (SourceSpan 1 1 1 1) "s_string_data"
+                   ])
+
+    , testCase "positive: case-insensitive ancestor (Structure)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "os_data"), (TkDeclKw, "from"), (TkIdent, "Structure")]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        runSection pStructureBlock stmts @?= Right (StructureBlock "os_data" [])
+
+    , testCase "positive: empty structure body" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "os_empty"), (TkDeclKw, "from"), (TkIdent, "structure")]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        runSection pStructureBlock stmts @?= Right (StructureBlock "os_empty" [])
+
+    , testCase "negative: non-structure ancestor is rejected" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        case runSection pStructureBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected pStructureBlock to reject a non-structure ancestor"
+
+    , testCase "negative: missing end type" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "os_data"), (TkDeclKw, "from"), (TkIdent, "structure")]
+              ]
+        case runSection pStructureBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end type' is missing"
+    ]
+
   , testGroup "pOnBlock"
     [ testCase "positive: on w_main.create" $ do
         let stmts =
@@ -832,6 +878,22 @@ tests = testGroup "Grammar.File"
           Left err -> assertFailure (T.unpack err)
           Right sf -> map evOwner (srEvents sf) @?= [Nothing]
 
+    , testCase "a structure block between a type block and an event does not become its owner" $ do
+        -- TLStructure isn't a TypeBlock, so resolveEventOwners' context
+        -- tracker must leave it alone -- the event still attributes to the
+        -- window, not the structure.
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "type"), (TkIdent, "os_data"), (TkDeclKw, "from"), (TkIdent, "structure")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "open")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case parseSrFile [] stmts of
+          Left err -> assertFailure (T.unpack err)
+          Right sf -> map evOwner (srEvents sf) @?= [Just "w_foo"]
+
     , testCase "on block does not update owner context" $ do
         let stmts =
               [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
@@ -1007,6 +1069,7 @@ tests = testGroup "Grammar.File"
             , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_foo" "nonvisualobject" Nothing) []]
+            , srStructureBlocks = []
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" [] Nothing Nothing Nothing) []]
@@ -1036,6 +1099,7 @@ tests = testGroup "Grammar.File"
             , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" (SourceSpan 1 1 1 1) "i_count"]]
             , srGlobalInstances = []
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_base" "nonvisualobject" Nothing) []]
+            , srStructureBlocks = []
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = []
@@ -1065,9 +1129,33 @@ tests = testGroup "Grammar.File"
             , srTypeBlocks      = [ TypeBlock (mkTypeDecl "w_foo" "window" Nothing) []
                                   , TypeBlock (mkTypeDecl "cb_ok" "commandbutton" (Just "w_foo")) []
                                   ]
+            , srStructureBlocks = []
             , srOnBlocks        = [ OnBlock "w_foo.create" "w_foo" "create" []
                                   , OnBlock "cb_ok.clicked" "cb_ok" "clicked" []
                                   ]
+            , srEvents          = []
+            , srFunctions       = []
+            , srSubroutines     = []
+            }
+
+    , testCase "positive: inline structure declared before the file's real TypeBlock (w_dw_copy.srw shape)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "os_data"), (TkDeclKw, "from"), (TkIdent, "structure")]
+              , mkStmt [(TkDatatype, "long"), (TkIdent, "i_count")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "type"), (TkIdent, "w_dw_copy"), (TkDeclKw, "from"), (TkIdent, "w_center")]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders         = []
+            , srForward         = Nothing
+            , srPrototypes      = Nothing
+            , srVariables       = []
+            , srGlobalInstances = []
+            , srTypeBlocks      = [TypeBlock (mkTypeDecl "w_dw_copy" "w_center" Nothing) []]
+            , srStructureBlocks = [StructureBlock "os_data" [VarDecl [] "long" (SourceSpan 1 1 1 1) "i_count"]]
+            , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = []
             , srSubroutines     = []
@@ -1098,7 +1186,7 @@ tests = testGroup "Grammar.File"
   , testGroup "parseSrFile (integration)"
     [ testCase "empty file" $
         parseSrFile [] [] @?=
-          Right (SrFile [] Nothing Nothing [] [] [] [] [] [] [])
+          Right (SrFile [] Nothing Nothing [] [] [] [] [] [] [] [])
 
     , testCase "header + forward block + one function" $ do
         let headers = ["$PBExportHeader$foo.srf"]
@@ -1118,6 +1206,7 @@ tests = testGroup "Grammar.File"
             , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = []
+            , srStructureBlocks = []
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = [FunctionBlock (FnSig [] "integer" (SourceSpan 1 1 1 1) "f_run" [] Nothing Nothing Nothing) []]
@@ -1143,6 +1232,7 @@ tests = testGroup "Grammar.File"
             , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = []
+            , srStructureBlocks = []
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       =
@@ -1173,6 +1263,7 @@ tests = testGroup "Grammar.File"
             , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" (SourceSpan 1 1 1 1) "i_count"]]
             , srGlobalInstances = [GlobalInstance "u_svc" (SourceSpan 1 1 1 1) "u_svc"]
             , srTypeBlocks      = []
+            , srStructureBlocks = []
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = []
@@ -1192,6 +1283,7 @@ tests = testGroup "Grammar.File"
             , srVariables       = []
             , srGlobalInstances = [GlobalInstance "u_foo" (SourceSpan 1 1 1 1) "u_foo", GlobalInstance "u_bar" (SourceSpan 1 1 1 1) "u_bar"]
             , srTypeBlocks      = []
+            , srStructureBlocks = []
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = []
@@ -1213,6 +1305,7 @@ tests = testGroup "Grammar.File"
             , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "w_main" "window" Nothing) []]
+            , srStructureBlocks = []
             , srOnBlocks        = [OnBlock "w_main.create" "w_main" "create" []]
             , srEvents          = []
             , srFunctions       = []

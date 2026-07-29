@@ -35,6 +35,7 @@ import qualified PbApiTest
 import qualified PipelineTest
 import qualified ProgressTest
 import qualified RunnerTest
+import qualified PassesTest
 import qualified SchemaCategoryTest
 import qualified SchFootprintTest
 import qualified DwFootprintTest
@@ -98,6 +99,7 @@ tests = testGroup "pb-compiler"
   , PipelineTest.tests
   , ProgressTest.tests
   , RunnerTest.tests
+  , PassesTest.tests
   , SchemaCategoryTest.tests
   , SchFootprintTest.tests
   , DwFootprintTest.tests

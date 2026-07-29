@@ -4,6 +4,9 @@ module PB.Pipeline.Passes
   ( runPhaseB
   , PhaseAData (..)
   , emptyPhaseAData
+  -- exposed for testing
+  , ResolveInputs (..)
+  , fetchResolveInputs
   ) where
 
 import PB.Prelude
@@ -27,7 +30,7 @@ import Control.DeepSeq       (force)
 import Control.Exception    (evaluate)
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb (Handle)
-import PB.Pipeline.DuckDb.PhaseA (ObjectRow (..), ProcRow (..))
+import PB.Pipeline.DuckDb.PhaseA (ObjectRow (..), StructureRow (..), ProcRow (..))
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( ProcRows (..)
   , queryTaintInputs
@@ -76,12 +79,13 @@ data PhaseAData = PhaseAData
   , padDwRetrieveColumns :: ![DwRetrieveColRow]
   , padDwJoinLegs        :: ![DwJoinLegRow]
   , padObjectRows        :: ![ObjectRow]
+  , padStructureRows     :: ![StructureRow]
   , padProcedureRows     :: ![ProcRow]
   } deriving (Eq, Show)
 
 -- | Empty initial 'PhaseAData'.
 emptyPhaseAData :: PhaseAData
-emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] []
+emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] [] []
 
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
@@ -255,7 +259,7 @@ runPhaseB conn mDefaultNamespace pad =
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
   (_inh, rcReady) <- resolveTypesAndCalls
-    (fetchResolveInputs padLocalVars padGlobalVars padCallSites padObjectRows padProcedureRows)
+    (fetchResolveInputs padLocalVars padGlobalVars padCallSites padObjectRows padStructureRows padProcedureRows)
     (sinkResolvedOutput conn)
   -- Thread resolved_calls in-memory (Plan 208 Phase 2): extract from the
   -- proof token to avoid re-querying DuckDB for Phase B's own data.
@@ -290,10 +294,25 @@ runPhaseB conn mDefaultNamespace pad =
 -- Fetch/sink helpers for the shape-1 stages (constructed once in runPhaseB,
 -- closed over a real Handle)
 
-fetchResolveInputs :: [LocalVar] -> [GlobalVar] -> [CallSite] -> [ObjectRow] -> [ProcRow] -> IO ResolveInputs
-fetchResolveInputs lvs gvs css objRows procRows = do
-  let objSet = Set.fromList [orObject r | r <- objRows, T.toLower (fromMaybe "" (orAncestor r)) /= "structure"]
-      usrTypes = Set.fromList [orObject r | r <- objRows, T.toLower (fromMaybe "" (orAncestor r)) == "structure"]
+fetchResolveInputs :: [LocalVar] -> [GlobalVar] -> [CallSite] -> [ObjectRow] -> [StructureRow] -> [ProcRow] -> IO ResolveInputs
+fetchResolveInputs lvs gvs css objRows structRows procRows = do
+  -- usrTypes sources from 'structures' (one row per 'StructureBlock', inline
+  -- or standalone) rather than 'objRows'' ancestor text: 'objects' is one
+  -- row per *file*, so before this a structure only got counted when it was
+  -- also a file's primary object (a standalone .srs) -- an inline structure
+  -- coexisting with a real window/user-object TypeBlock in the same file
+  -- was never reachable via objRows at all, so usrTypes was silently empty
+  -- for every inline structure in real runs.
+  let usrTypes = Set.fromList [srObject r | r <- structRows]
+      -- Excludes by 'usrTypes' membership, not 'orCategory r /= "structure"':
+      -- a stdlib-embedded structure (e.g. runtime/datawindowchild.sru, a
+      -- real `type datawindowchild from structure` file under __stdlib__/)
+      -- gets 'category=system' from the blanket stdlib override
+      -- ('objectCategoryForFile'), which would otherwise wrongly let it slip
+      -- into objSet alongside usrTypes -- a category check can't see through
+      -- that override, but 'structures' (this structure's own row,
+      -- unaffected by the category override) always can.
+      objSet = Set.fromList [orObject r | r <- objRows] `Set.difference` usrTypes
       inh = Map.fromList [(mkIdent (orObject r), mkIdent a) | r <- objRows, Just a <- [orAncestor r]]
       procMap = identMapFromListWith identSetUnion
           [(mkIdent (prObject r), identSetSingleton (mkIdent (prProcName r))) | r <- procRows]

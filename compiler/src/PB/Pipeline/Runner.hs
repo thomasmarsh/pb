@@ -58,7 +58,7 @@ import PB.Analysis.DwFootprint
   ( DwFootprintCtx, mkDwFootprintCtx, dwRetrieveFootprint )
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite, GlobalVar (..), ResolvedVarRef
-  , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
+  , extractCallSites, extractDwCallSites, extractGlobalVars, extractStructureFields, extractLocalVars
   , extractVarRefs, extractDwVarRefs
   , extractDwControlBindings
   , paramsToVars
@@ -95,13 +95,13 @@ import PB.Pipeline.DuckDb
   )
 import PB.Pipeline.DuckDb.Appender (AppenderPool, withAppenderPoolTimed)
 import PB.Pipeline.DuckDb.PhaseA
-  ( ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
+  ( ObjectRow (..), StructureRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , SourceFileRow (..)
   , IdentifierTokenRow (..), identifierTokenRows
-  , appendObjects, appendProcedures
+  , appendObjects, appendStructures, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
   , appendDwJoins
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
@@ -160,6 +160,7 @@ emitProgress v = do
 
 data CompiledPs = CompiledPs
   { cpsObjectRow     :: ObjectRow
+  , cpsStructureRows :: [StructureRow]
   , cpsProcRows      :: [ProcRow]
   , cpsLocalVars     :: [LocalVar]
   , cpsDeadVars      :: [DeadVarFinding]
@@ -266,7 +267,21 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  wsEnv controlIdx fp obj sf
         vrs  = extractVarRefs    wsEnv controlIdx fp obj sf
-        gvs  = extractGlobalVars fp obj sf
+        gvs  = extractGlobalVars fp obj sf <> extractStructureFields fp sf
+        -- Owner is Nothing exactly when the structure IS the file's own
+        -- primary object (a standalone .srs file has no other TypeBlock);
+        -- otherwise it's an inline structure nested under this file's real
+        -- window/user object. 'tdWithin' isn't reliable for this: real
+        -- corpus evidence (pbexamw2.pbl/w_fish.srw's `s_fish`) shows an
+        -- inline structure's own body TypeBlock omits 'within' even when
+        -- its forward-block entry carries it, so ownership is derived from
+        -- 'srPrimaryObject' instead, which is already correct for every
+        -- file in the corpus by construction.
+        structureRows =
+          [ StructureRow fp (identOrig (sbName sb))
+              (if identOrig (sbName sb) == obj then Nothing else Just obj)
+          | sb <- srStructureBlocks sf
+          ]
         controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
         -- Shared by both 'aliasBindings' and 'procs' below: one
         -- 'ScopedTypeEnv' per procedure (params + its own body locals),
@@ -417,6 +432,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                              (Just (jsonText (toJSON (srTypeBlocks sf))))
                              confidence
                              (renderObjectCategory (objectCategoryForFile (T.unpack fp)))
+      , cpsStructureRows = structureRows
       , cpsProcRows      = [ r | (r, _, _, _, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
       , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _) <- procs ]
@@ -722,6 +738,7 @@ accumulatePhaseAData pad (CFPs r) = pad
   , padGlobalVars       = cpsGlobalVars r ++ padGlobalVars pad
   , padCallSites        = cpsCallSites r ++ padCallSites pad
   , padObjectRows       = cpsObjectRow r : padObjectRows pad
+  , padStructureRows    = cpsStructureRows r ++ padStructureRows pad
   , padProcedureRows    = cpsProcRows r ++ padProcedureRows pad
   }
 accumulatePhaseAData pad (CFDw r) = pad
@@ -751,6 +768,7 @@ procFlowsToUseRows = flowsToUseRows
 appendToDb :: AppenderPool -> CompiledFile -> IO ()
 appendToDb pool (CFPs r) = do
   appendObjects    pool [cpsObjectRow r]
+  appendStructures pool (cpsStructureRows r)
   appendProcedures pool (cpsProcRows r)
   appendDeadVars   pool (cpsDeadVars r)
   appendTypeMismatches pool (cpsTypeMismatches r)
@@ -989,7 +1007,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- and DDL loading. The pool's scope closes (flushing all appenders)
     -- before runPhaseB starts — this ordering is correctness-critical.
     let phaseATables =
-          [ "objects", "procedures", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
+          [ "objects", "structures", "procedures", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
           , "sql_statement_filters", "sql_statement_tables"
           , "source_files", "parse_errors", "identifier_tokens"

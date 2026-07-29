@@ -22,7 +22,7 @@ import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
 
 emptyFile :: SrFile
-emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
+emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] [] []
 
 -- | Bare (unsubscripted) lvalue segment.
 seg :: Text -> LvSegment

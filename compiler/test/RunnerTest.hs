@@ -1463,6 +1463,7 @@ tests = testGroup "Pipeline.Runner"
     , testCase "accumulatePhaseAData appends CFPs local_vars" $ do
         let cps = CompiledPs
               { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" ""
+              , cpsStructureRows = []
               , cpsProcRows      = []
               , cpsLocalVars     = []
               , cpsDeadVars      = []
@@ -1521,6 +1522,7 @@ tests = testGroup "Pipeline.Runner"
               }
             cps = CompiledPs
               { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" ""
+              , cpsStructureRows = []
               , cpsProcRows      = []
               , cpsLocalVars     = []
               , cpsDeadVars      = []

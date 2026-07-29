@@ -37,6 +37,7 @@ emptySrFile = SrFile
   , srVariables       = []
   , srGlobalInstances = []
   , srTypeBlocks      = []
+  , srStructureBlocks = []
   , srOnBlocks        = []
   , srEvents          = []
   , srFunctions       = []
@@ -1868,12 +1869,9 @@ tests = testGroup "TypeResolve"
 
   , testGroup "extractGlobalVars"
     [ testCase "global variable declaration extracted" $ do
-        let sf = SrFile
-              { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
-              , srVariables = [VariablesBlock GlobalVars
+        let sf = emptySrFile
+              { srVariables = [VariablesBlock GlobalVars
                   [VarDecl [] "long" (SourceSpan 1 1 1 1) "g_counter"]]
-              , srGlobalInstances = [], srTypeBlocks = []
-              , srOnBlocks = [], srEvents = [], srFunctions = [], srSubroutines = []
               }
             gvs = extractGlobalVars "w.srf" "w_test" sf
         case gvs of
@@ -1883,13 +1881,7 @@ tests = testGroup "TypeResolve"
           other -> assertFailure ("expected 1 global var, got " <> show (length other))
 
     , testCase "empty file yields no global vars" $
-        let sf = SrFile
-              { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
-              , srVariables = [], srGlobalInstances = []
-              , srTypeBlocks = [], srOnBlocks = [], srEvents = []
-              , srFunctions = [], srSubroutines = []
-              }
-        in extractGlobalVars "w.srf" "w_test" sf @?= []
+        extractGlobalVars "w.srf" "w_test" emptySrFile @?= []
 
     , testCase "forward-declared global instance is extracted" $
         let sf = emptySrFile

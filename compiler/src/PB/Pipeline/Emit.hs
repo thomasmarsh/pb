@@ -95,7 +95,7 @@ isStdlibPath fp = stdlibPathPrefix `T.isPrefixOf` T.pack fp
 -- their own emit path, which never calls this function).
 data ObjectCategory
   = CatWindow | CatMenu | CatUserObject | CatApplication
-  | CatFunction | CatDataWindow | CatSystem
+  | CatFunction | CatDataWindow | CatSystem | CatStructure
   deriving (Eq, Show)
 
 renderObjectCategory :: ObjectCategory -> Text
@@ -107,17 +107,17 @@ renderObjectCategory cat = case cat of
   CatFunction    -> "function"
   CatDataWindow  -> "datawindow"
   CatSystem      -> "system"
+  CatStructure   -> "structure"
 
 -- | Classifies a PowerScript object file by its export extension -- the PB
 -- IDE names one object kind per extension (Window\/@.srw@, User
 -- Object\/@.sru@, Menu\/@.srm@, Application\/@.sra@, global-function
--- library\/@.srf@). A 'isStdlibPath' path (the embedded runtime stub
--- library) always classifies as 'CatSystem' regardless of its own @.sru@
--- extension. PB's own documentation uses "@.srx@" as generic placeholder
--- notation for "any @.sr@-plus-one-letter extension" (covering every kind
--- here, plus @.srd@\/@.srp@\/@.srj@\/@.srs@) -- never a literal extension a
--- real file uses; the wildcard fallback below covers it the same as any
--- other unrecognized extension.
+-- library\/@.srf@, Structure\/@.srs@). A 'isStdlibPath' path (the embedded
+-- runtime stub library) always classifies as 'CatSystem' regardless of its
+-- own @.sru@ extension. @.srx@ (NVO\/DCOM proxy objects, e.g.
+-- @uo_sales_order.srx@ in the Appeon example corpus) has no dedicated
+-- category yet and falls into the 'CatUserObject' wildcard below, pending a
+-- future 'CatProxy'.
 objectCategoryForFile :: FilePath -> ObjectCategory
 objectCategoryForFile fp
   | isStdlibPath fp = CatSystem
@@ -126,6 +126,7 @@ objectCategoryForFile fp
       ".srm" -> CatMenu
       ".sra" -> CatApplication
       ".srf" -> CatFunction
+      ".srs" -> CatStructure
       _      -> CatUserObject
 
 -- ---------------------------------------------------------------------------
@@ -242,6 +243,7 @@ wrapSrFile withInstr path sf spans ws =
         , "variables"       .= srVariables sf
         , "globalInstances" .= srGlobalInstances sf
         , "typeBlocks"      .= srTypeBlocks sf
+        , "structureBlocks" .= srStructureBlocks sf
         , "onBlocks"    .= [ injectAll emptyProcEnv                           (obBody ob) sp (toJSON ob)
                            | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
         , "events"      .= [ injectAll (procEnvFor (esParams (evSig ev)))     (evBody ev) sp (toJSON ev)

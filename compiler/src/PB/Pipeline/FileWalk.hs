@@ -25,7 +25,7 @@ walkFiles keep root = do
         then walkFiles keep path
         else pure [path | keep path]
 
--- | All PowerScript source files (.srf .srw .sru .srm .sra .srx).
+-- | All PowerScript source files (.srf .srw .sru .srm .sra .srs .srx).
 walkPsFiles :: FilePath -> IO [FilePath]
 walkPsFiles = walkFiles isPsExt
 
@@ -37,8 +37,12 @@ walkDwFiles = walkFiles ((== ".srd") . takeExtension)
 walkAllSrFiles :: FilePath -> IO [FilePath]
 walkAllSrFiles = walkFiles isSrExt
 
+-- | @.srx@ is a real, literal extension used by NVO\/DCOM proxy objects
+-- (e.g. @uo_sales_order.srx@ in the Appeon example corpus) -- not merely
+-- placeholder notation. It parses via the same PowerScript grammar as
+-- @.sru@.
 isPsExt :: FilePath -> Bool
-isPsExt fp = takeExtension fp `elem` [".srf", ".srw", ".sru", ".srm", ".sra", ".srx"]
+isPsExt fp = takeExtension fp `elem` [".srf", ".srw", ".sru", ".srm", ".sra", ".srs", ".srx"]
 
 isSrExt :: FilePath -> Bool
 isSrExt fp = case splitAt 3 (takeExtension fp) of

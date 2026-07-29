@@ -76,6 +76,7 @@ instance ToJSON ForwardBlock     where toJSON = genericToJSON customOptions
 instance ToJSON PrototypesBlock  where toJSON = genericToJSON customOptions
 instance ToJSON VariablesBlock   where toJSON = genericToJSON customOptions
 instance ToJSON TypeBlock        where toJSON = genericToJSON customOptions
+instance ToJSON StructureBlock   where toJSON = genericToJSON customOptions
 instance ToJSON FunctionBlock    where toJSON = genericToJSON customOptions
 instance ToJSON SubroutineBlock  where toJSON = genericToJSON customOptions
 instance ToJSON EventBlock       where toJSON = genericToJSON customOptions

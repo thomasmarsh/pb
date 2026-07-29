@@ -23,7 +23,7 @@ import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
 
 emptyFile :: SrFile
-emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
+emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] [] []
 
 -- | A dataobject= literal, the shape extractDwControlBindings/buildControlIndex scan for.
 dataObjectBody :: Text -> [Located BodyStmt]

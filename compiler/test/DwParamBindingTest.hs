@@ -31,6 +31,7 @@ emptySrFile = SrFile
   , srVariables       = []
   , srGlobalInstances = []
   , srTypeBlocks      = []
+  , srStructureBlocks = []
   , srOnBlocks        = []
   , srEvents          = []
   , srFunctions       = []

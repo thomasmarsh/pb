@@ -169,6 +169,16 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \(file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT, \
         \type_start_line INTEGER, type_start_col INTEGER, \
         \type_end_line INTEGER, type_end_col INTEGER)"
+      -- One row per structure declaration (inline or standalone .srs),
+      -- sidecar to 'objects' the same way dw_objects is -- object is the
+      -- structure's own name (never the enclosing file's primary object);
+      -- owner is NULL for a standalone .srs (the structure IS the file's
+      -- primary object) or the enclosing object's name for an inline
+      -- structure declared within a window/user object file. A structure's
+      -- fields are its own 'global_vars' rows, keyed by this same object
+      -- name -- see 'PB.Analysis.TypeResolve.extractStructureFields'.
+      , "CREATE TABLE IF NOT EXISTS structures \
+        \(file TEXT, object TEXT, owner TEXT)"
       -- var_start_line/col, var_end_line/col carry the def/use variable's
       -- own token span, additive alongside line (the statement's line,
       -- which buildInterprocEdges matches on -- see call_sites above).

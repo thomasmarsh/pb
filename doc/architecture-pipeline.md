@@ -281,7 +281,7 @@ statement node (deferred to E8 — requires lexer changes).
   ├── dw_retrieve_tables / dw_retrieve_columns / dw_retrieve_where / dw_joins
   ├── sql_statements / sql_statement_columns / sql_statement_filters / sql_statement_tables
   ├── catalog_columns / catalog_pks / catalog_fks / catalog_checks   (DDL catalog, --ddl)
-  ├── local_vars / call_sites / global_vars
+  ├── local_vars / call_sites / global_vars / structures
   ├── proc_defs / proc_uses    (def-use chains)
   ├── resolved_types / resolved_calls
   ├── interproc_edges / procedure_summaries
@@ -406,6 +406,12 @@ resolved_var_refs (file TEXT, object TEXT, proc_name TEXT, line INT,
                     name_end_line INT, name_end_col INT)
 global_vars      (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT,
                    type_start_line INT, type_start_col INT, type_end_line INT, type_end_col INT)
+-- One row per structure declaration (inline or standalone .srs), sidecar to
+-- `objects` the same way dw_objects is. object is the structure's own name;
+-- owner is NULL for a standalone .srs (the structure IS the file's primary
+-- object) or the enclosing object's name for an inline structure. A
+-- structure's fields are its own global_vars rows, keyed by this object name.
+structures       (file TEXT, object TEXT, owner TEXT)
 proc_defs        (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
                    stmt_index INT, line INT, kind TEXT,
                    var_start_line INT, var_start_col INT, var_end_line INT, var_end_col INT)

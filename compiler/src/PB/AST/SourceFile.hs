@@ -9,6 +9,7 @@ module PB.AST.SourceFile
   , VarScope (..)
   , TypeDecl (..)
   , TypeBlock (..)
+  , StructureBlock (..)
   , VarDecl (..)
   , GlobalInstance (..)
   , Param (..)
@@ -49,6 +50,7 @@ data SrFile = SrFile
   , srVariables       :: [VariablesBlock]
   , srGlobalInstances :: [GlobalInstance]
   , srTypeBlocks      :: [TypeBlock]
+  , srStructureBlocks :: [StructureBlock]
   , srOnBlocks        :: [OnBlock]
   , srEvents          :: [EventBlock]
   , srFunctions       :: [FunctionBlock]
@@ -114,6 +116,17 @@ mkTypeDeclAt sp name anc within =
 data TypeBlock = TypeBlock
   { tbDecl :: TypeDecl
   , tbBody :: [Located BodyStmt]
+  } deriving (Eq, Show, Generic)
+
+-- | A @type NAME from structure ... end type@ declaration -- a first-class
+-- node distinct from 'TypeBlock' so downstream consumers no longer need to
+-- string-match 'tdAncestor' against the literal @"structure"@ text. A
+-- structure has no ancestor chain, no visual placement, and no procedures,
+-- so it carries only its own name and typed field list (reusing 'VarDecl',
+-- the same shape a @type variables@ block's declarators already use).
+data StructureBlock = StructureBlock
+  { sbName   :: Ident
+  , sbFields :: [VarDecl]
   } deriving (Eq, Show, Generic)
 
 data VarDecl = VarDecl
@@ -206,6 +219,7 @@ instance NFData VariablesBlock
 instance NFData VarScope
 instance NFData TypeDecl
 instance NFData TypeBlock
+instance NFData StructureBlock
 instance NFData VarDecl
 instance NFData GlobalInstance
 instance NFData Param
@@ -230,11 +244,13 @@ srAllTypeDecls sf =
 -- name matches the forward block's first fwdTypes entry -- PowerBuilder's
 -- export convention always declares the file's own type first in forward,
 -- ahead of any nested control forwards, so this is a reliable signal even
--- when a top-level non-visual type (e.g. `type os_data from structure`) is
--- textually declared before the file's real window/user-object type block.
--- Falls back to the textually-first srTypeBlocks entry (old behavior) when
--- there's no forward block or no name match, then to the forward block,
--- then (mkIdent "", Nothing).
+-- when a top-level object-level structure (e.g. `type os_data from
+-- structure`) is textually declared before the file's real window/user-
+-- object type block. Falls back to the textually-first srTypeBlocks entry
+-- (old behavior) when there's no forward block or no name match, then to
+-- the forward block, then to the file's first structure block (a standalone
+-- @.srs@ file has no TypeBlock at all -- its only declared type is the
+-- structure itself), then (mkIdent "", Nothing).
 srPrimaryObject :: SrFile -> (Ident, Maybe Text)
 srPrimaryObject sf = case matchByForwardHead of
   Just (name, anc) -> (name, Just anc)
@@ -243,7 +259,9 @@ srPrimaryObject sf = case matchByForwardHead of
     []     -> case srForward sf of
                 Just (ForwardBlock { fwdTypes = (td:_) }) ->
                   (tdName td, Just (tdAncestor td))
-                _ -> (mkIdent "", Nothing)
+                _ -> case srStructureBlocks sf of
+                       (sb:_) -> (sbName sb, Just "structure")
+                       []     -> (mkIdent "", Nothing)
   where
     matchByForwardHead :: Maybe (Ident, Text)
     matchByForwardHead = do

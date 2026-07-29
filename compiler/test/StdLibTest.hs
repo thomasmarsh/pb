@@ -65,7 +65,7 @@ withStdlibDb act = withHandle inMemory $ \conn -> do
   act conn
   where
     phaseATables =
-      [ "objects", "procedures", "dead_vars", "type_mismatches", "call_sites", "global_vars"
+      [ "objects", "structures", "procedures", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables"
       , "source_files", "parse_errors", "identifier_tokens"
@@ -140,7 +140,7 @@ testUserConfirmed = withHandle inMemory $ \conn -> do
   assertEqual "user object is confirmed" ["confirmed"] confs
   where
     phaseATables =
-      [ "objects", "procedures", "dead_vars", "type_mismatches", "call_sites", "global_vars"
+      [ "objects", "structures", "procedures", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables"
       , "source_files", "parse_errors", "identifier_tokens"

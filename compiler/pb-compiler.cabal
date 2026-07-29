@@ -220,6 +220,7 @@ test-suite pb-compiler-test
     , PipelineTest
     , ProgressTest
     , RunnerTest
+    , PassesTest
     , SchemaCategoryTest
     , SchFootprintTest
     , DwFootprintTest

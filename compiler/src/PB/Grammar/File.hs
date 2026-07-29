@@ -9,6 +9,7 @@ module PB.Grammar.File
   , pVarDecl
   , pGlobalInstance
   , pTypeBlock
+  , pStructureBlock
   , pOnBlock
   , pEventBlock
   , pFunctionBlock
@@ -24,7 +25,7 @@ import PB.AST.Ident       (Ident, identOrig, mkIdentAt, mkIdentDerived)
 import PB.AST.Located     (Located)
 import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
-  , TypeDecl (..), TypeBlock (..), mkTypeDeclAt
+  , TypeDecl (..), TypeBlock (..), StructureBlock (..), mkTypeDeclAt
   , VariablesBlock (..), VarScope (..), VarDecl (..)
   , GlobalInstance (..)
   , Param (..)
@@ -379,6 +380,21 @@ pTypeBlock = do
   (body, _)   <- pBodyUntil "type"
   return (TypeBlock decl body)
 
+-- | @type NAME from structure ... end type@ -- checks 'tdAncestor' once,
+-- here, so no downstream consumer needs its own ancestor-string match.
+-- Fields reuse 'buildVarDecls' (the same declarator-list parser
+-- 'pVariablesBlock' uses), not the generic body-statement classifier, since
+-- a structure's field lines are plain @[mods] type name@ declarators, never
+-- executable statements.
+pStructureBlock :: FileParser StructureBlock
+pStructureBlock = do
+  decl <- pTypeDecl
+  if T.toLower (tdAncestor decl) /= "structure"
+    then fail "not a structure declaration"
+    else do
+      body <- manyTill anyStmt (pEndKw "type")
+      return (StructureBlock (tdName decl) (concatMap buildVarDecls (filter isVarDecl body)))
+
 pBlockSpanned :: (Statement -> Bool) -> (Statement -> Maybe sig) -> (sig -> [Located BodyStmt] -> blk) -> Text -> FileParser (Int, Int, blk)
 pBlockSpanned isDecl extractSig mkBlock endKw = do
   start <- currentLine
@@ -430,6 +446,7 @@ data TopLevelBlock
   | TLVars       VariablesBlock
   | TLGlobalInst GlobalInstance
   | TLType       TypeBlock
+  | TLStructure  StructureBlock
   | TLOn         Int Int OnBlock
   | TLEvent      Int Int EventBlock
   | TLFn         Int Int FunctionBlock
@@ -451,6 +468,7 @@ pAnyTopLevelBlock =
   <|> TLProto      <$> try pPrototypesBlock
   <|> TLVars       <$> try pVariablesBlock
   <|> TLGlobalInst <$> try pGlobalInstance
+  <|> TLStructure  <$> try pStructureBlock
   <|> TLType       <$> try pTypeBlock
   <|> (\(s,e,b) -> TLOn   s e b) <$> try pOnBlockSpanned_
   <|> (\(s,e,b) -> TLEvent s e b) <$> try pEventBlockSpanned_
@@ -491,6 +509,7 @@ pSrFile = do
         , srVariables       = [v  | TLVars       v       <- blocks]
         , srGlobalInstances = [gi | TLGlobalInst gi         <- blocks]
         , srTypeBlocks      = [t  | TLType       t          <- blocks]
+        , srStructureBlocks = [t  | TLStructure  t          <- blocks]
         , srOnBlocks        = [o  | TLOn    _ _ o           <- blocks]
         , srEvents          = [e  | TLEvent _ _ e           <- blocks]
         , srFunctions       = [f  | TLFn    _ _ f           <- blocks]

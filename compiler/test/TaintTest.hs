@@ -25,7 +25,7 @@ at n x = Located n x
 mkSf :: [FunctionBlock] -> [SubroutineBlock] -> [EventBlock] -> [OnBlock] -> SrFile
 mkSf fns subs evs obs = SrFile
   { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
-  , srVariables = [], srGlobalInstances = [], srTypeBlocks = []
+  , srVariables = [], srGlobalInstances = [], srTypeBlocks = [], srStructureBlocks = []
   , srOnBlocks = obs, srEvents = evs, srFunctions = fns, srSubroutines = subs
   }
 

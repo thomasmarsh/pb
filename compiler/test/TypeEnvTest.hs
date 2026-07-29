@@ -5,7 +5,7 @@ import PB.AST.BodyStmt       (BodyStmt (..))
 import PB.AST.Located        (Located (..))
 import PB.AST.Ident          (IdentProvenance (..), identCanon, identOrig, identSetMember, identSpan, mkIdent, mkIdentAt)
 import PB.Lexing.Token       (SourceSpan (..))
-import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..),
+import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..), StructureBlock (..),
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
                               splitAncestorRef, mkTypeDecl)
 import PB.AST.Type           (PbType (..), parseTypeText, parseTypeTextAt)
@@ -22,7 +22,7 @@ import Test.Tasty            (TestTree, testGroup)
 import Test.Tasty.HUnit      (assertFailure, testCase, (@?=))
 
 emptyFile :: SrFile
-emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
+emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] [] []
 
 tests :: TestTree
 tests = testGroup "TypeEnv"
@@ -147,6 +147,19 @@ tests = testGroup "TypeEnv"
                       , fwdInstances = [] })
                   , srTypeBlocks = [TypeBlock (mkTypeDecl "os_data" "structure" Nothing) []] }
         in srPrimaryObject sf @?= ("os_data", Just "structure")
+
+    , testCase "falls back to first structure block when no type blocks or forward exist" $
+        -- Real corpus shape: a standalone .srs file has no forward block and
+        -- no TypeBlock at all -- its only declared type is the structure.
+        let sf = emptyFile { srStructureBlocks = [StructureBlock "s_string_withcount" []] }
+        in srPrimaryObject sf @?= ("s_string_withcount", Just "structure")
+
+    , testCase "type block wins over structure block when both exist with no forward" $
+        let sf = emptyFile
+                  { srTypeBlocks      = [TypeBlock (mkTypeDecl "w_dw_copy" "w_center" Nothing) []]
+                  , srStructureBlocks = [StructureBlock "os_data" []]
+                  }
+        in srPrimaryObject sf @?= ("w_dw_copy", Just "w_center")
     ]
 
   , testGroup "srAllTypeDecls"
@@ -202,6 +215,14 @@ tests = testGroup "TypeEnv"
                       { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] }) }
         in identSetMember "u_st" (buildUserTypeSet [sf]) @?= False
+
+    , testCase "body-declared structure block (standalone .srs or inline) is included" $
+        let sf = emptyFile { srStructureBlocks = [StructureBlock "os_data" []] }
+        in identSetMember "os_data" (buildUserTypeSet [sf]) @?= True
+
+    , testCase "body-declared structure block is excluded from buildObjectSet" $
+        let sf = emptyFile { srStructureBlocks = [StructureBlock "os_data" []] }
+        in identSetMember "os_data" (buildObjectSet [sf]) @?= False
     ]
 
   , testGroup "weGlobals forward instances"
