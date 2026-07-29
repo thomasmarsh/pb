@@ -123,7 +123,8 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
     allTables =
       [ "CREATE TABLE IF NOT EXISTS objects \
         \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT, \
-        \type_blocks_json TEXT, confidence TEXT NOT NULL DEFAULT 'confirmed')"
+        \type_blocks_json TEXT, confidence TEXT NOT NULL DEFAULT 'confirmed', \
+        \category TEXT NOT NULL DEFAULT 'userobject')"
       -- param_names is a '|'-delimited ordered list of just the declared
       -- parameter names (mirrors global_vars.mods's convention) -- PB
       -- taint\/interproc analysis (Phase B, DB round-trip) only ever needs

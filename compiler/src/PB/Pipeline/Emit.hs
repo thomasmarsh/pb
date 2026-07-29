@@ -7,6 +7,11 @@ module PB.Pipeline.Emit
   , reconstructRetrieveSql
   , fileKind
   , FileKind (..)
+  , ObjectCategory (..)
+  , renderObjectCategory
+  , objectCategoryForFile
+  , stdlibPathPrefix
+  , isStdlibPath
   , ParsedFile (..)
   , ParseOutcome (..)
   , parseOutcome
@@ -75,6 +80,54 @@ fileKind fp = case map toLower (takeExtension fp) of
   ".srj" -> Project
   _      -> PowerScript
 
+-- | Prefix marking the embedded runtime stub library's synthetic paths
+-- (see 'PB.Runtime.StdLib.parseStdlibFiles'). Exported so every consumer
+-- checking for it shares one definition of the literal instead of typing
+-- it out independently.
+stdlibPathPrefix :: Text
+stdlibPathPrefix = "__stdlib__/"
+
+isStdlibPath :: FilePath -> Bool
+isStdlibPath fp = stdlibPathPrefix `T.isPrefixOf` T.pack fp
+
+-- | The PB Browser's per-extension object categories for PowerScript files
+-- (DataWindow objects are categorized separately as 'CatDataWindow' by
+-- their own emit path, which never calls this function).
+data ObjectCategory
+  = CatWindow | CatMenu | CatUserObject | CatApplication
+  | CatFunction | CatDataWindow | CatSystem
+  deriving (Eq, Show)
+
+renderObjectCategory :: ObjectCategory -> Text
+renderObjectCategory cat = case cat of
+  CatWindow      -> "window"
+  CatMenu        -> "menu"
+  CatUserObject  -> "userobject"
+  CatApplication -> "application"
+  CatFunction    -> "function"
+  CatDataWindow  -> "datawindow"
+  CatSystem      -> "system"
+
+-- | Classifies a PowerScript object file by its export extension -- the PB
+-- IDE names one object kind per extension (Window\/@.srw@, User
+-- Object\/@.sru@, Menu\/@.srm@, Application\/@.sra@, global-function
+-- library\/@.srf@). A 'isStdlibPath' path (the embedded runtime stub
+-- library) always classifies as 'CatSystem' regardless of its own @.sru@
+-- extension. PB's own documentation uses "@.srx@" as generic placeholder
+-- notation for "any @.sr@-plus-one-letter extension" (covering every kind
+-- here, plus @.srd@\/@.srp@\/@.srj@\/@.srs@) -- never a literal extension a
+-- real file uses; the wildcard fallback below covers it the same as any
+-- other unrecognized extension.
+objectCategoryForFile :: FilePath -> ObjectCategory
+objectCategoryForFile fp
+  | isStdlibPath fp = CatSystem
+  | otherwise = case map toLower (takeExtension fp) of
+      ".srw" -> CatWindow
+      ".srm" -> CatMenu
+      ".sra" -> CatApplication
+      ".srf" -> CatFunction
+      _      -> CatUserObject
+
 -- ---------------------------------------------------------------------------
 -- DataWindow
 
@@ -86,6 +139,7 @@ wrapDwFile path dw = case toJSON dw of
   Object o -> Object (KM.fromList
     [ "file" .= path
     , "kind" .= ("datawindow" :: Text)
+    , "category" .= renderObjectCategory CatDataWindow
     , "meta" .= object
         [ "object"   .= T.pack (takeBaseName path)
         , "ancestor" .= (Nothing :: Maybe Text)
@@ -180,6 +234,7 @@ wrapSrFile withInstr path sf spans ws =
     in object
         [ "file"            .= path
         , "kind"            .= ("powerscript" :: Text)
+        , "category"        .= renderObjectCategory (objectCategoryForFile path)
         , "meta"            .= object ["object" .= objName', "ancestor" .= ancestor]
         , "headers"         .= srHeaders sf
         , "forward"         .= srForward sf

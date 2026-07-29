@@ -6,7 +6,7 @@ import Data.FileEmbed (embedDir)
 import qualified Data.ByteString   as BS
 import qualified Data.Text         as T
 import qualified Data.Text.Encoding as TE
-import PB.Pipeline.Emit (ParsedFile (..), parsePowerScriptFile, stripBom)
+import PB.Pipeline.Emit (ParsedFile (..), parsePowerScriptFile, stripBom, stdlibPathPrefix)
 import PB.AST.SourceFile (ParseError (..))
 import System.FilePath  (takeFileName)
 
@@ -20,7 +20,7 @@ parseStdlibFiles :: IO [ParsedFile]
 parseStdlibFiles = mapM parseOne stdlibBytes
   where
     parseOne (path, bytes) =
-      let virtualPath = "__stdlib__/" <> takeFileName path
+      let virtualPath = T.unpack stdlibPathPrefix <> takeFileName path
           src         = stripBom (TE.decodeUtf8 bytes)
       in case parsePowerScriptFile src of
            Left err          -> error ("stdlib: " <> virtualPath <> ": " <> T.unpack (peMessage err))

@@ -29,7 +29,7 @@ def pbl_name(file_path: str) -> str:
 
 _ALL_OBJECTS_CTE = """
 WITH all_objects AS (
-    SELECT object, kind, file, ancestor FROM objects
+    SELECT object, kind, file, ancestor, category FROM objects
     WHERE file NOT LIKE '__stdlib__%'
 )
 """
@@ -67,7 +67,7 @@ def list_objects(
     items = rows(
         conn.execute(
             f"{_ALL_OBJECTS_CTE}"
-            f"SELECT o.object AS name, o.kind, o.file, o.ancestor "
+            f"SELECT o.object AS name, o.kind, o.file, o.ancestor, o.category "
             f"FROM all_objects o {where} "
             f"ORDER BY o.{sort_col} {sort_dir} "
             f"LIMIT ? OFFSET ?",
@@ -78,7 +78,7 @@ def list_objects(
 
 
 def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor FROM objects WHERE object = ? AND file NOT LIKE '__stdlib__%'", [name]))
+    obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor, category FROM objects WHERE object = ? AND file NOT LIKE '__stdlib__%'", [name]))
     if not obj_rows:
         return None
     obj = obj_rows[0]
@@ -430,7 +430,7 @@ def get_dw_queries(conn: duckdb.DuckDBPyConnection) -> dict[str, str]:
 
 
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
-    obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects WHERE file NOT LIKE '__stdlib__%' ORDER BY kind, object"))
+    obj_rows = rows(conn.execute("SELECT object AS name, kind, file, category FROM objects WHERE file NOT LIKE '__stdlib__%' ORDER BY kind, object"))
     proc_rows = rows(
         conn.execute(
             "SELECT object, owner, proc_type, proc_name AS name, params, return_type, "
@@ -449,6 +449,7 @@ def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         obj_entry = {
             "name": obj["name"],
             "kind": obj["kind"],
+            "category": obj["category"],
             "file": fpath,
             "procedures": procs_by_obj.get(obj["name"], []),
         }

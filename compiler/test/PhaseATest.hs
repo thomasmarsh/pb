@@ -59,8 +59,8 @@ testAppendObjects = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendObjects pool
-      [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing "confirmed"
-      , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing "confirmed"
+      [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing "confirmed" "function"
+      , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing "confirmed" "userobject"
       ]
     -- Appending an empty list after a real batch must not throw
     appendObjects pool []

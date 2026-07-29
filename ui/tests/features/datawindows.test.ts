@@ -32,7 +32,7 @@ describe("datawindows reducer", () => {
 
     it("fires getObjects effect via receive", () => {
       const data: ListObjectsResponse = {
-        items: [{ name: "dw1", kind: "datawindow", file: "f", ancestor: null }],
+        items: [{ name: "dw1", kind: "datawindow", category: "datawindow", file: "f", ancestor: null }],
         total: 1, offset: 0, limit: 200,
       };
       const env: DatawindowsEnv = { ...mockEnv, getObjects: () => Effect.send(data) };
@@ -53,8 +53,8 @@ describe("datawindows reducer", () => {
     it("populates items, total, and clears loading", () => {
       const data: ListObjectsResponse = {
         items: [
-          { name: "dw1", kind: "datawindow", file: "f", ancestor: null },
-          { name: "dw2", kind: "datawindow", file: "f", ancestor: null },
+          { name: "dw1", kind: "datawindow", category: "datawindow", file: "f", ancestor: null },
+          { name: "dw2", kind: "datawindow", category: "datawindow", file: "f", ancestor: null },
         ],
         total: 2, offset: 0, limit: 200,
       };

@@ -66,7 +66,7 @@ describe("Search component", () => {
       search: {
         term: "test", loading: false,
         results: {
-          objects: [{ name: "w_main", kind: "powerscript", file: "f.pbl", ancestor: null }],
+          objects: [{ name: "w_main", kind: "powerscript", category: "window", file: "f.pbl", ancestor: null }],
           procedures: [],
           datawindows: [],
           tables: [],
@@ -100,7 +100,7 @@ describe("Search component", () => {
       search: {
         term: "test", loading: false,
         results: {
-          objects: [{ name: "w_main", kind: "powerscript", file: "f.pbl", ancestor: null }],
+          objects: [{ name: "w_main", kind: "powerscript", category: "window", file: "f.pbl", ancestor: null }],
           procedures: [],
           datawindows: [],
           tables: [],

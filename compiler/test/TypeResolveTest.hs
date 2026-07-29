@@ -187,6 +187,11 @@ tests = testGroup "TypeResolve"
           let (k, t) = classifyPbType (PtPrimitive "transaction") identSetEmpty identSetEmpty
           k @?= "object"
           t @?= Just "transaction"
+
+      , testCase "PtPrimitive menu → object (built-in class)" $ do
+          let (k, t) = classifyPbType (PtPrimitive "menu") identSetEmpty identSetEmpty
+          k @?= "object"
+          t @?= Just "menu"
       ]
 
   , testGroup "extractLocalVars"

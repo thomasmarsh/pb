@@ -339,7 +339,7 @@ builtinClassNames = Set.fromList
   , "powerobject", "userobject", "oleobject"
   , "singlelineedit", "multilineedit", "listbox", "dropdownlistbox"
   , "commandbutton", "checkbox", "radiobutton", "statictext"
-  , "window", "childwindow", "sheet", "tab"
+  , "window", "childwindow", "sheet", "tab", "menu"
   ]
 
 -- | The narrower subset of 'builtinClassNames' that carries the

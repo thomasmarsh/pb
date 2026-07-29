@@ -29,6 +29,7 @@ tests = testGroup "StdLib"
   , testCase "loadStdlib: all rows have confidence=speculative" testConfidence
   , testCase "user-code rows have confidence=confirmed"        testUserConfirmed
   , testCase "stdlib TypeEnv contains inheritance chain"       testInheritance
+  , testCase "loadStdlib: all rows have category=system despite .sru extension" testCategory
   ]
 
 newtype OneText = OneText { unOneText :: Text }
@@ -117,6 +118,11 @@ testConfidence = withStdlibDb $ \conn -> do
   badProcs <- queryOneTexts conn
     "SELECT proc_name FROM procedures WHERE confidence != 'speculative'"
   assertEqual "all procedure rows speculative" [] badProcs
+
+testCategory :: IO ()
+testCategory = withStdlibDb $ \conn -> do
+  cats <- queryOneTexts conn "SELECT DISTINCT category FROM objects"
+  assertEqual "all stdlib object rows are category=system" ["system"] cats
 
 testUserConfirmed :: IO ()
 testUserConfirmed = withHandle inMemory $ \conn -> do

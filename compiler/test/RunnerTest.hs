@@ -2,7 +2,7 @@ module RunnerTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, appendToDb, catalogToRows, validateDdlNamespaceConfig, runModeDb, CompiledFile (..), CompiledPs (..), CompiledDw (..), accumulatePhaseAData, sqlStmtColumnRowToSqlColRow, dwRetrieveColumnRowToDwRetrieveColRow)
-import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
+import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..), ObjectCategory (..), objectCategoryForFile)
 import PB.AST.SourceFile   (ParseError (..))
 import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Pipeline.DuckDb.PhaseA
@@ -356,6 +356,42 @@ tests = testGroup "Pipeline.Runner"
         case runFile "dw_sales.srd" src of
           Left _  -> pure ()  -- skip if DW fixture doesn't parse
           Right v -> lookupObj2 "meta" "object" v @?= String "dw_sales"
+    ]
+
+  , testGroup "runFile category field"
+    [ testCase "wrapSrFile emits category=window for .srw" $
+        case runFile "w_test.srw" "" of
+          Left err -> assertFailure (T.unpack err)
+          Right v  -> lookupObj "category" v @?= String "window"
+
+    , testCase "wrapSrFile emits category=userobject for .sru" $
+        case runFile "u_test.sru" "" of
+          Left err -> assertFailure (T.unpack err)
+          Right v  -> lookupObj "category" v @?= String "userobject"
+
+    , testCase "wrapSrFile emits category=menu for .srm" $
+        case runFile "m_test.srm" "" of
+          Left err -> assertFailure (T.unpack err)
+          Right v  -> lookupObj "category" v @?= String "menu"
+
+    , testCase "wrapSrFile emits category=application for .sra" $
+        case runFile "a_test.sra" "" of
+          Left err -> assertFailure (T.unpack err)
+          Right v  -> lookupObj "category" v @?= String "application"
+
+    , testCase "wrapSrFile emits category=function for .srf" $
+        case runFile "f_test.srf" "" of
+          Left err -> assertFailure (T.unpack err)
+          Right v  -> lookupObj "category" v @?= String "function"
+
+    , testCase "wrapDwFile emits category=datawindow for .srd" $ do
+        let src = "datawindow(units=0 timer_interval=0)\nend datawindow\n"
+        case runFile "dw_sales.srd" src of
+          Left _  -> pure ()  -- skip if DW fixture doesn't parse
+          Right v -> lookupObj "category" v @?= String "datawindow"
+
+    , testCase "objectCategoryForFile classifies a stdlib-prefixed path as system regardless of extension" $
+        objectCategoryForFile "__stdlib__/nvo_base.sru" @?= CatSystem
     ]
 
   , testGroup "production wiring uses compileProcedureViaEffTerm (Plan 167 Phase 7 Step 6)"
@@ -1426,7 +1462,7 @@ tests = testGroup "Pipeline.Runner"
 
     , testCase "accumulatePhaseAData appends CFPs local_vars" $ do
         let cps = CompiledPs
-              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing ""
+              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" ""
               , cpsProcRows      = []
               , cpsLocalVars     = []
               , cpsDeadVars      = []
@@ -1484,7 +1520,7 @@ tests = testGroup "Pipeline.Runner"
               , Dataflow.pfAllUses     = mempty
               }
             cps = CompiledPs
-              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing ""
+              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" ""
               , cpsProcRows      = []
               , cpsLocalVars     = []
               , cpsDeadVars      = []

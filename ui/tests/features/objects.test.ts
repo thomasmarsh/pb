@@ -73,7 +73,7 @@ describe("objects reducer", () => {
   describe("objects/loaded", () => {
     it("populates items, total, and clears loading", () => {
       const data: ListObjectsResponse = {
-        items: [{ name: "foo", kind: "powerscript", file: "x", ancestor: null }],
+        items: [{ name: "foo", kind: "powerscript", category: "userobject", file: "x", ancestor: null }],
         total: 42, offset: 0, limit: 100,
       };
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);

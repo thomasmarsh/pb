@@ -32,6 +32,7 @@ def test_get_object_detail_returns_dict(db_conn: duckdb.DuckDBPyConnection):
     result = get_object_detail(db_conn, "fn_sqlerror")
     assert result is not None
     assert result["name"] == "fn_sqlerror"
+    assert result["category"] == "function"  # fn_sqlerror.srf
     assert "procedures" in result
     assert "metrics" in result
     assert "ancestors" in result
@@ -178,6 +179,7 @@ def test_get_explore_tree_includes_datawindows(db_conn: duckdb.DuckDBPyConnectio
     for obj in dw_objs:
         assert "name" in obj
         assert "file" in obj
+        assert obj["category"] == "datawindow"
         assert obj["procedures"] == []
 
 
@@ -189,6 +191,25 @@ _DW_TOP_LEVEL_KEYS = {"release", "object", "table", "bands", "groups", "controls
 _CONTROL_KEYS = {"type", "band", "name", "id", "x", "y", "width", "height",
                  "visible", "expression", "parsedExpression", "format", "parsedFormat",
                  "tabSeq", "attrs"}
+
+
+def test_get_explore_tree_category_matches_file_extension(db_conn: duckdb.DuckDBPyConnection):
+    """Every PowerScript object's category agrees with its export extension
+    across the whole real corpus, not just one hand-picked name."""
+    result = get_explore_tree(db_conn)
+    all_objects = [obj for lib in result["libraries"] for obj in lib["objects"]]
+    ext_to_category = {
+        ".srw": "window", ".sru": "userobject", ".srm": "menu",
+        ".sra": "application", ".srf": "function",
+    }
+    checked = 0
+    for obj in all_objects:
+        file = obj.get("file", "").lower()
+        for ext, expected in ext_to_category.items():
+            if file.endswith(ext):
+                assert obj["category"] == expected, f"{file}: expected category {expected}, got {obj['category']}"
+                checked += 1
+    assert checked > 0, "no PowerScript objects found in the fixture corpus to check category against"
 
 
 def test_dw_layout_top_level_keys(db_conn: duckdb.DuckDBPyConnection):

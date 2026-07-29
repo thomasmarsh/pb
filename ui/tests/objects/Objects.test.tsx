@@ -7,9 +7,9 @@ import { Objects } from "../../app/src/views/features/objects/Objects.js";
 import { initialObjectsState } from "@pb/platform";
 
 const sampleItems = [
-  { name: "w_main", kind: "powerscript", file: "app.pbl", ancestor: "w_base" },
-  { name: "d_emp", kind: "datawindow", file: "app.pbl", ancestor: null },
-  { name: "p_util", kind: "project", file: "app.pbl", ancestor: null },
+  { name: "w_main", kind: "powerscript", category: "window", file: "app.pbl", ancestor: "w_base" },
+  { name: "d_emp", kind: "datawindow", category: "datawindow", file: "app.pbl", ancestor: null },
+  { name: "p_util", kind: "project", category: "userobject", file: "app.pbl", ancestor: null },
 ];
 
 describe("Objects component", () => {

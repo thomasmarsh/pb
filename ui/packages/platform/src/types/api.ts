@@ -7,6 +7,7 @@ import type { WiringNode } from "@pb/interpreter";
 export interface ObjectRow {
   name: string;
   kind: "powerscript" | "datawindow" | "project" | string;
+  category: "window" | "menu" | "userobject" | "application" | "function" | "datawindow" | "system" | string;
   file: string;
   ancestor: string | null;
 }

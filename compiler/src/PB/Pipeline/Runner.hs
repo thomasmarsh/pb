@@ -76,6 +76,7 @@ import PB.Pipeline.Emit
   , parseOutcome
   , extractWindowLayout, reconstructRetrieveSql, collectStatements
   , wrapSrFile
+  , ObjectCategory (..), renderObjectCategory, objectCategoryForFile
   )
 import PB.Runtime.StdLib (parseStdlibFiles)
 import PB.Pipeline.Passes    (runPhaseB, PhaseAData (..), emptyPhaseAData)
@@ -415,6 +416,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
                              (Just (jsonText (toJSON (srTypeBlocks sf))))
                              confidence
+                             (renderObjectCategory (objectCategoryForFile (T.unpack fp)))
       , cpsProcRows      = [ r | (r, _, _, _, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
       , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _) <- procs ]
@@ -704,6 +706,7 @@ dwJoinRowToJoinLegRow r =
 dwObjectRowToObjectRow :: DwObjectRow -> ObjectRow
 dwObjectRowToObjectRow dw =
   ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"
+    (renderObjectCategory CatDataWindow)
 
 -- | Accumulate a 'CompiledFile''s compiler-only table data into a
 -- 'PhaseAData' workspace, concatenating the lists. Returns the pad
@@ -764,7 +767,8 @@ appendToDb pool (CFPs r) = do
   appendIdentifierTokens pool (cpsIdentifierTokens r)
 appendToDb pool (CFDw r) = do
   let dw = cdDwObjectRow r
-  appendObjects           pool [ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"]
+  appendObjects           pool [ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"
+                                   (renderObjectCategory CatDataWindow)]
   appendDwObjects        pool [dw]
   appendDwControls       pool (cdDwControls r)
   appendDwRetrieveTables pool (cdDwRetrieveTables r)

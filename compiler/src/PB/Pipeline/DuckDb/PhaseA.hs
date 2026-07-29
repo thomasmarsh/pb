@@ -80,6 +80,7 @@ data ObjectRow = ObjectRow
   , orLayoutJson     :: Maybe Text
   , orTypeBlocksJson :: Maybe Text
   , orConfidence     :: Text
+  , orCategory       :: Text
   } deriving (Eq, Show)
 
 data ProcRow = ProcRow
@@ -274,6 +275,7 @@ appendObjects pool rows = appendRow pool "objects" $ \app ->
     aMaybeText app (orLayoutJson     r)
     aMaybeText app (orTypeBlocksJson r)
     aText      app (orConfidence     r)
+    aText      app (orCategory       r)
 
 appendProcedures :: AppenderPool -> [ProcRow] -> IO ()
 appendProcedures _    [] = pure ()

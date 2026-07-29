@@ -10,6 +10,7 @@ import type { ObjectDetailResponse, ObjectSourceResponse } from "@pb/platform";
 const baseDetail: ObjectDetailResponse = {
   name: "w_main",
   kind: "powerscript",
+  category: "window",
   file: "app.pbl",
   ancestor: null,
   ancestors: ["w_base"],

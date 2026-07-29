@@ -331,8 +331,12 @@ joins on `line`, not on the span columns.
 
 ```sql
 -- One row per source file (or per global type declaration in multi-type files)
+-- category classifies the PowerScript kind='powerscript' rows by export
+-- extension (window/menu/userobject/application/function); kind='datawindow'
+-- rows get category='datawindow'; the embedded stdlib's __stdlib__/-prefixed
+-- rows always get category='system' regardless of their own .sru extension.
 objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT,
-         type_blocks_json TEXT, confidence TEXT)
+         type_blocks_json TEXT, confidence TEXT, category TEXT)
 source_files (file TEXT PRIMARY KEY, lines TEXT)
 parse_errors (file TEXT, error TEXT)
 
