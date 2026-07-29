@@ -11,6 +11,7 @@ import {
   MetricsGrid, AnalysisSummaryBar, ContextualPanel,
 } from "@pb/platform";
 import { ProceduresCard } from "./detail/ProceduresCard.js";
+import { StructuresCard } from "./detail/StructuresCard.js";
 import { SourceCard } from "./detail/SourceCard.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 import type { ContextActions } from "../../components/source/index.js";
@@ -368,6 +369,9 @@ function ObjectDetailContent(props: {
         </Show>
         <Show when={(o.procedures?.length ?? 0) > 0}>
           <ProceduresCard store={store} objectName={o.name} procedures={o.procedures!} />
+        </Show>
+        <Show when={(o.structures?.length ?? 0) > 0}>
+          <StructuresCard structures={o.structures!} />
         </Show>
 
         {/* Object-level panels */}

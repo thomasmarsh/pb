@@ -139,6 +139,53 @@ def test_get_resolved_var_refs_scoped_to_proc(db_conn: duckdb.DuckDBPyConnection
     assert len(unscoped) >= len(scoped)
 
 
+def test_get_object_detail_structures_empty_when_no_inline_structures(db_conn: duckdb.DuckDBPyConnection):
+    """fn_sqlerror owns no inline structure -- `structures` must be an empty
+    list, not absent, matching every other list-shaped detail field."""
+    result = get_object_detail(db_conn, "fn_sqlerror")
+    assert result is not None
+    assert result["structures"] == []
+
+
+def _object_detail_conn_with_inline_structure() -> duckdb.DuckDBPyConnection:
+    """Synthetic corpus: `w_fish` owns an inline structure `s_fish` with two
+    fields. The real openpay fixture (used by `db_conn`) has zero inline
+    structures -- only standalone `.srs` files -- so this case needs a
+    hand-built DB, following `test_tables_service.py`'s `:memory:` pattern.
+    """
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT, category TEXT)")
+    conn.execute("CREATE TABLE object_metrics (object TEXT)")
+    conn.execute("CREATE TABLE procedures (file TEXT, object TEXT, owner TEXT, proc_type TEXT, proc_name TEXT, params TEXT, return_type TEXT, start_line INTEGER, end_line INTEGER, cyclomatic INTEGER)")
+    conn.execute("CREATE TABLE structures (file TEXT, object TEXT, owner TEXT)")
+    conn.execute("CREATE TABLE global_vars (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)")
+    conn.execute("CREATE TABLE call_sites (file TEXT, object TEXT, proc_name TEXT, to_name TEXT)")
+    conn.execute("CREATE TABLE all_sql_tables (file TEXT, object TEXT, source TEXT, table_name TEXT)")
+    conn.execute("INSERT INTO objects VALUES ('w_fish.srw', 'powerscript', 'w_fish', NULL, 'window')")
+    conn.execute("INSERT INTO structures VALUES ('w_fish.srw', 's_fish', 'w_fish')")
+    conn.execute(
+        "INSERT INTO global_vars VALUES "
+        "('w_fish.srw', 's_fish', 'species', 'string', NULL), "
+        "('w_fish.srw', 's_fish', 'weight', 'decimal', NULL)"
+    )
+    return conn
+
+
+def test_get_object_detail_includes_inline_structure_fields():
+    conn = _object_detail_conn_with_inline_structure()
+    result = get_object_detail(conn, "w_fish")
+    assert result is not None
+    assert result["structures"] == [
+        {
+            "name": "s_fish",
+            "fields": [
+                {"var_name": "species", "var_type": "string", "modifiers": None},
+                {"var_name": "weight", "var_type": "decimal", "modifiers": None},
+            ],
+        }
+    ]
+
+
 def test_get_object_detail_control_owned_event_has_control_owner(db_conn: duckdb.DuckDBPyConnection):
     row = db_conn.execute(
         "SELECT object, proc_name FROM procedures "

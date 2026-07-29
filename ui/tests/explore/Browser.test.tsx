@@ -13,7 +13,7 @@ function exploreWithBrowser(overrides?: object) {
 describe("Browser component", () => {
   it("renders a tab per category", () => {
     renderWithStore(Browser, { explore: exploreWithBrowser() });
-    for (const label of ["Application", "DataWindow", "Window", "Menu", "User Object", "Function", "System"]) {
+    for (const label of ["Application", "DataWindow", "Window", "Menu", "User Object", "Function", "System", "Structure"]) {
       expect(screen.getByText(label)).toBeDefined();
     }
   });

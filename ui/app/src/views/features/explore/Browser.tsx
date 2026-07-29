@@ -15,6 +15,7 @@ const BROWSER_TABS: { category: string; label: string }[] = [
   { category: "userobject", label: "User Object" },
   { category: "function", label: "Function" },
   { category: "system", label: "System" },
+  { category: "structure", label: "Structure" },
 ];
 
 export function Browser(props: { store: Store<AppState, AppAction> }) {

@@ -170,6 +170,18 @@ def test_list_objects_filter_category(client):
         assert item["category"] == "function"
 
 
+def test_list_objects_filter_category_structure(client):
+    """Standalone `.srs` structures get `objects.category='structure'` directly
+    (Phase 3a) -- the Structure tab reuses the plain category filter, no join."""
+    r = client.get("/api/objects", params={"category": "structure"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] > 0
+    for item in data["items"]:
+        assert item["category"] == "structure"
+        assert item["file"].endswith(".srs")
+
+
 def test_list_objects_filter_category_system_includes_stdlib(client):
     r = client.get("/api/objects", params={"category": "system"})
     assert r.status_code == 200

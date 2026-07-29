@@ -1,7 +1,7 @@
 // tests/objects/ObjectDetail.test.tsx — Tests for source-first ObjectDetail.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render } from "@solidjs/testing-library";
+import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { ObjectDetail } from "../../app/src/views/features/objects/ObjectDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialObjectsState } from "@pb/platform";
@@ -149,6 +149,19 @@ describe("ObjectDetail source-first", () => {
     });
     render(() => <ObjectDetail store={store} />);
     expect(document.body.textContent).toContain("Not found");
+  });
+
+  it("renders StructuresCard when the object owns inline structures", () => {
+    renderObjectDetail({
+      structures: [{ name: "s_fish", fields: [{ var_name: "species", var_type: "string", modifiers: null }] }],
+    });
+    expect(screen.getByText("Structures (1)")).toBeDefined();
+    expect(screen.getByText("s_fish (1)")).toBeDefined();
+  });
+
+  it("omits StructuresCard when the object owns no inline structures", () => {
+    renderObjectDetail({ structures: [] });
+    expect(screen.queryByText(/^Structures /)).toBeNull();
   });
 });
 

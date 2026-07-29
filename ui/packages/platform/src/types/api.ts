@@ -7,9 +7,20 @@ import type { WiringNode } from "@pb/interpreter";
 export interface ObjectRow {
   name: string;
   kind: "powerscript" | "datawindow" | "project" | string;
-  category: "window" | "menu" | "userobject" | "application" | "function" | "datawindow" | "system" | string;
+  category: "window" | "menu" | "userobject" | "application" | "function" | "datawindow" | "system" | "structure" | string;
   file: string;
   ancestor: string | null;
+}
+
+export interface StructureFieldRow {
+  var_name: string;
+  var_type: string;
+  modifiers: string | null;
+}
+
+export interface StructureInfo {
+  name: string;
+  fields: StructureFieldRow[];
 }
 
 export interface ProcedureRow {
@@ -67,6 +78,7 @@ export interface ObjectDetailResponse extends ObjectRow {
   callees: string[];
   dws_used?: string[];
   tables_accessed?: string[];
+  structures?: StructureInfo[];
   loading?: boolean;
 }
 

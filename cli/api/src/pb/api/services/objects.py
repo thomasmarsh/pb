@@ -113,6 +113,17 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     ))
     obj["descendants"] = [d["child"] for d in descendants]
 
+    structures = rows(conn.execute(
+        "SELECT object AS name FROM structures WHERE owner = ? ORDER BY object", [name]
+    ))
+    for s in structures:
+        s["fields"] = rows(conn.execute(
+            "SELECT var_name, var_type, mods AS modifiers FROM global_vars "
+            "WHERE object = ? ORDER BY var_name",
+            [s["name"]],
+        ))
+    obj["structures"] = structures
+
     callers = rows(conn.execute("SELECT DISTINCT object AS caller FROM call_sites WHERE to_name = ?", [name]))
     obj["callers"] = [c["caller"] for c in callers]
 
