@@ -58,9 +58,11 @@ import PB.Analysis.DwFootprint
   ( DwFootprintCtx, mkDwFootprintCtx, dwRetrieveFootprint )
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite, GlobalVar (..), ResolvedVarRef
+  , WindowOpenRef, ObjectCreateRef, WindowMenuBinding, DwControlBinding
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractStructureFields, extractLocalVars
   , extractVarRefs, extractDwVarRefs
   , extractDwControlBindings
+  , extractWindowOpens, extractObjectCreates, extractWindowMenuBindings
   , paramsToVars
   )
 import PB.Analysis.DeadVars (DeadVarFinding, findDeadVars)
@@ -113,6 +115,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
   , appendParseErrors, appendSourceFiles
   , appendIdentifierTokens
+  , appendWindowOpens, appendObjectCreates, appendWindowMenuBindings, appendDwBindings
   )
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
@@ -178,6 +181,10 @@ data CompiledPs = CompiledPs
   , cpsTaintReturnRows :: [TaintReturnRow]
   , cpsSourceContent :: Maybe SourceFileRow
   , cpsIdentifierTokens :: [IdentifierTokenRow]
+  , cpsWindowOpens       :: [WindowOpenRef]
+  , cpsObjectCreates     :: [ObjectCreateRef]
+  , cpsWindowMenuBindings :: [WindowMenuBinding]
+  , cpsDwBindings        :: [DwControlBinding]
   }
 
 data CompiledDw = CompiledDw
@@ -282,7 +289,11 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
               (if identOrig (sbName sb) == obj then Nothing else Just obj)
           | sb <- srStructureBlocks sf
           ]
-        controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
+        dwBindingRows = extractDwControlBindings fp sf
+        controlBindings = controlBindingsMap dwBindingRows
+        windowOpens = extractWindowOpens wsEnv controlIdx fp obj sf
+        objectCreates = extractObjectCreates wsEnv controlIdx fp obj sf
+        windowMenuBindings = extractWindowMenuBindings fp sf
         -- Shared by both 'aliasBindings' and 'procs' below: one
         -- 'ScopedTypeEnv' per procedure (params + its own body locals),
         -- built once by 'forProcedures' (Plan 197 Finding 7) rather than
@@ -450,6 +461,10 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
       , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs) <- procs ]
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       , cpsIdentifierTokens = identifierTokenRows fp (pfTokens pf)
+      , cpsWindowOpens       = windowOpens
+      , cpsObjectCreates     = objectCreates
+      , cpsWindowMenuBindings = windowMenuBindings
+      , cpsDwBindings        = dwBindingRows
       }
 
   PsDw fp contents dw -> do
@@ -783,6 +798,10 @@ appendToDb pool (CFPs r) = do
   appendSqlStmtTables  pool (cpsSqlStmtTables r)
   appendSourceFiles pool (catMaybes [cpsSourceContent r])
   appendIdentifierTokens pool (cpsIdentifierTokens r)
+  appendWindowOpens pool (cpsWindowOpens r)
+  appendObjectCreates pool (cpsObjectCreates r)
+  appendWindowMenuBindings pool (cpsWindowMenuBindings r)
+  appendDwBindings pool (cpsDwBindings r)
 appendToDb pool (CFDw r) = do
   let dw = cdDwObjectRow r
   appendObjects           pool [ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"
@@ -1015,6 +1034,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           , "dw_joins", "dw_retrieve_where"
           , "dw_arguments"
           , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
+          , "window_opens", "object_creates", "window_menu_bindings", "dw_bindings"
           ]
     allCfs <- withAppenderPoolTimed Progress.emitEvent conn phaseATables $ \appPool -> do
       -- Load stdlib first so type lookups in user-code Phase B see the base classes.

@@ -116,6 +116,15 @@ callStmt callee_ line = Located line
     , callArgs = []
     }))
 
+-- | A bare single-arg free-function call, e.g. @Open(w_continue)@ -- the
+-- shape 'extractWindowOpens' scans for.
+callStmtWithArg :: T.Text -> T.Text -> Int -> Located BodyStmt
+callStmtWithArg callee_ arg line = Located line
+  (BsCall (ExCall
+    { callee   = Lvalue [LvSegment (mkIdent callee_) Nothing]
+    , callArgs = [ExLvalue (Lvalue [LvSegment (mkIdent arg) Nothing])]
+    }))
+
 -- | Empty workspace-wide env\/control index -- sufficient for every
 -- 'extractCallSites' test that only checks call-site enumeration
 -- (name\/type\/line), not receiver-type resolution.
@@ -1945,6 +1954,102 @@ tests = testGroup "TypeResolve"
             sf = emptySrFile { srTypeBlocks = [tb] }
         in extractDwControlBindings "w.srw" sf
              @?= [DwControlBinding "w.srw" "w_selfdw" "this" "d_self"]
+    ]
+
+  , testGroup "extractWindowMenuBindings"
+    [ testCase "literal menuname on outer type block binds window -> menu (real corpus shape)" $
+        let menuVar = Located 1 BsLocalVar
+              { varMods = [], varType = PtPrimitive "string"
+              , varName = "menuname", varInit = Just (ExStr "m_misth_final_details_list") }
+            tb = TypeBlock
+              { tbDecl = mkTypeDecl "w_misth_final_details_list" "w_list" Nothing
+              , tbBody = [menuVar]
+              }
+            sf = emptySrFile { srTypeBlocks = [tb] }
+        in extractWindowMenuBindings "w.srw" sf
+             @?= [WindowMenuBinding "w.srw" "w_misth_final_details_list" "m_misth_final_details_list"]
+
+    , testCase "nested control block (has a within) is never a menu binding source" $
+        let menuVar = Located 1 BsLocalVar
+              { varMods = [], varType = PtPrimitive "string"
+              , varName = "menuname", varInit = Just (ExStr "m_bogus") }
+            tb = TypeBlock
+              { tbDecl = mkTypeDecl "dw_1" "datawindow" (Just "w_main")
+              , tbBody = [menuVar]
+              }
+            sf = emptySrFile { srTypeBlocks = [mkTB "w_main" "window", tb] }
+        in extractWindowMenuBindings "w.srw" sf @?= []
+
+    , testCase "no menuname property yields no binding" $
+        let sf = emptySrFile { srTypeBlocks = [mkTB "w_main" "window"] }
+        in extractWindowMenuBindings "w.srw" sf @?= []
+    ]
+
+  , testGroup "extractWindowOpens"
+    [ testCase "Open(w_continue) resolves to a real workspace window class (IDE doc example)" $
+        let body = [callStmtWithArg "open" "w_continue" 5]
+            sf = emptySrFile
+              { srTypeBlocks = [mkTB "w_test" "window", mkTB "w_continue" "window"]
+              , srFunctions  = [mkFn "of_go" "" body]
+              }
+            wsEnv = buildWorkspaceEnv [sf]
+        in extractWindowOpens wsEnv emptyControlIdx "test.srw" "w_test" sf
+             @?= [WindowOpenRef "test.srw" "w_test" "of_go" 5 "w_continue"]
+
+    , testCase "OpenSheet/OpenWithParm/OpenSheetWithParm are all recognized open-family calls" $
+        let body =
+              [ callStmtWithArg "opensheet"          "w_a" 1
+              , callStmtWithArg "openwithparm"       "w_b" 2
+              , callStmtWithArg "opensheetwithparm"  "w_c" 3
+              ]
+            sf = emptySrFile
+              { srTypeBlocks = map (`mkTB` "window") ["w_test", "w_a", "w_b", "w_c"]
+              , srFunctions  = [mkFn "of_go" "" body]
+              }
+            wsEnv = buildWorkspaceEnv [sf]
+        in map worTargetObject (extractWindowOpens wsEnv emptyControlIdx "test.srw" "w_test" sf)
+             @?= ["w_a", "w_b", "w_c"]
+
+    , testCase "a local variable shadowing a window class name is a dynamic reference, not a use (excluded per IDE semantics)" $
+        let body =
+              [ localVarStmt "w_continue" (PtUserDefined "w_continue") 4
+              , callStmtWithArg "open" "w_continue" 5
+              ]
+            sf = emptySrFile
+              { srTypeBlocks = [mkTB "w_test" "window", mkTB "w_continue" "window"]
+              , srFunctions  = [mkFn "of_go" "" body]
+              }
+            wsEnv = buildWorkspaceEnv [sf]
+        in extractWindowOpens wsEnv emptyControlIdx "test.srw" "w_test" sf @?= []
+
+    , testCase "Close(...) is not an open-family call" $
+        let body = [callStmtWithArg "close" "w_continue" 5]
+            sf = emptySrFile
+              { srTypeBlocks = [mkTB "w_test" "window", mkTB "w_continue" "window"]
+              , srFunctions  = [mkFn "of_go" "" body]
+              }
+            wsEnv = buildWorkspaceEnv [sf]
+        in extractWindowOpens wsEnv emptyControlIdx "test.srw" "w_test" sf @?= []
+
+    , testCase "empty SrFile -> []" $
+        extractWindowOpens emptyWsEnv emptyControlIdx "test.srw" "w_test" emptySrFile @?= []
+    ]
+
+  , testGroup "extractObjectCreates"
+    [ testCase "CREATE ClassName is captured directly, no scope resolution needed" $
+        let body = [ Located 6 (BsAssign (Lvalue [LvSegment "mymenu" Nothing]) (ExCreate (mkIdent "m_new"))) ]
+            sf = emptySrFile { srFunctions = [mkFn "of_go" "" body] }
+        in extractObjectCreates emptyWsEnv emptyControlIdx "test.srw" "w_test" sf
+             @?= [ObjectCreateRef "test.srw" "w_test" "of_go" 6 "m_new"]
+
+    , testCase "CREATE USING (dynamic, ExCreateUsing) is not a static use" $
+        let body = [ Located 6 (BsAssign (Lvalue [LvSegment "obj" Nothing])
+                       (ExCreateUsing (ExStr "m_new"))) ]
+            sf = emptySrFile { srFunctions = [mkFn "of_go" "" body] }
+        in extractObjectCreates emptyWsEnv emptyControlIdx "test.srw" "w_test" sf @?= []
+
+    , testCase "empty SrFile -> []" $
+        extractObjectCreates emptyWsEnv emptyControlIdx "test.srw" "w_test" emptySrFile @?= []
     ]
 
   , testGroup "resolveTypes/controlType"

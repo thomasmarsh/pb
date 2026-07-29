@@ -65,6 +65,7 @@ module PB.Analysis.ControlHierarchy
   , resolveMemberChainType
   , resolveMemberChainDwBinding
   , findLiteralDataObject
+  , findLiteralMenuName
   ) where
 
 import PB.Prelude
@@ -237,6 +238,23 @@ findLiteralDataObject stmts = case
   [ s
   | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
   , identCanon n == "dataobject"
+  ] of
+    (s:_) -> Just s
+    []    -> Nothing
+
+-- | The literal string value of a @menuname@ property set directly in a
+-- window's own (non-@within@) 'TypeBlock' body, if any -- the same
+-- codegen convention 'findLiteralDataObject' reads for @dataobject@, just
+-- on the object's own outer type rather than a nested control (real corpus
+-- evidence: @w_misth_final_details_list.srw@'s @string menuname =
+-- "m_misth_final_details_list"@). Confirmed IDE semantics: a menu
+-- associated with a window in the Window painter is the one statically
+-- "used" relationship the Browser's Uses tab surfaces for menus.
+findLiteralMenuName :: [Located BodyStmt] -> Maybe Text
+findLiteralMenuName stmts = case
+  [ s
+  | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
+  , identCanon n == "menuname"
   ] of
     (s:_) -> Just s
     []    -> Nothing

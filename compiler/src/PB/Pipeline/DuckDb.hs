@@ -179,6 +179,28 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- name -- see 'PB.Analysis.TypeResolve.extractStructureFields'.
       , "CREATE TABLE IF NOT EXISTS structures \
         \(file TEXT, object TEXT, owner TEXT)"
+      -- "Uses" facts (Plan 210 Phase 4): statically-resolvable inter-object
+      -- references only, per confirmed real-IDE Browser semantics
+      -- (doc/pb2025r2/pbug/ch02s01s08s01.html) -- see
+      -- 'PB.Analysis.TypeResolve''s "Uses facts" section for what each table
+      -- does and does not capture (property/instance-var and dynamic
+      -- string-based references are deliberately excluded).
+      , "CREATE TABLE IF NOT EXISTS window_opens \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, target_object TEXT)"
+      , "CREATE TABLE IF NOT EXISTS object_creates \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, target_object TEXT)"
+      -- One row per window whose own (non-@within@) TypeBlock declares a
+      -- literal @menuname@ -- see 'PB.Analysis.ControlHierarchy.findLiteralMenuName'.
+      , "CREATE TABLE IF NOT EXISTS window_menu_bindings \
+        \(file TEXT, object TEXT, menu_name TEXT)"
+      -- Control -> DataWindow-object binding, sourced from
+      -- 'PB.Analysis.TypeResolve.extractDwControlBindings' (already computed
+      -- for schema-footprint resolution but never persisted before this
+      -- table -- BACKLOG 2026-07-22). control_name is "this" for the
+      -- object's own outer TypeBlock (the window/userobject IS the bound
+      -- DataWindow, e.g. a DataWindow-derived custom class).
+      , "CREATE TABLE IF NOT EXISTS dw_bindings \
+        \(file TEXT, object TEXT, control_name TEXT, dw_name TEXT)"
       -- var_start_line/col, var_end_line/col carry the def/use variable's
       -- own token span, additive alongside line (the statement's line,
       -- which buildInterprocEdges matches on -- see call_sites above).

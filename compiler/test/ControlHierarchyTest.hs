@@ -316,6 +316,24 @@ tests = testGroup "ControlHierarchy"
           resolveMemberChainDwBinding idx inh "w_misth_fylo_form" ["tab1", "page1", "uo_epidom", "dw"]
             @?= Just "dw_misth_fylo_epidom_list"
     ]
+
+  , testGroup "findLiteralMenuName"
+    [ testCase "literal menuname property (real corpus shape, w_misth_final_details_list.srw)" $
+        let body = [Located 1 (BsLocalVar [] (PtPrimitive "string") "menuname"
+                      (Just (ExStr "m_misth_final_details_list")))]
+        in findLiteralMenuName body @?= Just "m_misth_final_details_list"
+
+    , testCase "MenuName case-insensitive property name matched" $
+        let body = [Located 1 (BsLocalVar [] (PtPrimitive "string") "MenuName" (Just (ExStr "m_main")))]
+        in findLiteralMenuName body @?= Just "m_main"
+
+    , testCase "no menuname property yields Nothing" $
+        let body = [Located 1 (BsLocalVar [] (PtPrimitive "integer") "width" (Just (ExInt "3269")))]
+        in findLiteralMenuName body @?= Nothing
+
+    , testCase "empty body yields Nothing" $
+        findLiteralMenuName [] @?= Nothing
+    ]
   ]
 
 -- | Loads the real corpus fixture (w_misth_fylo_form.srw, its ancestor

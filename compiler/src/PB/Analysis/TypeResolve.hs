@@ -29,6 +29,9 @@ module PB.Analysis.TypeResolve
   , ResolvedCall (..)
   , ResolvedVarRef (..)
   , DwControlBinding (..)
+  , WindowOpenRef (..)
+  , ObjectCreateRef (..)
+  , WindowMenuBinding (..)
   , extractLocalVars
   , extractCallSites
   , extractDwCallSites
@@ -37,6 +40,9 @@ module PB.Analysis.TypeResolve
   , extractGlobalVars
   , extractStructureFields
   , extractDwControlBindings
+  , extractWindowOpens
+  , extractObjectCreates
+  , extractWindowMenuBindings
   , resolveTypes
   , resolveGlobalTypes
   , resolveCalls
@@ -77,8 +83,8 @@ import PB.AST.Type        (PbType (..), parseTypeTextAt, renderPbType)
 import PB.Lexing.Token    (SourceSpan)
 import PB.Analysis.CallClassify   (ProcUnit (..), forProcedures)
 import PB.Analysis.DwBuiltins     (dwPropertyCatalog, classifyDwBandKeyword)
-import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, resolveMemberChainType,
-                                      resolveMemberChainDwBinding)
+import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, findLiteralMenuName,
+                                      resolveMemberChainType, resolveMemberChainDwBinding)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
                                     buildProcMap, buildCallableProcMap, isDescendantOf,
                                     lookupInstanceVarOwner, procEnv)
@@ -1073,6 +1079,157 @@ extractDwControlBindings file sf =
           Just parent -> (mkIdent parent, tdName decl)
           Nothing     -> (tdName decl, "this")
   , Just dwName <- [findLiteralDataObject (tbBody tb)]
+  ]
+
+-- ---------------------------------------------------------------------------
+-- "Uses" facts: statically-resolvable inter-object references only, per
+-- confirmed real-IDE Browser semantics (doc/pb2025r2/pbug/ch02s01s08s01.html)
+-- -- window opens, CREATE ClassName, and a window's own menu association.
+-- Property/instance-variable references and dynamic string-based references
+-- are explicitly excluded by the same doc and deliberately produce no row
+-- here (skip rather than guess, matching 'findLiteralDataObject''s
+-- precedent).
+
+-- | A window/menu class name statically referenced as the sole argument to
+-- an @Open@-family call at extraction time. Reuses 'classifyLvalueChain' --
+-- the same resolver every other var-ref goes through -- rather than a bare
+-- 'WorkspaceEnv' hierarchy lookup, so a same-named /local/ variable
+-- shadowing a global class instance (a real, dynamic reference the IDE
+-- doc's own semantics exclude) resolves to @"local"@\/@"param"@ and is
+-- correctly skipped; only a bare class-identifier reference (@"class_static"@
+-- -- a workspace-wide declared type name, e.g. @Open(w_continue)@'s own
+-- auto-instantiated global -- or @"global"@) counts.
+data WindowOpenRef = WindowOpenRef
+  { worFile         :: Text
+  , worObject       :: Text
+  , worFromProc     :: Text
+  , worLine         :: Int
+  , worTargetObject :: Text
+  } deriving (Eq, Show)
+
+-- | @Open@-family free-function names whose sole argument names the window
+-- (or sheet) class to instantiate -- confirmed against the real IDE doc's
+-- own @Open(w_continue)@ example. @Close@ takes an already-live instance
+-- (not a class reference) and is not a "uses" edge.
+openFamilyNames :: Set.Set Text
+openFamilyNames = Set.fromList ["open", "opensheet", "openwithparm", "opensheetwithparm"]
+
+windowOpenRefsExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Int -> Expr -> [WindowOpenRef]
+windowOpenRefsExpr wsEnv env file obj proc_ line = foldExprs classify
+  where
+    classify (ExCall lv (arg : _))
+      | [s] <- segments lv
+      , identCanon (segName s) `Set.member` openFamilyNames
+      , ExLvalue argLv <- arg
+      , [_] <- segments argLv
+      , (r : _) <- classifyLvalueChain wsEnv env file obj proc_ (Just line) "read" argLv
+      , rvrKind r `elem` ["class_static", "global"]
+      , Just tgt <- rvrTargetObject r <|> rvrDeclaredType r
+      = [WindowOpenRef file obj proc_ line tgt]
+    classify _ = []
+
+-- | Extract every statically-resolvable window-open reference from all of a
+-- file's procedure bodies. Mirrors 'walkBodyCallSites''s traversal shape
+-- (the same statement kinds an @Open(...)@ call can appear inside).
+extractWindowOpens :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [WindowOpenRef]
+extractWindowOpens wsEnv controlIdx file obj sf =
+  concatMap (\pu -> walkBodyWindowOpens wsEnv (puEnv pu) file obj (puName pu) (puBody pu))
+    (forProcedures wsEnv controlIdx obj sf)
+
+walkBodyWindowOpens :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [WindowOpenRef]
+walkBodyWindowOpens wsEnv env file obj proc_ = foldStmts classify
+  where
+    exprAt = windowOpenRefsExpr wsEnv env file obj proc_
+    classify (Located line stmt) = case stmt of
+      BsCall expr                                    -> exprAt line expr
+      BsAssign _ rhs                                  -> exprAt line rhs
+      BsAssignExpr l rhs                              -> exprAt line l <> exprAt line rhs
+      BsReturn (Just e)                                -> exprAt line e
+      BsLocalVar { varInit = Just e }                  -> exprAt line e
+      BsIf IfStmt { ifCond = c }                       -> exprAt line c
+      BsFor ForStmt { forFrom = fr, forTo = to_, forStep = step } ->
+        exprAt line fr <> exprAt line to_ <> maybe [] (exprAt line) step
+      BsDo DoStmt { doCond = pre, doLoop = post }      -> condRefs line pre <> condRefs line post
+      BsChoose ChooseStmt { chooseExpr = x }           -> exprAt line x
+      _                                                 -> []
+
+    condRefs _    Nothing            = []
+    condRefs line (Just (DoWhile e)) = exprAt line e
+    condRefs line (Just (DoUntil e)) = exprAt line e
+
+-- | A @CREATE ClassName@ expression -- the general instantiation mechanism
+-- behind the IDE doc's own pop-up-menu example (@mymenu = create m_new@).
+-- Unlike a window open, the created class name is a literal 'Ident' the
+-- grammar already parsed directly off the @create@ keyword ('PB.AST.Expr.
+-- ExCreate') -- no scope resolution is needed, or possible to shadow, since
+-- @create@ never takes a variable.
+data ObjectCreateRef = ObjectCreateRef
+  { ocrFile         :: Text
+  , ocrObject       :: Text
+  , ocrFromProc     :: Text
+  , ocrLine         :: Int
+  , ocrTargetObject :: Text
+  } deriving (Eq, Show)
+
+objectCreateRefsExpr :: Text -> Text -> Text -> Int -> Expr -> [ObjectCreateRef]
+objectCreateRefsExpr file obj proc_ line = foldExprs classify
+  where
+    classify (ExCreate cls) = [ObjectCreateRef file obj proc_ line (identOrig cls)]
+    classify _              = []
+
+-- | Extract every @CREATE ClassName@ reference from all of a file's
+-- procedure bodies. No 'WorkspaceEnv'\/'ControlIndex' needed (see
+-- 'ObjectCreateRef'), but still walked per-procedure via 'forProcedures' to
+-- match this module's other extractors' shape and stay ready for a future
+-- per-procedure field (e.g. once this needs a 'ScopedTypeEnv').
+extractObjectCreates :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [ObjectCreateRef]
+extractObjectCreates wsEnv controlIdx file obj sf =
+  concatMap (\pu -> walkBodyObjectCreates file obj (puName pu) (puBody pu))
+    (forProcedures wsEnv controlIdx obj sf)
+
+walkBodyObjectCreates :: Text -> Text -> Text -> [Located BodyStmt] -> [ObjectCreateRef]
+walkBodyObjectCreates file obj proc_ = foldStmts classify
+  where
+    exprAt = objectCreateRefsExpr file obj proc_
+    classify (Located line stmt) = case stmt of
+      BsCall expr                                    -> exprAt line expr
+      BsAssign _ rhs                                  -> exprAt line rhs
+      BsAssignExpr l rhs                              -> exprAt line l <> exprAt line rhs
+      BsReturn (Just e)                                -> exprAt line e
+      BsLocalVar { varInit = Just e }                  -> exprAt line e
+      BsIf IfStmt { ifCond = c }                       -> exprAt line c
+      BsFor ForStmt { forFrom = fr, forTo = to_, forStep = step } ->
+        exprAt line fr <> exprAt line to_ <> maybe [] (exprAt line) step
+      BsDo DoStmt { doCond = pre, doLoop = post }      -> condRefs line pre <> condRefs line post
+      BsChoose ChooseStmt { chooseExpr = x }           -> exprAt line x
+      _                                                 -> []
+
+    condRefs _    Nothing            = []
+    condRefs line (Just (DoWhile e)) = exprAt line e
+    condRefs line (Just (DoUntil e)) = exprAt line e
+
+-- | A window's own statically-declared menu association (@menuname =
+-- "m_foo"@ on its outer, non-@within@ 'TypeBlock' -- confirmed real corpus
+-- shape, e.g. @w_misth_final_details_list.srw@). Object-scoped, unlike
+-- 'DwControlBinding': a menu binds to the whole window, never to a nested
+-- control.
+data WindowMenuBinding = WindowMenuBinding
+  { wmbFile    :: Text
+  , wmbObject  :: Text
+  , wmbMenuName :: Text
+  } deriving (Eq, Show)
+
+-- | Extract a file's window-level menu association, if any. Only the
+-- object's own outer 'TypeBlock' (@tdWithin == Nothing@) is eligible --
+-- mirrors 'extractDwControlBindings''s @Nothing -> ..."this"@ branch, but
+-- a menu binding has no analogous nested-control case to also collect.
+extractWindowMenuBindings :: Text -> SrFile -> [WindowMenuBinding]
+extractWindowMenuBindings file sf =
+  [ WindowMenuBinding file (identOrig (tdName decl)) menuName
+  | tb <- srTypeBlocks sf
+  , let decl = tbDecl tb
+  , isNothing (tdWithin decl)
+  , Just menuName <- [findLiteralMenuName (tbBody tb)]
   ]
 
 -- ---------------------------------------------------------------------------

@@ -1481,6 +1481,10 @@ tests = testGroup "Pipeline.Runner"
               , cpsTaintReturnRows = []
               , cpsSourceContent = Nothing
               , cpsIdentifierTokens = []
+              , cpsWindowOpens       = []
+              , cpsObjectCreates     = []
+              , cpsWindowMenuBindings = []
+              , cpsDwBindings        = []
               }
             pad = accumulatePhaseAData emptyPhaseAData (CFPs cps)
         padLocalVars pad @?= []
@@ -1540,6 +1544,10 @@ tests = testGroup "Pipeline.Runner"
               , cpsTaintReturnRows = []
               , cpsSourceContent = Nothing
               , cpsIdentifierTokens = []
+              , cpsWindowOpens       = []
+              , cpsObjectCreates     = []
+              , cpsWindowMenuBindings = []
+              , cpsDwBindings        = []
               }
             pad = accumulatePhaseAData emptyPhaseAData (CFPs cps)
             expectedDef = Taint.DefRow

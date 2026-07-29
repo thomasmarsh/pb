@@ -52,6 +52,10 @@ module PB.Pipeline.DuckDb.PhaseA
   , flowsToDefRows
   , flowsToUseRows
   , appendIdentifierTokens
+  , appendWindowOpens
+  , appendObjectCreates
+  , appendWindowMenuBindings
+  , appendDwBindings
   ) where
 
 import PB.Prelude
@@ -60,7 +64,9 @@ import PB.AST.SourceFile        (ParseError (..))
 import PB.AST.Type              (pbTypeSpan)
 import PB.Grammar.Body          (isSegmentName)
 import PB.Lexing.Token          (Token (..), SourceSpan (..))
-import PB.Analysis.TypeResolve  (CallSite (..), GlobalVar (..), ResolvedVarRef (..))
+import PB.Analysis.TypeResolve  (CallSite (..), GlobalVar (..), ResolvedVarRef (..),
+                                  WindowOpenRef (..), ObjectCreateRef (..),
+                                  WindowMenuBinding (..), DwControlBinding (..))
 import PB.Analysis.Dataflow     qualified as Dataflow
 import PB.Analysis.Taint        qualified as Taint
 import PB.Analysis.DeadVars     (DeadVarFinding (..), deadVarKindText)
@@ -663,3 +669,46 @@ appendIdentifierTokens pool rows = appendRow pool "identifier_tokens" $ \app ->
     aInt  app (ssStartCol  (itrSpan r))
     aInt  app (ssEndLine   (itrSpan r))
     aInt  app (ssEndCol    (itrSpan r))
+
+-- ---------------------------------------------------------------------------
+-- "Uses" facts (Plan 210 Phase 4) -- straight appends of
+-- 'PB.Analysis.TypeResolve''s already-resolved fact types, no separate Row
+-- wrapper needed (mirrors 'appendCallSites'/'appendVarRefs' taking
+-- 'CallSite'/'ResolvedVarRef' directly).
+
+appendWindowOpens :: AppenderPool -> [WindowOpenRef] -> IO ()
+appendWindowOpens _    [] = pure ()
+appendWindowOpens pool rows = appendRow pool "window_opens" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (worFile r)
+    aText app (worObject r)
+    aText app (worFromProc r)
+    aInt  app (worLine r)
+    aText app (worTargetObject r)
+
+appendObjectCreates :: AppenderPool -> [ObjectCreateRef] -> IO ()
+appendObjectCreates _    [] = pure ()
+appendObjectCreates pool rows = appendRow pool "object_creates" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (ocrFile r)
+    aText app (ocrObject r)
+    aText app (ocrFromProc r)
+    aInt  app (ocrLine r)
+    aText app (ocrTargetObject r)
+
+appendWindowMenuBindings :: AppenderPool -> [WindowMenuBinding] -> IO ()
+appendWindowMenuBindings _    [] = pure ()
+appendWindowMenuBindings pool rows = appendRow pool "window_menu_bindings" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (wmbFile r)
+    aText app (wmbObject r)
+    aText app (wmbMenuName r)
+
+appendDwBindings :: AppenderPool -> [DwControlBinding] -> IO ()
+appendDwBindings _    [] = pure ()
+appendDwBindings pool rows = appendRow pool "dw_bindings" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (dcbFile r)
+    aText app (identOrig (dcbObject r))
+    aText app (identOrig (dcbControlName r))
+    aText app (identOrig (dcbDwName r))

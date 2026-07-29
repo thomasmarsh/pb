@@ -412,6 +412,18 @@ global_vars      (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEX
 -- object) or the enclosing object's name for an inline structure. A
 -- structure's fields are its own global_vars rows, keyed by this object name.
 structures       (file TEXT, object TEXT, owner TEXT)
+
+-- "Uses" facts (Plan 210 Phase 4): statically-resolvable inter-object
+-- references only, per confirmed real-IDE Browser semantics
+-- (doc/pb2025r2/pbug/ch02s01s08s01.html). Property/instance-variable
+-- references and dynamic string-based references are deliberately excluded.
+window_opens          (file TEXT, object TEXT, proc_name TEXT, line INT, target_object TEXT)
+object_creates        (file TEXT, object TEXT, proc_name TEXT, line INT, target_object TEXT)
+window_menu_bindings  (file TEXT, object TEXT, menu_name TEXT)
+-- Control -> DataWindow-object binding (control_name is "this" for the
+-- object's own outer TypeBlock). Sourced from the same
+-- extractDwControlBindings already used for schema-footprint resolution.
+dw_bindings           (file TEXT, object TEXT, control_name TEXT, dw_name TEXT)
 proc_defs        (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
                    stmt_index INT, line INT, kind TEXT,
                    var_start_line INT, var_start_col INT, var_end_line INT, var_end_col INT)
