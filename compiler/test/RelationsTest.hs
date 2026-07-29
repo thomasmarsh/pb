@@ -251,7 +251,7 @@ tests = testGroup "Relations"
             -- materializeDeadCodeClosure naturally computes it as dead.
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
-                [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" [] ]
+                [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" [] "obj2" ]
             calls <- queryResolvedCalls conn
             dcRows <- initDeadCodeRelations conn calls
             materializeDeadCodeClosure dcRows conn
@@ -297,7 +297,7 @@ tests = testGroup "Relations"
             initSchema conn
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
-                [ ProcRow "builtin" "dwobject" "Retrieve" "function" 1 1 "" "" "" "" "" Nothing "speculative" [] ]
+                [ ProcRow "builtin" "dwobject" "Retrieve" "function" 1 1 "" "" "" "" "" Nothing "speculative" [] "dwobject" ]
             calls <- queryResolvedCalls conn
             _ <- initDeadCodeRelations conn calls
             procViewRows <- queryHandle conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]

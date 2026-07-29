@@ -344,7 +344,7 @@ procedures (file TEXT, object TEXT, proc_name TEXT, proc_type TEXT,
             start_line INT, end_line INT,
             cfg_json TEXT, instr_graph_json TEXT, wiring_json TEXT,
             params TEXT, param_names TEXT, return_type TEXT,
-            cyclomatic INT, confidence TEXT)
+            cyclomatic INT, confidence TEXT, owner TEXT)
 
 -- DataWindow objects + visual controls
 dw_objects  (file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)

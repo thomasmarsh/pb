@@ -127,6 +127,33 @@ def test_get_resolved_var_refs_scoped_to_proc(db_conn: duckdb.DuckDBPyConnection
     assert len(unscoped) >= len(scoped)
 
 
+def test_get_object_detail_control_owned_event_has_control_owner(db_conn: duckdb.DuckDBPyConnection):
+    row = db_conn.execute(
+        "SELECT object, proc_name FROM procedures "
+        "WHERE proc_type = 'event' AND owner IS NOT NULL AND owner != object LIMIT 1"
+    ).fetchone()
+    assert row is not None, "expected at least one control-owned event in the openpay corpus"
+    obj, proc_name = row
+    detail = get_object_detail(db_conn, obj)
+    assert detail is not None
+    match = next(p for p in detail["procedures"] if p["name"] == proc_name)
+    assert match["owner"] not in (None, obj)
+
+
+def test_get_explore_tree_control_owned_event_has_control_owner(db_conn: duckdb.DuckDBPyConnection):
+    row = db_conn.execute(
+        "SELECT object, proc_name FROM procedures "
+        "WHERE proc_type = 'event' AND owner IS NOT NULL AND owner != object LIMIT 1"
+    ).fetchone()
+    assert row is not None, "expected at least one control-owned event in the openpay corpus"
+    obj, proc_name = row
+    result = get_explore_tree(db_conn)
+    all_objects = [o for lib in result["libraries"] for o in lib["objects"]]
+    target = next(o for o in all_objects if o["name"] == obj)
+    match = next(p for p in target["procedures"] if p["name"] == proc_name)
+    assert match["owner"] not in (None, obj)
+
+
 def test_get_explore_tree(db_conn: duckdb.DuckDBPyConnection):
     result = get_explore_tree(db_conn)
     assert "libraries" in result

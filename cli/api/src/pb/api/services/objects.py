@@ -88,7 +88,7 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 
     procs = rows(
         conn.execute(
-            "SELECT object, object AS owner, proc_type, proc_name AS name, "
+            "SELECT object, owner, proc_type, proc_name AS name, "
             "params, return_type, start_line, end_line, cyclomatic "
             "FROM procedures WHERE object = ? ORDER BY proc_type, proc_name",
             [name],
@@ -271,7 +271,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     type_blocks_json: str | None = obj_rows[0].get("type_blocks_json")
 
     event_rows = rows(conn.execute(
-        "SELECT proc_name AS name, object AS owner, instr_graph_json FROM procedures "
+        "SELECT proc_name AS name, owner, instr_graph_json FROM procedures "
         "WHERE object = ? AND proc_type = 'event'",
         [name],
     ))
@@ -286,7 +286,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     ]
 
     func_rows = rows(conn.execute(
-        "SELECT proc_name AS name, object AS owner, instr_graph_json FROM procedures "
+        "SELECT proc_name AS name, owner, instr_graph_json FROM procedures "
         "WHERE object = ? AND proc_type IN ('function', 'subroutine')",
         [name],
     ))
@@ -320,7 +320,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
 
     if ancestor_name and ancestor_name.lower() not in _PB_BASE_CLASSES:
         anc_rows = rows(conn.execute(
-            "SELECT proc_name AS name, object AS owner, proc_type, instr_graph_json FROM procedures "
+            "SELECT proc_name AS name, owner, proc_type, instr_graph_json FROM procedures "
             "WHERE object = ? AND proc_type IN ('event', 'function', 'subroutine')",
             [ancestor_name],
         ))
@@ -433,7 +433,7 @@ def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects WHERE file NOT LIKE '__stdlib__%' ORDER BY kind, object"))
     proc_rows = rows(
         conn.execute(
-            "SELECT object, proc_type, proc_name AS name, params, return_type, "
+            "SELECT object, owner, proc_type, proc_name AS name, params, return_type, "
             "start_line, end_line, cyclomatic "
             "FROM procedures WHERE file NOT LIKE '__stdlib__%' ORDER BY object, proc_type, proc_name"
         )

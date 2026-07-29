@@ -136,7 +136,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \start_line INTEGER, end_line INTEGER, \
         \cfg_json TEXT, instr_graph_json TEXT, wiring_json TEXT, \
         \params TEXT, return_type TEXT, cyclomatic INTEGER, \
-        \confidence TEXT NOT NULL DEFAULT 'confirmed', param_names TEXT)"
+        \confidence TEXT NOT NULL DEFAULT 'confirmed', param_names TEXT, owner TEXT)"
       -- type_start_line/col, type_end_line/col carry the declared type
       -- name's own token span (additive, nullable -- NULL for a primitive/
       -- any/decimal type, which is a keyword, not an identifier reference).

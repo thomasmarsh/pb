@@ -395,6 +395,7 @@ export interface TableDetail {
 
 export interface ExploreProcedure {
   object: string;
+  owner?: string | null;
   proc_type: string;
   name: string;
   modifiers: string | null;

@@ -232,6 +232,20 @@ tests = testGroup "CallClassify"
                puRetType pu @?= "integer"
                puRetTypeSpan pu @?= Just (SourceSpan 1 1 1 1)
              other -> assertFailure ("expected exactly one unit, got " <> show (length other))
+
+    , testCase "puOwner is the object name for function/subroutine/on-block/window-level event" $
+        let sf = emptyFile
+              { srFunctions   = [fnUnit "of_a"]
+              , srSubroutines = [subUnit "us_b"]
+              , srEvents      = [evUnit "ue_c"]
+              , srOnBlocks    = [onUnit "w_test" "open"]
+              }
+        in map puOwner (forProcedures emptyWsEnv emptyIdx "w_test" sf)
+             @?= ["w_test", "w_test", "w_test", "w_test"]
+
+    , testCase "puOwner is the resolved control name for a control-owned event" $
+        let sf = emptyFile { srEvents = [(evUnit "clicked") { evOwner = Just "cb_ok" }] }
+        in map puOwner (forProcedures emptyWsEnv emptyIdx "w_test" sf) @?= ["cb_ok"]
     ]
   ]
   where

@@ -74,8 +74,8 @@ testAppendProcedures = withHandle inMemory $ \conn -> do
         instrJs  = "{\"nodes\":[],\"entry\":0,\"suspensionPoints\":[],\"sourceMap\":[]}"
         wiringJs = "{\"nodes\":{\"w0\":{\"tag\":\"WireReturn\"}},\"entry\":\"w0\"}"
     appendProcedures pool
-      [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed" []
-      , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed" []
+      [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed" [] "w_test"
+      , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed" [] "w_test"
       ]
     assertEqual "procedures appended" () ()
 

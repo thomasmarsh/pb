@@ -281,6 +281,9 @@ collectBodyLocals stmts =
 data ProcUnit = ProcUnit
   { puKind        :: Text          -- ^ "function" | "subroutine" | "event" | "on"
   , puName        :: Text
+  , puOwner       :: Text          -- ^ owning control name for a control-owned event
+                                    -- ('EventBlock.evOwner'); the enclosing object's own
+                                    -- name for everything else, including window-level events
   , puParams      :: [Param]
   , puRetType     :: Text          -- ^ "" for subroutine\/event\/on-block (no return type)
   , puRetTypeSpan :: Maybe SourceSpan
@@ -294,20 +297,21 @@ data ProcUnit = ProcUnit
 -- 'ScopedTypeEnv' 'procEnv'\/'collectBodyLocals' together produce for it.
 forProcedures :: WorkspaceEnv -> ControlIndex -> Text -> SrFile -> [ProcUnit]
 forProcedures wsEnv controlIdx obj sf = concat
-  [ [ mkUnit "function" (identOrig (fnsName (fbSig fb))) (fnsParams (fbSig fb))
+  [ [ mkUnit "function" (identOrig (fnsName (fbSig fb))) obj (fnsParams (fbSig fb))
         (fnsReturnType (fbSig fb)) (Just (fnsReturnTypeSpan (fbSig fb))) (fbBody fb)
     | fb <- srFunctions sf ]
-  , [ mkUnit "subroutine" (identOrig (ssName (sbSig sb))) (ssParams (sbSig sb)) "" Nothing (sbBody sb)
+  , [ mkUnit "subroutine" (identOrig (ssName (sbSig sb))) obj (ssParams (sbSig sb)) "" Nothing (sbBody sb)
     | sb <- srSubroutines sf ]
-  , [ mkUnit "event" (identOrig (esName (evSig ev))) (esParams (evSig ev)) "" Nothing (evBody ev)
+  , [ mkUnit "event" (identOrig (esName (evSig ev))) (fromMaybe obj (evOwner ev)) (esParams (evSig ev)) "" Nothing (evBody ev)
     | ev <- srEvents sf ]
-  , [ mkUnit "on" (identOrig (obEvent ob)) [] "" Nothing (obBody ob)
+  , [ mkUnit "on" (identOrig (obEvent ob)) obj [] "" Nothing (obBody ob)
     | ob <- srOnBlocks sf ]
   ]
   where
-    mkUnit kind name params retType retTypeSpan body = ProcUnit
+    mkUnit kind name owner params retType retTypeSpan body = ProcUnit
       { puKind        = kind
       , puName        = name
+      , puOwner       = owner
       , puParams      = params
       , puRetType     = retType
       , puRetTypeSpan = retTypeSpan

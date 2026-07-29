@@ -119,6 +119,43 @@ describe("ObjectNode", () => {
     expect(screen.queryByText(/Events/)).toBeNull();
   });
 
+  it("groups control-owned events under a synthetic control node", () => {
+    const { store } = createTestStore({
+      explore: {
+        ...makeExploreBase(),
+        expandedNodes: new Set(["obj:app.pbl:w_main", "ctrl:w_main:cb_ok"]),
+      },
+    });
+    render(() => (
+      <ExploreStoreContext.Provider value={store}>
+        <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
+          { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", owner: "w_main", modifiers: null },
+          { name: "clicked", proc_type: "event", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", owner: "cb_ok", modifiers: null },
+        ] }} depth={1} />
+      </ExploreStoreContext.Provider>
+    ));
+    expect(screen.getByText("of_init")).toBeDefined();
+    expect(screen.getByText("cb_ok")).toBeDefined();
+    expect(screen.getByText("clicked")).toBeDefined();
+  });
+
+  it("renders procs without an owner field flat (no synthetic control node)", () => {
+    const { store } = createTestStore({
+      explore: {
+        ...makeExploreBase(),
+        expandedNodes: new Set(["obj:app.pbl:w_main"]),
+      },
+    });
+    render(() => (
+      <ExploreStoreContext.Provider value={store}>
+        <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
+          { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
+        ] }} depth={1} />
+      </ExploreStoreContext.Provider>
+    ));
+    expect(screen.getByText("of_init")).toBeDefined();
+  });
+
   it("hides DW objects when filtered out", () => {
     const { store } = createTestStore({
       explore: { ...makeExploreBase(), treeFilter: "zzz" },

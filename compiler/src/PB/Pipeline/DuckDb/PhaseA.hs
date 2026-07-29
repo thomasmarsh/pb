@@ -97,6 +97,8 @@ data ProcRow = ProcRow
   , prCyclomatic :: Maybe Int
   , prConfidence :: Text
   , prParamNames :: [Text]  -- ^ ordered declared parameter names, see 'procedures.param_names'
+  , prOwner      :: Text    -- ^ owning control name for a control-owned event, else the
+                             -- procedure's own object name; see 'procedures.owner'
   } deriving (Eq, Show)
 
 data DwObjectRow = DwObjectRow
@@ -291,6 +293,7 @@ appendProcedures pool rows = appendRow pool "procedures" $ \app ->
     aMaybeInt app (prCyclomatic r)
     aText     app (prConfidence r)
     aText     app (T.intercalate "|" (prParamNames r))
+    aText     app (prOwner      r)
 
 appendDwObjects :: AppenderPool -> [DwObjectRow] -> IO ()
 appendDwObjects _    [] = pure ()

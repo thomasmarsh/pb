@@ -382,7 +382,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                   | otherwise = checkBody typeCheckCtx pName body
             in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs wiringJs
                    (renderParams params) retType (Just cyclo) confidence
-                   (map (identOrig . paramName) params)
+                   (map (identOrig . paramName) params) owner
                , flow
                , catFpRows
                , deadVars
@@ -392,6 +392,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
           | ((sLine, eLine), pu) <- procSpecs
           , let pName = puName pu; pType = puKind pu; params = puParams pu
                 retType = puRetType pu; retTypeSpan = puRetTypeSpan pu; body = puBody pu
+                owner = puOwner pu
           ]
         procBodies =
              [ (identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
