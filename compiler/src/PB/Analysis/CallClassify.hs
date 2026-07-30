@@ -126,7 +126,7 @@ effectName expr args =
               in "retrieve:child_" <> T.toLower col <> ":" <> dwCtrl
             (_:ExStr col:_) -> "retrieve:child_" <> T.toLower col <> ":?"
             _               -> "retrieve:child_?:?"
-     else if cn `elem` ["open", "opensheet"] then "open"
+     else if cn `elem` ["open", "opensheet", "openwithparm", "opensheetwithparm"] then "open"
      else if "close" `T.isSuffixOf` cn       then "close"
      else if ".retrieve" `T.isSuffixOf` cn   then "retrieve:" <> head_
      else "executeSql"
@@ -143,12 +143,14 @@ isBuiltinSuspendFn n = n `Map.member` builtinEffectTags
 -- this project's vocabulary, so both carry 'Suspends' only.
 builtinEffectTags :: Map.Map Text (Set.Set EffectTag)
 builtinEffectTags = Map.fromList
-  [ ("open",             Set.fromList [Suspends, WritesUi])
-  , ("opensheet",        Set.fromList [Suspends, WritesUi])
-  , ("close",            Set.fromList [Suspends, WritesUi])
-  , ("fn_retrievechild", Set.fromList [Suspends, ReadsDb])
-  , ("execute",          Set.singleton Suspends)
-  , ("run",              Set.singleton Suspends)
+  [ ("open",                Set.fromList [Suspends, WritesUi])
+  , ("opensheet",           Set.fromList [Suspends, WritesUi])
+  , ("openwithparm",        Set.fromList [Suspends, WritesUi])
+  , ("opensheetwithparm",   Set.fromList [Suspends, WritesUi])
+  , ("close",               Set.fromList [Suspends, WritesUi])
+  , ("fn_retrievechild",    Set.fromList [Suspends, ReadsDb])
+  , ("execute",             Set.singleton Suspends)
+  , ("run",                 Set.singleton Suspends)
   ]
 
 dwTypes :: Set.Set Text

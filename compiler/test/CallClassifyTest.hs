@@ -9,7 +9,7 @@ import PB.AST.SourceFile
 import PB.AST.Type              (PbType (..))
 import PB.Lexing.Token          (SourceSpan (..))
 import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), ProcUnit (..), classifyExpr,
-                                  classifyEffects, forProcedures, resolveReceiverType)
+                                  classifyEffects, effectName, forProcedures, resolveReceiverType)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.TypeEnv      (ScopedTypeEnv (..), buildWorkspaceEnv)
 import ControlHierarchyTest     (withFyloFixture)
@@ -188,6 +188,11 @@ tests = testGroup "CallClassify"
               expr = ExCall (lv ["nonexistent_ctrl", "sub_ctrl", "retrieve"]) []
           Set.member Suspends (classifyEffects env expr) @?= (classifyExpr env expr == SuspendCall)
     ]
+  , testGroup "effectName" $
+    [ testCase (T.unpack (name <> " -> \"open\"")) $
+        effectName (ExCall (lv [name]) []) [] @?= "open"
+    | name <- ["open", "opensheet", "openwithparm", "opensheetwithparm"]
+    ]
   , testGroup "forProcedures (Plan 197 Finding 7)"
     [ testCase "empty SrFile yields no units" $
         forProcedures emptyWsEnv emptyIdx "w_test" emptyFile @?= []
@@ -257,12 +262,14 @@ tests = testGroup "CallClassify"
 
     builtinEffectCases :: [(Text, Set.Set EffectTag)]
     builtinEffectCases =
-      [ ("open",             Set.fromList [Suspends, WritesUi])
-      , ("opensheet",        Set.fromList [Suspends, WritesUi])
-      , ("close",            Set.fromList [Suspends, WritesUi])
-      , ("fn_retrievechild", Set.fromList [Suspends, ReadsDb])
-      , ("execute",          Set.singleton Suspends)
-      , ("run",              Set.singleton Suspends)
+      [ ("open",                Set.fromList [Suspends, WritesUi])
+      , ("opensheet",           Set.fromList [Suspends, WritesUi])
+      , ("openwithparm",        Set.fromList [Suspends, WritesUi])
+      , ("opensheetwithparm",   Set.fromList [Suspends, WritesUi])
+      , ("close",               Set.fromList [Suspends, WritesUi])
+      , ("fn_retrievechild",    Set.fromList [Suspends, ReadsDb])
+      , ("execute",             Set.singleton Suspends)
+      , ("run",                 Set.singleton Suspends)
       ]
 
     dwMethodCases :: [(Text, Set.Set EffectTag)]
