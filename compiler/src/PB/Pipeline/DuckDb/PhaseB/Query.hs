@@ -2,7 +2,6 @@
 module PB.Pipeline.DuckDb.PhaseB.Query
   ( queryCallSites
   , queryGlobalVars
-  , queryObjInfo
   , queryCallableProcMap
   , queryProcDefs
   , queryProcUses
@@ -29,7 +28,7 @@ module PB.Pipeline.DuckDb.PhaseB.Query
   ) where
 
 import PB.Prelude
-import PB.AST.Ident             (Ident, IdentMap, IdentSet, identMapFromListWith, identSetSingleton, identSetUnion, mkIdent)
+import PB.AST.Ident             (IdentMap, IdentSet, identMapFromListWith, identSetSingleton, identSetUnion, mkIdent)
 import PB.AST.Type             (parseTypeText, parseTypeTextAt)
 import PB.Lexing.Token          (SourceSpan (..))
 import PB.Analysis.TypeResolve
@@ -196,46 +195,13 @@ queryGlobalVars conn = queryHandle conn
   \type_start_line, type_start_col, type_end_line, type_end_col \
   \FROM global_vars"
 
--- | Build the four workspace-wide maps needed by Pass 5 from the DB. The
--- inherits map is 'Ident'-keyed (Plan 179 Phase 5, mirroring
--- 'PB.Analysis.TypeResolve.buildInheritsMap''s JSON-pipeline counterpart) --
--- @objects.object@\/@objects.ancestor@ are read verbatim from independently
--- parsed files with no cross-row case normalization, so a declaration's own
--- casing and another file's reference to it as an ancestor can genuinely
--- differ; 'PB.Analysis.TypeResolve.ancestorChain''s canonical-'Ident' walk
--- is what makes that mismatch harmless. The proc map's own outer key is
--- 'IdentMap'-keyed the same way (Plan 179 procMap-outer-key fix), so
--- 'PB.Analysis.TypeResolve.resolveVirtual' recovers the target object's own
--- declared casing even when reached via such a mismatched reference.
-queryObjInfo
-  :: Handle
-  -> IO (Set.Set Text, Set.Set Text, Map.Map Ident Ident, IdentMap IdentSet)
-queryObjInfo conn = do
-  objRows  <- queryHandle conn
-    "SELECT object FROM objects \
-    \WHERE LOWER(COALESCE(ancestor,'')) != 'structure'" :: IO [OneText]
-  usrRows  <- queryHandle conn
-    "SELECT object FROM objects WHERE LOWER(ancestor) = 'structure'" :: IO [OneText]
-  inhRows  <- queryHandle conn
-    "SELECT object, ancestor FROM objects WHERE ancestor IS NOT NULL" :: IO [TwoText]
-  procRows <- queryHandle conn
-    "SELECT object, proc_name FROM procedures" :: IO [TwoText]
-  pure
-    ( Set.fromList [t | OneText t <- objRows]
-    , Set.fromList [t | OneText t <- usrRows]
-    , Map.fromList [(mkIdent o, mkIdent a) | TwoText o a <- inhRows]
-    , identMapFromListWith identSetUnion
-        [(mkIdent o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
-    )
-
--- | Same shape as 'queryObjInfo''s proc map, restricted to proc kinds
--- actually invocable via a bare @name(...)@ call. @event@\/@on@-block
--- declarations (PowerScript event handlers) share 'queryObjInfo''s full
--- map so 'ExMethodCall'\/'ExCallArg' dispatch and the global fallback keep
--- seeing them, but a bare 'ExCall' can never legitimately target one --
+-- | Restricted to proc kinds actually invocable via a bare @name(...)@
+-- call. @event@\/@on@-block declarations (PowerScript event handlers) are
+-- deliberately excluded here even though 'ExMethodCall'\/'ExCallArg'
+-- dispatch and the global fallback need to keep seeing them elsewhere --
 -- events fire via @TriggerEvent@\/@PostEvent@\/the @Event@ keyword, never a
--- direct call. Real corpus evidence for why this must be a separate map,
--- not a filter applied uniformly: every window object registers an
+-- direct call. Real corpus evidence for why this filter can't be applied
+-- uniformly to every proc-map consumer: every window object registers an
 -- @open@\/@close@ event, which would otherwise shadow the builtin
 -- @Open@\/@Close@ free functions for any bare call made from inside that
 -- window's own script.
@@ -425,9 +391,8 @@ querySchemaMorphismRows conn = queryHandle conn
 -- 'PB.Pipeline.DuckDb.Relations.inheritsRows'. Deliberately not the write-side
 -- 'ObjectRow' -- that type carries 'orLayoutJson'\/'orTypeBlocksJson', which
 -- @inherits@ never reads; selecting only the two columns actually needed
--- avoids transferring that JSON for every object row. The @ancestor IS NOT
--- NULL@ filter is the same one 'queryObjInfo' already applies for its own
--- @inhRows@. Unioned with @type_ancestors@ (Plan 214 scope-item-3 follow-on:
+-- avoids transferring that JSON for every object row. Unioned with
+-- @type_ancestors@ (Plan 214 scope-item-3 follow-on:
 -- @objects@ is one row per *file*, so a nested @within@-qualified control's
 -- own ancestor -- e.g. an implicit system control like an MDI frame's
 -- @mdi_1@ -- never appears there; @type_ancestors@ is the additive

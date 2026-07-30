@@ -179,11 +179,12 @@ data TypeCheckWorkspace = TypeCheckWorkspace
 -- 'weProcMap'\/'weHierarchy' -- no second file-list traversal to recompute
 -- either) plus every parsed 'SrFile' (still needed for 'tcwParams'\/
 -- 'tcwObjects'\/'tcwUserTypes', none of which 'WorkspaceEnv' carries). The
--- object\/user-type split mirrors 'PB.Pipeline.DuckDb.queryObjInfo''s SQL
--- exactly (an object whose declared ancestor is @structure@ is a user type;
--- everything else, including no ancestor, is an object) -- kept in sync
--- deliberately, since 'inferExpr'\/'checkBody' must classify the same
--- object\/user_type universe 'resolveTypes'\/'resolveCalls' already do.
+-- object\/user-type split mirrors 'PB.Analysis.TypeResolve.buildObjectSet'\/
+-- 'buildUserTypeSet' exactly (an object whose declared ancestor is
+-- @structure@ is a user type; everything else, including no ancestor, is an
+-- object) -- kept in sync deliberately, since 'inferExpr'\/'checkBody' must
+-- classify the same object\/user_type universe 'resolveTypes'\/'resolveCalls'
+-- already do.
 buildTypeCheckWorkspace :: WorkspaceEnv -> [SrFile] -> TypeCheckWorkspace
 buildTypeCheckWorkspace ws sfs = TypeCheckWorkspace
   { tcwProcMap   = weProcMap ws
