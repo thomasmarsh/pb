@@ -427,11 +427,20 @@ querySchemaMorphismRows conn = queryHandle conn
 -- @inherits@ never reads; selecting only the two columns actually needed
 -- avoids transferring that JSON for every object row. The @ancestor IS NOT
 -- NULL@ filter is the same one 'queryObjInfo' already applies for its own
--- @inhRows@.
+-- @inhRows@. Unioned with @type_ancestors@ (Plan 214 scope-item-3 follow-on:
+-- @objects@ is one row per *file*, so a nested @within@-qualified control's
+-- own ancestor -- e.g. an implicit system control like an MDI frame's
+-- @mdi_1@ -- never appears there; @type_ancestors@ is the additive
+-- per-'PB.AST.SourceFile.TypeBlock' counterpart, see
+-- 'PB.Analysis.TypeEnv.extractNestedTypeDecls') so both the materialized
+-- @inherits@ relation and dead-code reachability's ancestor closure see a
+-- nested control's ancestor too.
 queryObjectAncestors :: Handle -> IO [(Text, Text)]
 queryObjectAncestors conn = do
   rows <- queryHandle conn
-    "SELECT object, ancestor FROM objects WHERE ancestor IS NOT NULL" :: IO [TwoText]
+    "SELECT object, ancestor FROM objects WHERE ancestor IS NOT NULL \
+    \UNION \
+    \SELECT child, parent FROM type_ancestors" :: IO [TwoText]
   pure [(o, a) | TwoText o a <- rows]
 
 -- | Plan 175 Phase 2: typed reader over 'procedures', feeding

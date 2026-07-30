@@ -15,6 +15,7 @@ module PB.Analysis.TypeEnv
   , lookupScopedVarOrSelf
   , lookupInstanceVarOwner
   , ancestorChain
+  , extractNestedTypeDecls
   ) where
 
 import PB.Prelude
@@ -37,6 +38,30 @@ extractTypeDecls :: SrFile -> Map.Map Ident Ident
 extractTypeDecls sf =
   Map.fromList [ (tdName td, tdAncestorClass td)
                | td <- srAllTypeDecls sf ]
+
+-- | Ancestor pairs for every nested (@within@-qualified) control 'TypeBlock'
+-- in a file -- e.g. @type mdi_1 from mdiclient within w_main@ declares
+-- @mdi_1@'s own ancestor @mdiclient@, distinct from @w_main@'s own primary
+-- ancestor. Additive to 'extractTypeDecls'\/'weHierarchy' (which already
+-- folds every TypeBlock, primary and nested alike, into one flat map): kept
+-- as its own function so a consumer whose existing ancestor source only
+-- covers primary per-file objects (@objects.ancestor@ in the DuckDB schema,
+-- and 'PB.Pipeline.Passes.riInherits' built from it) can union nested
+-- control ancestors on top without touching that already-correct primary
+-- behavior. Same flat-map name-collision caveat 'weHierarchy' already
+-- accepts: a generic control name redeclared with a different ancestor
+-- across two unrelated windows (e.g. codegen's @tab1@\/@page1@) resolves to
+-- whichever declaration is last in 'Map.fromList' bias -- 'ControlIndex'
+-- exists precisely to resolve that case precisely when the caller needs to;
+-- this flat map is for callers (ancestor-chain method dispatch) that already
+-- only ever had this level of precision.
+extractNestedTypeDecls :: SrFile -> Map.Map Ident Ident
+extractNestedTypeDecls sf =
+  Map.fromList [ (tdName td, tdAncestorClass td)
+               | tb <- srTypeBlocks sf
+               , let td = tbDecl tb
+               , tdWithin td /= Nothing
+               ]
 
 -- | True when @ty@ is in @targets@ or has an ancestor in @targets@, walking
 -- @inh@ (the workspace's Ident-keyed ancestor map). Cycle-safe via a visited

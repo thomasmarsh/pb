@@ -22,7 +22,7 @@ import Test.Tasty.HUnit (testCase, assertEqual, assertBool)
 
 tests :: TestTree
 tests = testGroup "StdLib"
-  [ testCase "parseStdlibFiles produces all 52 classes"        testParsed
+  [ testCase "parseStdlibFiles produces all 53 classes"        testParsed
   , testCase "loadStdlib: objects table populated"             testObjectsTable
   , testCase "loadStdlib: procedures for powerobject present"  testProcedures
   , testCase "loadStdlib: all rows are __stdlib__ files"       testFilePrefix
@@ -44,7 +44,7 @@ expectedClasses =
   , "datawindowchild", "datepicker", "dropdownlistbox"
   , "dropdownpicturelistbox", "editmask", "groupbox"
   , "hprogressbar", "hscrollbar", "htrackbar", "inkedit"
-  , "inkpicture", "line", "listbox", "listview", "menu"
+  , "inkpicture", "line", "listbox", "listview", "mdiclient", "menu"
   , "monthcalendar", "multilineedit", "oval", "picture"
   , "picturebutton", "picturehyperlink", "picturelistbox"
   , "radiobutton", "rectangle", "ribbonbar", "richtextedit"
@@ -80,7 +80,7 @@ queryOneTexts conn sql = map unOneText <$> queryHandle conn sql
 testParsed :: IO ()
 testParsed = do
   pfs <- parseStdlibFiles
-  assertEqual "file count" 52 (length pfs)
+  assertEqual "file count" 53 (length pfs)
   let paths = map (T.pack . pfPath) pfs
   mapM_ (\cls ->
     assertBool ("missing __stdlib__/" <> T.unpack cls <> ".sru")
@@ -165,6 +165,8 @@ testInheritance = do
     (Just "graphicobject") (Map.lookup "drawobject"    ut)
   assertEqual "dragobject → graphicobject"
     (Just "graphicobject") (Map.lookup "dragobject"    ut)
+  assertEqual "mdiclient → graphicobject"
+    (Just "graphicobject") (Map.lookup "mdiclient"     ut)
   assertEqual "window → dragobject"
     (Just "dragobject")  (Map.lookup "window"          ut)
   assertEqual "userobject → dragobject"

@@ -40,7 +40,8 @@ import PB.Analysis.CallClassify (ProcUnit (..), forProcedures)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, withDwTables,
-                                 withDwControls, withDwParamBindings, procEnv)
+                                 withDwControls, withDwParamBindings, procEnv,
+                                 extractNestedTypeDecls)
 import PB.Analysis.DwBuiltins  (classifyDwControlKind)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
@@ -97,13 +98,13 @@ import PB.Pipeline.DuckDb
   )
 import PB.Pipeline.DuckDb.Appender (AppenderPool, withAppenderPoolTimed)
 import PB.Pipeline.DuckDb.PhaseA
-  ( ObjectRow (..), StructureRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
+  ( ObjectRow (..), TypeAncestorRow (..), StructureRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , SourceFileRow (..)
   , IdentifierTokenRow (..), identifierTokenRows
-  , appendObjects, appendStructures, appendProcedures
+  , appendObjects, appendTypeAncestors, appendStructures, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
   , appendDwJoins
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
@@ -984,6 +985,20 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     _ <- evaluate (Map.size controlIdx')
     pure controlIdx'
 
+  -- Ancestor pairs for every nested (@within@-qualified) control 'TypeBlock'
+  -- -- additive to 'objects.ancestor' (one row per file, so a control
+  -- declared within another object never appears there). Feeds both
+  -- 'riInherits' (Phase B's in-memory ancestor-chain method dispatch, via
+  -- 'PhaseAData'\'s 'padTypeAncestors') and the persisted @type_ancestors@
+  -- table (unioned into @inherits@\/@dcrAncestors@ by 'queryObjectAncestors'),
+  -- so a call on an implicit system control (e.g. an MDI frame's own
+  -- @mdi_1@) can resolve an inherited builtin method the same way an
+  -- ordinary object's own ancestor chain already does.
+  nestedAncestors <- Progress.timedStep "Building nested control ancestors" $ do
+    let nested' = foldl' (\m sf -> m <> extractNestedTypeDecls sf) Map.empty allParsedSrFiles
+    _ <- evaluate (Map.size nested')
+    pure nested'
+
   -- Workspace-wide type-check context, built once from wsEnv0 (reusing its
   -- weProcMap/weHierarchy rather than recomputing them) and the same
   -- parsed-file set as wsEnv/controlIdx above (see TypeCheckWorkspace's own
@@ -1026,7 +1041,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- and DDL loading. The pool's scope closes (flushing all appenders)
     -- before runPhaseB starts — this ordering is correctness-critical.
     let phaseATables =
-          [ "objects", "structures", "procedures", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
+          [ "objects", "type_ancestors", "structures", "procedures", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
           , "sql_statement_filters", "sql_statement_tables"
           , "source_files", "parse_errors", "identifier_tokens"
@@ -1037,6 +1052,10 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           , "window_opens", "object_creates", "window_menu_bindings", "dw_bindings"
           ]
     allCfs <- withAppenderPoolTimed Progress.emitEvent conn phaseATables $ \appPool -> do
+      -- One-time, not per-file: 'nestedAncestors' is already a whole-workspace
+      -- fold over 'allParsedSrFiles' computed above.
+      appendTypeAncestors appPool
+        [ TypeAncestorRow (identOrig c) (identOrig p) | (c, p) <- Map.toList nestedAncestors ]
       -- Load stdlib first so type lookups in user-code Phase B see the base classes.
       -- Stdlib has no DW files of its own, so an empty map is correct here.
       stdlibCfs <- mapM (\pf -> do
@@ -1117,7 +1136,8 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
       pure (stdlibCfs ++ userCfs)
     -- Pool scope closed here: all Phase A appenders flushed + destroyed.
     -- Phase B SQL queries now see the complete data.
-    let phaseAData = foldl' accumulatePhaseAData emptyPhaseAData allCfs
+    let phaseAData = (foldl' accumulatePhaseAData emptyPhaseAData allCfs)
+          { padTypeAncestors = nestedAncestors }
     runPhaseB conn mDefaultNamespace phaseAData  -- Phase B: link analysis (passes 5–8)
 
   errors <- readIORef errCount

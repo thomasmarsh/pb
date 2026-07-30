@@ -125,6 +125,20 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
         \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT, \
         \type_blocks_json TEXT, confidence TEXT NOT NULL DEFAULT 'confirmed', \
         \category TEXT NOT NULL DEFAULT 'userobject')"
+      -- Ancestor pairs for every nested (@within@-qualified) control
+      -- 'TypeBlock' -- e.g. 'type mdi_1 from mdiclient within w_main' yields
+      -- (child='mdi_1', parent='mdiclient'). 'objects.ancestor' is one row
+      -- per *file*, so a control declared within another object (every
+      -- placed visual control) never appears there; this table is the
+      -- additive nested-control counterpart, computed once from
+      -- 'PB.Analysis.TypeEnv.extractNestedTypeDecls' over every parsed file,
+      -- not accumulated per-file. 'PB.Pipeline.DuckDb.PhaseB.Query.
+      -- queryObjectAncestors' unions this table with 'objects' so both the
+      -- materialized 'inherits' relation and 'PB.Pipeline.Passes.
+      -- riInherits' see a nested control's ancestor for method-dispatch
+      -- resolution (e.g. an implicit system control's inherited builtin
+      -- method).
+      , "CREATE TABLE IF NOT EXISTS type_ancestors (child TEXT, parent TEXT)"
       -- param_names is a '|'-delimited ordered list of just the declared
       -- parameter names (mirrors global_vars.mods's convention) -- PB
       -- taint\/interproc analysis (Phase B, DB round-trip) only ever needs

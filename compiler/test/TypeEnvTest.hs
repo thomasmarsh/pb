@@ -12,7 +12,7 @@ import PB.AST.Type           (PbType (..), parseTypeText, parseTypeTextAt)
 import PB.Analysis.TypeEnv   (isDescendantOf, ancestorChain,
                               WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv,
                               procEnv, lookupScopedVar, lookupScopedVarOrSelf,
-                              lookupInstanceVarOwner)
+                              lookupInstanceVarOwner, extractNestedTypeDecls)
 import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
@@ -494,5 +494,29 @@ tests = testGroup "TypeEnv"
             sf  = emptyFile { srTypeBlocks = [tbPage, tbBase] }
             inh = weHierarchy (buildWorkspaceEnv [sf])
         in ancestorChain "page1" inh @?= ["page1", "w_form_tab2", "window"]
+    ]
+
+  , testGroup "extractNestedTypeDecls (Plan 214 scope-item-3 follow-on)"
+    [ testCase "a nested (within-qualified) control's own ancestor is captured (e.g. mdi_1 from mdiclient within w_main)" $
+        let tb = TypeBlock (mkTypeDecl "mdi_1" "mdiclient" (Just "w_main")) []
+            sf = emptyFile { srTypeBlocks = [tb] }
+        in Map.lookup "mdi_1" (extractNestedTypeDecls sf) @?= Just "mdiclient"
+
+    , testCase "a primary (non-within) TypeBlock is excluded -- objects.ancestor already covers it" $
+        let tb = TypeBlock (mkTypeDecl "w_main" "window" Nothing) []
+            sf = emptyFile { srTypeBlocks = [tb] }
+        in extractNestedTypeDecls sf @?= Map.empty
+
+    , testCase "a file mixing a primary object and a nested control only captures the nested one" $
+        let tbPrimary = TypeBlock (mkTypeDecl "w_main" "window" Nothing) []
+            tbNested  = TypeBlock (mkTypeDecl "mdi_1" "mdiclient" (Just "w_main")) []
+            sf = emptyFile { srTypeBlocks = [tbPrimary, tbNested] }
+        in extractNestedTypeDecls sf @?= Map.singleton "mdi_1" "mdiclient"
+
+    , testCase "merges across multiple files" $
+        let sf1 = emptyFile { srTypeBlocks = [TypeBlock (mkTypeDecl "mdi_1" "mdiclient" (Just "w_main")) []] }
+            sf2 = emptyFile { srTypeBlocks = [TypeBlock (mkTypeDecl "cb_2" "commandbutton" (Just "w_other")) []] }
+            merged = foldl' (\m sf -> m <> extractNestedTypeDecls sf) Map.empty [sf1, sf2]
+        in (Map.lookup "mdi_1" merged, Map.lookup "cb_2" merged) @?= (Just "mdiclient", Just "commandbutton")
     ]
   ]

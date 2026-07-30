@@ -340,6 +340,15 @@ objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT,
 source_files (file TEXT PRIMARY KEY, lines TEXT)
 parse_errors (file TEXT, error TEXT)
 
+-- Ancestor pairs for every nested (within-qualified) control TypeBlock --
+-- e.g. `type mdi_1 from mdiclient within w_main` yields (child='mdi_1',
+-- parent='mdiclient'). Additive to objects.ancestor, which is one row per
+-- *file* and so never carries a nested control's own ancestor (every placed
+-- visual control, including PB-implicit ones like an MDI frame's own
+-- mdi_1). Union both when walking an ancestor chain that may pass through a
+-- control name, not just an object name.
+type_ancestors (child TEXT, parent TEXT)
+
 -- Every callable unit: functions, subroutines, events, on-blocks.
 -- param_names is a '|'-delimited ordered list of declared parameter names
 -- (positional; see `params` for the full type-annotated display string).
@@ -491,9 +500,9 @@ decomposition_coslice (seed_key TEXT, target_key TEXT, direction TEXT, leg_ordin
                         leg_from TEXT, leg_to TEXT, leg_kind TEXT, leg_source TEXT,
                         -- + 32 role-prefixed columns, see note above)
 
--- Inheritance is `objects.ancestor` (walked via a recursive CTE, see the
--- example query below); the call graph is `call_sites` (raw) /
--- `resolved_calls` (cross-file resolved) above.
+-- Inheritance is `objects.ancestor` union `type_ancestors` (walked via a
+-- recursive CTE, see the example query below); the call graph is
+-- `call_sites` (raw) / `resolved_calls` (cross-file resolved) above.
 implied_fk  (from_namespace TEXT, from_table TEXT, from_column TEXT,
              to_namespace TEXT, to_table TEXT, to_column TEXT)
 column_risk (namespace TEXT, table_name TEXT, column_name TEXT, downstream_count INT)
@@ -526,6 +535,21 @@ WITH RECURSIVE anc AS (
   UNION ALL
   SELECT o.object, o.ancestor FROM objects o
     JOIN anc a ON o.object = a.ancestor WHERE o.ancestor IS NOT NULL
+)
+SELECT * FROM anc;
+
+-- Same chain starting from a nested control name (e.g. an MDI frame's own
+-- implicit mdi_1) rather than an object name: union type_ancestors first.
+WITH RECURSIVE all_inherits AS (
+  SELECT object AS child, ancestor AS parent FROM objects WHERE ancestor IS NOT NULL
+  UNION
+  SELECT child, parent FROM type_ancestors
+),
+anc AS (
+  SELECT child, parent FROM all_inherits WHERE child = 'mdi_1'
+  UNION ALL
+  SELECT i.child, i.parent FROM all_inherits i
+    JOIN anc a ON i.child = a.parent
 )
 SELECT * FROM anc;
 

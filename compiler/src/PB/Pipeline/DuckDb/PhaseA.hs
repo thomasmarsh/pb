@@ -1,6 +1,7 @@
 module PB.Pipeline.DuckDb.PhaseA
   ( -- Row types
     ObjectRow (..)
+  , TypeAncestorRow (..)
   , StructureRow (..)
   , ProcRow (..)
   , DwObjectRow (..)
@@ -23,6 +24,7 @@ module PB.Pipeline.DuckDb.PhaseA
   , identifierTokenRows
   -- Phase A appenders
   , appendObjects
+  , appendTypeAncestors
   , appendStructures
   , appendProcedures
   , appendDwObjects
@@ -89,6 +91,20 @@ data ObjectRow = ObjectRow
   , orTypeBlocksJson :: Maybe Text
   , orConfidence     :: Text
   , orCategory       :: Text
+  } deriving (Eq, Show)
+
+-- | One row per nested (@within@-qualified) control 'TypeBlock' across the
+-- whole workspace -- e.g. @type mdi_1 from mdiclient within w_main@ yields
+-- @TypeAncestorRow "mdi_1" "mdiclient"@. Additive to @objects@'s own
+-- @object@\/@ancestor@ columns (one row per *file*, so a nested control
+-- declared @within@ another object never appears there): computed once from
+-- 'PB.Analysis.TypeEnv.extractNestedTypeDecls' over every parsed file, not
+-- accumulated per-'CompiledFile' the way most Phase A rows are, since it
+-- doesn't depend on per-file compilation output. See the @type_ancestors@
+-- table's doc comment in 'PB.Pipeline.DuckDb.initSchema'.
+data TypeAncestorRow = TypeAncestorRow
+  { tarChild  :: Text
+  , tarParent :: Text
   } deriving (Eq, Show)
 
 -- | One row per 'PB.AST.SourceFile.StructureBlock' -- see the @structures@
@@ -293,6 +309,13 @@ appendObjects pool rows = appendRow pool "objects" $ \app ->
     aMaybeText app (orTypeBlocksJson r)
     aText      app (orConfidence     r)
     aText      app (orCategory       r)
+
+appendTypeAncestors :: AppenderPool -> [TypeAncestorRow] -> IO ()
+appendTypeAncestors _    [] = pure ()
+appendTypeAncestors pool rows = appendRow pool "type_ancestors" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (tarChild  r)
+    aText app (tarParent r)
 
 appendStructures :: AppenderPool -> [StructureRow] -> IO ()
 appendStructures _    [] = pure ()
