@@ -72,8 +72,8 @@ dateTimeNames = Set.fromList ["date", "datetime", "time"]
 -- needs and identity resolution doesn't.
 classifyFamily :: PbType -> IdentSet -> IdentSet -> TypeFamily
 classifyFamily ty objs userTypes = case classifyPbType ty objs userTypes of
-  ("object", Just t)    -> FamObject (mkIdent t)
-  ("user_type", Just t) -> FamUserType (mkIdent t)
+  ("object", Just t)    -> FamObject t
+  ("user_type", Just t) -> FamUserType t
   ("primitive", _)      -> primitiveFamily (renderPbType ty)
   _                     -> FamAny -- "any" / "unresolved": never guess, always compatible
 

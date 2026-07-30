@@ -93,6 +93,10 @@ data ObjectRow = ObjectRow
   , orTypeBlocksJson :: Maybe Text
   , orConfidence     :: Text
   , orCategory       :: Text
+  , orObjectSpan     :: Maybe SourceSpan
+    -- ^ The real source span of 'orObject''s own declaration token, 'Nothing'
+    -- when no real span was recovered (e.g. a DataWindow-sourced row --
+    -- see 'PB.Pipeline.Runner.dwObjectRowToObjectRow').
   } deriving (Eq, Show)
 
 -- | One row per nested (@within@-qualified) control 'TypeBlock' across the
@@ -113,9 +117,12 @@ data TypeAncestorRow = TypeAncestorRow
 -- table's doc comment in 'PB.Pipeline.DuckDb.initSchema' for the
 -- 'srOwner' nesting convention.
 data StructureRow = StructureRow
-  { srFile   :: Text
-  , srObject :: Text
-  , srOwner  :: Maybe Text
+  { srFile       :: Text
+  , srObject     :: Text
+  , srOwner      :: Maybe Text
+  , srObjectSpan :: Maybe SourceSpan
+    -- ^ The real source span of 'srObject''s own declaration token -- see
+    -- 'ObjectRow.orObjectSpan'.
   } deriving (Eq, Show)
 
 data ProcRow = ProcRow
@@ -322,6 +329,7 @@ appendObjects pool rows = appendRow pool "objects" $ \app ->
     aMaybeText app (orTypeBlocksJson r)
     aText      app (orConfidence     r)
     aText      app (orCategory       r)
+    aMaybeSpan app (orObjectSpan     r)
 
 appendTypeAncestors :: AppenderPool -> [TypeAncestorRow] -> IO ()
 appendTypeAncestors _    [] = pure ()
@@ -337,6 +345,7 @@ appendStructures pool rows = appendRow pool "structures" $ \app ->
     aText      app (srFile   r)
     aText      app (srObject r)
     aMaybeText app (srOwner  r)
+    aMaybeSpan app (srObjectSpan r)
 
 appendProcedures :: AppenderPool -> [ProcRow] -> IO ()
 appendProcedures _    [] = pure ()

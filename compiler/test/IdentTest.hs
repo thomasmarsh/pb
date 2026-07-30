@@ -81,6 +81,17 @@ tests = testGroup "Ident"
       , testCase "fromList dedupes by canonical form" $
           let s = identSetFromList [mkIdentAt sp1 "n_cst_util", mkIdentAt sp2 "N_CST_UTIL", mkIdentAt sp1 "n_other"]
           in length (identSetToList s) @?= 2
+      , testCase "difference removes canonical matches present in the second set" $
+          let a = identSetFromList [mkIdentAt sp1 "w_foo", mkIdentAt sp1 "os_data"]
+              b = identSetSingleton (mkIdentAt sp2 "OS_DATA")
+          in identSetToList (identSetDifference a b) @?= [mkIdentAt sp1 "w_foo"]
+      , testCase "difference against an empty set is unchanged" $
+          let a = identSetSingleton (mkIdentAt sp1 "w_foo")
+          in identSetToList (identSetDifference a identSetEmpty) @?= [mkIdentAt sp1 "w_foo"]
+      , testCase "difference of disjoint sets keeps every entry" $
+          let a = identSetSingleton (mkIdentAt sp1 "w_foo")
+              b = identSetSingleton (mkIdentAt sp2 "u_other")
+          in identSetToList (identSetDifference a b) @?= [mkIdentAt sp1 "w_foo"]
       ]
 
   , testGroup "IdentMap"

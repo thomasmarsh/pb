@@ -12,8 +12,9 @@ import PB.AST.BodyStmt
 import PB.AST.DataWindow   (DwTable (..), DwColumn (..))
 import PB.AST.DwPropertySchema (DwControlKind (..))
 import PB.AST.Expr
-import PB.AST.Ident        (mkIdent, mkIdentAt, identMapEmpty, identMapFromList, identMapLookup,
-                             identSetEmpty, identSetFromList, identSetMember, identSetSingleton)
+import PB.AST.Ident        (IdentProvenance (..), mkIdent, mkIdentAt, identMapEmpty, identMapFromList, identMapLookup,
+                             identSetEmpty, identSetFromList, identSetMember, identSetSingleton, identSpan)
+import Data.List.NonEmpty  (NonEmpty (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
@@ -211,6 +212,14 @@ tests = testGroup "TypeResolve"
           let (k, t) = classifyPbType (PtPrimitive "menu") identSetEmpty identSetEmpty
           k @?= "object"
           t @?= Just "menu"
+
+      , testCase "PtUserDefined matched against a real-spanned Ident propagates that span, not a re-mint" $ do
+          let sp = SourceSpan 5 1 5 6
+              (_, t) = classifyPbType (PtUserDefined "w_main")
+                         (identSetSingleton (mkIdentAt sp "w_main")) identSetEmpty
+          case t of
+            Just i -> identSpan i @?= FromSource (sp :| [])
+            Nothing -> assertFailure "expected a resolved target"
       ]
 
   , testGroup "extractLocalVars"

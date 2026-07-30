@@ -10,7 +10,7 @@ module PB.Pipeline.Passes
   ) where
 
 import PB.Prelude
-import PB.AST.Ident            (Ident, IdentMap, IdentSet, identMapFromListWith, identSetFromList, identSetSingleton, identSetUnion, mkIdent)
+import PB.AST.Ident            (Ident, IdentMap, IdentSet, identMapFromListWith, identSetDifference, identSetFromList, identSetSingleton, identSetUnion, mkIdent, mkIdentAt, mkIdentSynthetic)
 import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TaintEdges  qualified as TaintEdges
@@ -104,8 +104,8 @@ data ResolveInputs = ResolveInputs
   { riLocalVars       :: ![LocalVar]
   , riGlobalVars      :: ![GlobalVar]
   , riCallSites       :: ![CallSite]
-  , riObjSet          :: !(Set.Set Text)
-  , riUsrTypes        :: !(Set.Set Text)
+  , riObjSet          :: !IdentSet
+  , riUsrTypes        :: !IdentSet
   , riInherits        :: !(Map.Map Ident Ident)
   , riProcMap         :: !(IdentMap IdentSet)
   , riCallableProcMap :: !(IdentMap IdentSet)
@@ -310,7 +310,14 @@ fetchResolveInputs lvs gvs css objRows structRows procRows nestedAncestors = do
   -- coexisting with a real window/user-object TypeBlock in the same file
   -- was never reachable via objRows at all, so usrTypes was silently empty
   -- for every inline structure in real runs.
-  let usrTypes = Set.fromList [srObject r | r <- structRows]
+  let -- Real declaration-site span when the row carries one (a fresh
+      -- single-file parse -- every non-DataWindow row today), an honest
+      -- 'Synthetic' bridge otherwise (a DataWindow-sourced 'ObjectRow', whose
+      -- object name has no span-tracking wired -- see
+      -- 'PB.Pipeline.Runner.dwObjectRowToObjectRow').
+      rowIdent name Nothing   = mkIdentSynthetic "objects/structures row has no recorded span" name
+      rowIdent name (Just sp) = mkIdentAt sp name
+      usrTypes = identSetFromList [rowIdent (srObject r) (srObjectSpan r) | r <- structRows]
       -- Excludes by 'usrTypes' membership, not 'orCategory r /= "structure"':
       -- a stdlib-embedded structure (e.g. runtime/datawindowchild.sru, a
       -- real `type datawindowchild from structure` file under __stdlib__/)
@@ -319,7 +326,8 @@ fetchResolveInputs lvs gvs css objRows structRows procRows nestedAncestors = do
       -- into objSet alongside usrTypes -- a category check can't see through
       -- that override, but 'structures' (this structure's own row,
       -- unaffected by the category override) always can.
-      objSet = Set.fromList [orObject r | r <- objRows] `Set.difference` usrTypes
+      objSet = identSetFromList [rowIdent (orObject r) (orObjectSpan r) | r <- objRows]
+                 `identSetDifference` usrTypes
       -- Left-biased union: a primary object's own ancestor (from 'objRows')
       -- always wins over 'nestedAncestors' on a key collision, though in
       -- practice a primary object name and a nested control's own literal
@@ -454,10 +462,8 @@ resolveTypesAndCalls
   -> IO (Map.Map Ident Ident, ResolvedCallsReady)
 resolveTypesAndCalls fetchInputs sinkOutput = Progress.timedStep "Resolving types" $ do
   ResolveInputs{..} <- fetchInputs
-  let objIdents  = identSetFromList (map mkIdent (Set.toList riObjSet))
-      userIdents = identSetFromList (map mkIdent (Set.toList riUsrTypes))
-      rt  = resolveTypes riLocalVars objIdents userIdents
-      rtG = resolveGlobalTypes riGlobalVars objIdents userIdents
+  let rt  = resolveTypes riLocalVars riObjSet riUsrTypes
+      rtG = resolveGlobalTypes riGlobalVars riObjSet riUsrTypes
       rc  = resolveCalls riCallSites riProcMap riCallableProcMap riInherits builtinFnNames builtinMethodNames
   sinkOutput ResolvedOutput
     { roResolvedTypes = rt <> rtG

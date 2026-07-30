@@ -121,10 +121,16 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
   where
     allTables :: [Query]
     allTables =
+      -- object_start_line/col, object_end_line/col carry the declared
+      -- object name's own token span (additive, nullable -- NULL for a
+      -- DataWindow-sourced row, whose object name has no span-tracking
+      -- wired yet; see 'PB.Pipeline.Runner.dwObjectRowToObjectRow').
       [ "CREATE TABLE IF NOT EXISTS objects \
         \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT, \
         \type_blocks_json TEXT, confidence TEXT NOT NULL DEFAULT 'confirmed', \
-        \category TEXT NOT NULL DEFAULT 'userobject')"
+        \category TEXT NOT NULL DEFAULT 'userobject', \
+        \object_start_line INTEGER, object_start_col INTEGER, \
+        \object_end_line INTEGER, object_end_col INTEGER)"
       -- Ancestor pairs for every nested (@within@-qualified) control
       -- 'TypeBlock' -- e.g. 'type mdi_1 from mdiclient within w_main' yields
       -- (child='mdi_1', parent='mdiclient'). 'objects.ancestor' is one row
@@ -191,8 +197,12 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- structure declared within a window/user object file. A structure's
       -- fields are its own 'global_vars' rows, keyed by this same object
       -- name -- see 'PB.Analysis.TypeResolve.extractStructureFields'.
+      -- object_start_line/col, object_end_line/col carry the declared
+      -- structure name's own token span, same convention as 'objects' above.
       , "CREATE TABLE IF NOT EXISTS structures \
-        \(file TEXT, object TEXT, owner TEXT)"
+        \(file TEXT, object TEXT, owner TEXT, \
+        \object_start_line INTEGER, object_start_col INTEGER, \
+        \object_end_line INTEGER, object_end_col INTEGER)"
       -- "Uses" facts (Plan 210 Phase 4): statically-resolvable inter-object
       -- references only, per confirmed real-IDE Browser semantics
       -- (doc/pb2025r2/pbug/ch02s01s08s01.html) -- see

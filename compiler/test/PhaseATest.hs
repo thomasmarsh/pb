@@ -44,6 +44,7 @@ tests = testGroup "PhaseA"
   , testCase "identifierTokenRows keeps only identifier-shaped tokens" testIdentifierTokenRowsFilter
   , testCase "identifierTokenRows counts duplicate-text occurrences independently" testIdentifierTokenRowsDuplicates
   , testCase "appendIdentifierTokens round-trip"     testAppendIdentifierTokens
+  , testCase "appendObjects round-trips object_start_line/col, object_end_line/col" testAppendObjectsSpan
   ]
 
 testInitSchema :: IO ()
@@ -59,8 +60,8 @@ testAppendObjects = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendObjects pool
-      [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing "confirmed" "function"
-      , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing "confirmed" "userobject"
+      [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing "confirmed" "function" Nothing
+      , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing "confirmed" "userobject" Nothing
       ]
     -- Appending an empty list after a real batch must not throw
     appendObjects pool []
@@ -250,5 +251,31 @@ testAppendIdentifierTokens = do
   assertEqual "identifier_tokens round-trips IdentifierTokenRow rows"
     [ IdentifierTokenReadback "w_test.srw" "super"  "TkIdent"   1 1 1 6
     , IdentifierTokenReadback "w_test.srw" "create" "TkOtherKw" 1 8 1 14
+    ]
+    rows
+
+data ObjectSpanReadback = ObjectSpanReadback Text (Maybe Int) (Maybe Int) (Maybe Int) (Maybe Int)
+  deriving (Eq, Show)
+
+instance FromRow ObjectSpanReadback where
+  fromRow = ObjectSpanReadback <$> field <*> field <*> field <*> field <*> field
+
+testAppendObjectsSpan :: IO ()
+testAppendObjectsSpan = do
+  rows <- withHandle inMemory $ \conn -> do
+    initSchema conn
+    withTestPool conn $ \pool -> do
+      appendObjects pool
+        [ ObjectRow "w_test.srw" "powerscript" "w_test" Nothing Nothing Nothing "confirmed" "window"
+            (Just (SourceSpan 1 6 1 12))
+        , ObjectRow "d_report.srd" "datawindow" "d_report" Nothing Nothing Nothing "confirmed" "datawindow"
+            Nothing
+        ]
+    queryHandle conn
+      "SELECT object, object_start_line, object_start_col, object_end_line, object_end_col \
+      \FROM objects ORDER BY object"
+  assertEqual "objects round-trips object_*_line/col, NULL for a row with no recorded span"
+    [ ObjectSpanReadback "d_report" Nothing Nothing Nothing Nothing
+    , ObjectSpanReadback "w_test" (Just 1) (Just 6) (Just 1) (Just 12)
     ]
     rows

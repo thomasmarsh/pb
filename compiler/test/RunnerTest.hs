@@ -1462,7 +1462,7 @@ tests = testGroup "Pipeline.Runner"
 
     , testCase "accumulatePhaseAData appends CFPs local_vars" $ do
         let cps = CompiledPs
-              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" ""
+              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" "" Nothing
               , cpsStructureRows = []
               , cpsProcRows      = []
               , cpsLocalVars     = []
@@ -1526,7 +1526,7 @@ tests = testGroup "Pipeline.Runner"
               , Dataflow.pfAllUses     = mempty
               }
             cps = CompiledPs
-              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" ""
+              { cpsObjectRow     = ObjectRow "" "" "" Nothing Nothing Nothing "" "" Nothing
               , cpsStructureRows = []
               , cpsProcRows      = []
               , cpsLocalVars     = []

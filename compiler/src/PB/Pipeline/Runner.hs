@@ -26,7 +26,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig, mkIdent)
+import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig, identSpan, mkIdent, provenanceSpan)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText, parseTypeTextAt)
@@ -291,6 +291,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         structureRows =
           [ StructureRow fp (identOrig (sbName sb))
               (if identOrig (sbName sb) == obj then Nothing else Just obj)
+              (provenanceSpan (identSpan (sbName sb)))
           | sb <- srStructureBlocks sf
           ]
         dwBindingRows = extractDwControlBindings fp sf
@@ -454,6 +455,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                              (Just (jsonText (toJSON (srTypeBlocks sf))))
                              confidence
                              (renderObjectCategory (objectCategoryForFile (T.unpack fp)))
+                             (provenanceSpan (identSpan objIdent))
       , cpsStructureRows = structureRows
       , cpsProcRows      = [ r | (r, _, _, _, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
@@ -749,7 +751,7 @@ dwJoinRowToJoinLegRow r =
 dwObjectRowToObjectRow :: DwObjectRow -> ObjectRow
 dwObjectRowToObjectRow dw =
   ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"
-    (renderObjectCategory CatDataWindow)
+    (renderObjectCategory CatDataWindow) Nothing
 
 -- | Accumulate a 'CompiledFile''s compiler-only table data into a
 -- 'PhaseAData' workspace, concatenating the lists. Returns the pad
@@ -818,7 +820,7 @@ appendToDb pool (CFPs r) = do
 appendToDb pool (CFDw r) = do
   let dw = cdDwObjectRow r
   appendObjects           pool [ObjectRow (dorFile dw) "datawindow" (dorObject dw) Nothing Nothing Nothing "confirmed"
-                                   (renderObjectCategory CatDataWindow)]
+                                   (renderObjectCategory CatDataWindow) Nothing]
   appendDwObjects        pool [dw]
   appendDwControls       pool (cdDwControls r)
   appendDwRetrieveTables pool (cdDwRetrieveTables r)

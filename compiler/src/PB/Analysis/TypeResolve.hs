@@ -77,7 +77,7 @@ import PB.AST.DwPropertySchema (DwElementKind (..), DwBandCategory (..))
 import PB.AST.Expr
 import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapLookup, identMapToList,
                            identOrig, identSetFromList, identSetLookup, identSpan, mkIdent,
-                           mkIdentAt, provenanceSpan)
+                           mkIdentAt, mkIdentSynthetic, provenanceSpan)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeTextAt, renderPbType)
@@ -366,24 +366,29 @@ isDwFamilyType :: Map.Map Ident Ident -> Text -> Bool
 isDwFamilyType inherits ty =
   any (\a -> identCanon a `Set.member` dwFamilyClassNames) (ancestorChain (mkIdent ty) inherits)
 
--- | Classify a PbType into a resolution kind and optional target name.
+-- | Classify a PbType into a resolution kind and optional target identity.
 -- Mirrors Python classify_type() in type_resolution.py. objs\/userTypes are
 -- matched case-insensitively via 'identSetLookup' -- PB identifiers are
 -- case-insensitive, so a declared type spelled differently from the
 -- matching 'TypeDecl''s own casing (e.g. a var declared @W_Main@ against an
--- object declared @w_main@) must still resolve; the returned target text is
--- always the matched entry's own declared casing ('identOrig'), never the
--- query's, so every consumer sees one canonical spelling per object.
-classifyPbType :: PbType -> IdentSet -> IdentSet -> (Text, Maybe Text)
+-- object declared @w_main@) must still resolve; the returned target is
+-- always the matched entry's own 'Ident' (declared casing and provenance),
+-- never the query's, so every consumer sees one canonical spelling per
+-- object and inherits a real source span whenever 'objs'\/'userTypes' has
+-- one on record.
+classifyPbType :: PbType -> IdentSet -> IdentSet -> (Text, Maybe Ident)
 classifyPbType (PtPrimitive t)   _    _
-  | identCanon tIdent `Set.member` builtinClassNames = ("object",    Just (identCanon tIdent))
+  | identCanon tIdent `Set.member` builtinClassNames =
+      ("object", Just (mkIdentSynthetic
+        "builtin class name (keyword-typed PtPrimitive, no per-occurrence span)"
+        (identCanon tIdent)))
   | otherwise                                        = ("primitive", Nothing)
   where tIdent = mkIdent t
 classifyPbType (PtDecimalPrec _) _    _         = ("primitive", Nothing)
 classifyPbType PtAny             _    _         = ("any", Nothing)
 classifyPbType (PtUserDefined n) objs userTypes
-  | Just o <- identSetLookup n objs           = ("object", Just (identOrig o))
-  | Just u <- identSetLookup n userTypes      = ("user_type", Just (identOrig u))
+  | Just o <- identSetLookup n objs           = ("object", Just o)
+  | Just u <- identSetLookup n userTypes      = ("user_type", Just u)
   | identCanon n `Set.member` pbBuiltins       = ("primitive", Nothing)
   | otherwise                                  = ("unresolved", Nothing)
 
@@ -1349,10 +1354,13 @@ buildUserTypeSet = identSetFromList . concatMap fileUserTypes
 resolveOneType :: Text -> Text -> Text -> Text -> Text -> Text -> Int -> PbType -> IdentSet -> IdentSet -> ResolvedType
 resolveOneType file obj procN varName rawType scope scopeLine pbTy objs userTypes =
   let (kind, target) = classifyPbType pbTy objs userTypes
-      -- Fallback: infer control type from variable name when unresolved
+      -- Fallback: infer control type from variable name when unresolved.
+      -- A name-prefix heuristic guess, never a real token -- honestly
+      -- Synthetic, matching 'classifyPbType''s own PtPrimitive branch.
       (kind', target') = case kind of
         "unresolved" -> case classifyControlType varName of
-          Just ctrlType -> ("primitive", Just ctrlType)
+          Just ctrlType -> ("primitive", Just (mkIdentSynthetic
+            "inferred from control-name prefix, no declared type" ctrlType))
           Nothing       -> (kind, target)
         _            -> (kind, target)
   in ResolvedType
@@ -1362,7 +1370,7 @@ resolveOneType file obj procN varName rawType scope scopeLine pbTy objs userType
        , rtVarName   = varName
        , rtRawType   = rawType
        , rtKind      = kind'
-       , rtTarget    = target'
+       , rtTarget    = identOrig <$> target'
        , rtScope     = scope
        , rtScopeLine = scopeLine
        }

@@ -17,6 +17,7 @@ module PB.AST.Ident
   , identSetLookup
   , identSetToList
   , identSetUnion
+  , identSetDifference
   , IdentMap
   , identMapEmpty
   , identMapSize
@@ -147,6 +148,11 @@ identSetToList (IdentSet m) = Map.elems m
 -- 'Data.Map.union'.
 identSetUnion :: IdentSet -> IdentSet -> IdentSet
 identSetUnion (IdentSet a) (IdentSet b) = IdentSet (Map.union a b)
+
+-- | Entries of the first set whose canonical form does not appear in the
+-- second set.
+identSetDifference :: IdentSet -> IdentSet -> IdentSet
+identSetDifference (IdentSet a) (IdentSet b) = IdentSet (Map.difference a b)
 
 -- | A canonical-keyed map from 'Ident' to a value, recovering the
 -- originally declared casing of the key on lookup -- generalizes

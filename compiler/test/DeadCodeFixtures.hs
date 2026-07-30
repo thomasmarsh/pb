@@ -92,7 +92,7 @@ seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs = do
   -- faithful `inherits` input relation view (initDeadCodeRelations) reads these, and
   -- the `descendant`/`override_edge` derived rules derive the closure.
   appendObjects pool
-    [ ObjectRow "f.sru" "object" child (Just parent) Nothing Nothing "confirmed" "userobject"
+    [ ObjectRow "f.sru" "object" child (Just parent) Nothing Nothing "confirmed" "userobject" Nothing
     | (child, parent) <- inherits
     ]
 

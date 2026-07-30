@@ -82,10 +82,15 @@ def client_with_sql(db_path, tmp_path_factory):
         "VALUES (?,?,?,?,?)",
         ["", "dw_synth", None, "synthetic_test_table", "id"],
     )
-    # objects schema: file, kind, object, ancestor, layout_json, type_blocks_json, confidence, category
-    # Add a child object that inherits from fn_sqlerror for impact-lineage tests.
+    # Add a child object that inherits from fn_sqlerror for impact-lineage
+    # tests. Named columns, not positional VALUES: db_path's real pbc run
+    # already created 'objects' with its full current schema, so a
+    # positional INSERT silently breaks (or worse, silently misaligns) every
+    # time a column is added -- see the dw_retrieve_columns comment above for
+    # the same landmine caught previously.
     conn.execute(
-        "INSERT INTO objects VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO objects (file, kind, object, ancestor, layout_json, type_blocks_json, confidence, category) "
+        "VALUES (?,?,?,?,?,?,?,?)",
         ["", "powerscript", "synthetic_child_obj", "fn_sqlerror", None, None, "confirmed", "userobject"],
     )
     conn.close()
