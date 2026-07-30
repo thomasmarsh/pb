@@ -150,10 +150,11 @@ describe("buildProcTooltip", () => {
     expect(t.html).not.toContain("returns");
   });
 
-  it("falls back to the plain header when target signature is absent", () => {
+  it("renders the shared header with a title-cased kind label when target signature is absent", () => {
     const t = buildProcTooltip("f_go", makeCall({ target_proc_type: null }), undefined);
-    expect(t.html).not.toContain("qi-kind");
-    expect(t.html).toContain("virtual");
+    expect(t.html).toContain("qi-kind");
+    expect(t.html).toContain("Virtual");
+    expect(t.html).toContain("f_go");
   });
 });
 

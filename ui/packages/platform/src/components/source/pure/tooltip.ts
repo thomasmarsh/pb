@@ -59,6 +59,13 @@ const CALL_KIND_COLORS: Record<ResolvedCallInfo["kind"], string> = {
   unresolved: "#6b7280",
 };
 
+const CALL_KIND_LABELS: Record<ResolvedCallInfo["kind"], string> = {
+  virtual: "Virtual",
+  static: "Static",
+  inherited: "Inherited",
+  unresolved: "Unresolved",
+};
+
 export function buildProcTooltip(
   linkName: string,
   call: ResolvedCallInfo | undefined,
@@ -76,7 +83,13 @@ export function buildProcTooltip(
       returnType: call.target_return_type,
     });
   } else {
-    html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
+    html = renderQuickInfoHeader({
+      shape: "value",
+      kindLabel: call ? CALL_KIND_LABELS[call.kind] : "Unresolved",
+      kindColor: color,
+      name: linkName,
+      type: null,
+    });
   }
   if (call) {
     const target = call.target_object
