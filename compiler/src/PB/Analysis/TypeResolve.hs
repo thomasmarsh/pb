@@ -37,6 +37,7 @@ module PB.Analysis.TypeResolve
   , extractDwCallSites
   , extractVarRefs
   , extractDwVarRefs
+  , buildControlOverrideLinks
   , extractGlobalVars
   , extractStructureFields
   , extractDwControlBindings
@@ -80,12 +81,12 @@ import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identMapLookup
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeTextAt, renderPbType)
-import PB.Lexing.Token    (SourceSpan, Token (..), TokenKind (..))
+import PB.Lexing.Token    (SourceSpan (..), Token (..), TokenKind (..))
 import PB.Analysis.CallClassify   (ProcUnit (..), forProcedures)
 import PB.Analysis.Dataflow       (isIdent)
 import PB.Analysis.DwBuiltins     (dwPropertyCatalog, classifyDwBandKeyword)
-import PB.Analysis.ControlHierarchy (ControlIndex, findLiteralDataObject, findLiteralMenuName,
-                                      resolveMemberChainType, resolveMemberChainDwBinding)
+import PB.Analysis.ControlHierarchy (ControlIndex, ControlDecl (..), findLiteralDataObject, findLiteralMenuName,
+                                      resolveMemberChainType, resolveMemberChainDwBinding, lookupScoped)
 import PB.Analysis.TypeEnv        (ScopedTypeEnv (..), WorkspaceEnv (..), ancestorChain,
                                     buildProcMap, buildCallableProcMap, isDescendantOf,
                                     lookupInstanceVarOwner, procEnv)
@@ -1018,6 +1019,48 @@ extractDwVarRefs wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls d
     fromCtrl ctrl =
       foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedExpression ctrl)
       <> foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedFormat ctrl)
+
+-- | One 'ResolvedVarRef' per D1 backtick control-override declaration in
+-- this file (e.g. the @dw@ in @type dw from w_list\`dw within
+-- w_misth_final_details_list@), pointing at the ancestor's own direct (or
+-- inherited) declaration of that same control name -- reuses
+-- 'PB.Analysis.ControlHierarchy.lookupScoped' (the same single-hop
+-- resolution 'resolveHop' uses internally) rather than re-deriving the
+-- coupled\/decoupled owner-tracking rule. @kind = "control"@,
+-- @fromProc = ""@ (a declaration header has no enclosing procedure -- a new
+-- legitimate case, distinct from an unresolved lookup). Emits nothing for a
+-- plain has-a control (no backtick), an override with no real source span
+-- (e.g. a hand-built 'mkTypeDecl' fixture), or an override that resolves to
+-- no real declaration anywhere in the workspace -- no guessing past what's
+-- actually declared, mirroring 'resolveMemberChainType'\'s 'Nothing' rule.
+buildControlOverrideLinks :: ControlIndex -> Map.Map Ident Ident -> Text -> Text -> SrFile -> [ResolvedVarRef]
+buildControlOverrideLinks idx inh file obj sf =
+  [ ResolvedVarRef
+      { rvrFile         = file
+      , rvrObject       = obj
+      , rvrFromProc     = ""
+      , rvrLine         = Just (ssStartLine overrideSp)
+      , rvrName         = identOrig overrideIdent
+      , rvrAccess       = "read"
+      , rvrTargetObject = Just (identOrig foundRoot)
+      , rvrKind         = "control"
+      , rvrConfidence   = "high"
+      , rvrSpan         = Just overrideSp
+      , rvrDeclaredType = Just (identOrig (cdAncestorType targetDecl))
+      }
+  | tb <- srTypeBlocks sf
+  , let td = tbDecl tb
+  , Just overrideIdent <- [tdAncestorOverride td]
+  , Just overrideSp <- [provenanceSpan (identSpan overrideIdent)]
+  , let rootIdent = fst (srPrimaryObject sf)
+        (ownerIdent, _nameIdent) = case tdWithin td of
+          Just parent -> (mkIdent parent, tdName td)
+          Nothing     -> (tdName td, mkIdent "this")
+        coupled     = rootIdent == ownerIdent
+        targetRoot  = tdAncestorClass td
+        targetOwner = if coupled then targetRoot else ownerIdent
+  , Just (foundRoot, targetDecl) <- [lookupScoped idx inh targetRoot targetOwner overrideIdent]
+  ]
 
 -- | Extract global variable declarations (variables block + global instances).
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]

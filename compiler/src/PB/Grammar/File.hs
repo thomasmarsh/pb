@@ -65,7 +65,7 @@ extractTypeDecl s =
       let within = case remainder of
             (w:cT:_) | T.toLower (tkText w) == "within" -> Just (tkText cT)
             _                                            -> Nothing
-      in Just (mkTypeDeclAt (tkSpan nameT) (tkText nameT) (tkText ancT) within)
+      in Just (mkTypeDeclAt (tkSpan nameT) (tkSpan ancT) (tkText nameT) (tkText ancT) within)
     _ -> Nothing
 
 pTypeDecl :: FileParser TypeDecl

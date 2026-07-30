@@ -7,7 +7,7 @@ import PB.AST.Ident          (IdentProvenance (..), identCanon, identOrig, ident
 import PB.Lexing.Token       (SourceSpan (..))
 import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..), StructureBlock (..),
                               GlobalInstance (..), VarDecl (..), srAllTypeDecls, srPrimaryObject,
-                              splitAncestorRef, mkTypeDecl)
+                              splitAncestorRef, splitAncestorRefAt, mkTypeDecl)
 import PB.AST.Type           (PbType (..), parseTypeText, parseTypeTextAt)
 import PB.Analysis.TypeEnv   (isDescendantOf, ancestorChain,
                               WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv,
@@ -17,6 +17,7 @@ import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+import qualified Data.Text       as T
 import Data.List.NonEmpty     (NonEmpty (..))
 import Test.Tasty            (TestTree, testGroup)
 import Test.Tasty.HUnit      (assertFailure, testCase, (@?=))
@@ -485,6 +486,37 @@ tests = testGroup "TypeEnv"
     , testCase "identCanon lowercases both split halves" $
         let (anc, ovr) = splitAncestorRef "W_Form_Tab2`Page1"
         in (identCanon anc, identCanon <$> ovr) @?= ("w_form_tab2", Just "page1")
+    ]
+
+  , testGroup "splitAncestorRefAt"
+    [ testCase "no backtick: whole-token span attaches to the single Ident" $
+        let sp = SourceSpan 3 5 3 16
+            (anc, ovr) = splitAncestorRefAt sp "w_form_tab2"
+        in (identSpan anc, ovr) @?= (FromSource (sp :| []), Nothing)
+
+    , testCase "backtick: class segment gets [start, backtick), override gets (backtick, end]" $
+        -- "w_list`dw" starting at col 5: w_list=cols 5-11, ` at 11, dw=cols 12-14.
+        let sp = SourceSpan 3 5 3 14
+        in case splitAncestorRefAt sp "w_list`dw" of
+          (anc, Just ovr) -> do
+            identSpan anc @?= FromSource (SourceSpan 3 5 3 11 :| [])
+            identSpan ovr @?= FromSource (SourceSpan 3 12 3 14 :| [])
+          (_, Nothing) -> assertFailure "expected an override Ident"
+
+    , testCase "override segment span text length matches its own identOrig length" $
+        -- "w_form_tab2`page1" is 17 chars; a span starting at col 1 ends at col 18.
+        let sp = SourceSpan 1 1 1 18
+        in case splitAncestorRefAt sp "w_form_tab2`page1" of
+          (_, Just ovr) -> case identSpan ovr of
+            FromSource (SourceSpan _ sCol _ eCol :| _) -> eCol - sCol @?= T.length (identOrig ovr)
+            Synthetic _ -> assertFailure "expected a real span"
+          (_, Nothing) -> assertFailure "expected an override Ident"
+
+    , testCase "identOrig/identCanon still behave exactly like splitAncestorRef" $
+        let sp = SourceSpan 1 1 1 20
+            (anc, ovr) = splitAncestorRefAt sp "W_Form_Tab2`Page1"
+        in (identOrig anc, identCanon anc, identOrig <$> ovr, identCanon <$> ovr)
+             @?= ("W_Form_Tab2", "w_form_tab2", Just "Page1", Just "page1")
     ]
 
   , testGroup "extractTypeDecls backtick handling (via ancestorChain)"

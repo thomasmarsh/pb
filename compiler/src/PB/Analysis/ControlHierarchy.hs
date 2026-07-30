@@ -66,6 +66,7 @@ module PB.Analysis.ControlHierarchy
   , resolveMemberChainDwBinding
   , findLiteralDataObject
   , findLiteralMenuName
+  , lookupScoped
   ) where
 
 import PB.Prelude

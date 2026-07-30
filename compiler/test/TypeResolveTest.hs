@@ -50,6 +50,15 @@ mkTB nm anc = TypeBlock
   , tbBody = []
   }
 
+-- | Like 'mkTB' but attaches real name\/ancestor spans, needed for
+-- 'buildControlOverrideLinks' tests -- 'mkTypeDecl' mints a span-less
+-- (Synthetic) ancestor Ident, which never has a linkable override span.
+mkTBAt :: SourceSpan -> SourceSpan -> T.Text -> T.Text -> Maybe T.Text -> TypeBlock
+mkTBAt nameSp ancSp nm anc within = TypeBlock
+  { tbDecl = mkTypeDeclAt nameSp ancSp nm anc within
+  , tbBody = []
+  }
+
 mkDwCol :: T.Text -> T.Text -> DwColumn
 mkDwCol nm ty = DwColumn
   { dcName = nm, dcType = ty, dcDbName = Nothing, dcUpdate = False
@@ -2054,6 +2063,90 @@ tests = testGroup "TypeResolve"
             sf = emptySrFile { srTypeBlocks = [tb] }
         in extractDwControlBindings "w.srw" sf
              @?= [DwControlBinding "w.srw" "w_selfdw" "this" "d_self"]
+    ]
+
+  , testGroup "buildControlOverrideLinks"
+    [ testCase "resolves a D1 override to the ancestor's own direct declaration (real corpus shape: w_list`dw)" $
+        -- "w_list`dw" starting at col 15: w_list=cols 15-21, ` at 21, dw=cols 22-24.
+        let ancSp = SourceSpan 5 15 5 24
+            overrideSp = SourceSpan 5 22 5 24
+            sfDescendant = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_misth_final_details_list" "window" Nothing) []
+                  , mkTBAt (SourceSpan 5 5 5 7) ancSp "dw" "w_list`dw" (Just "w_misth_final_details_list")
+                  ] }
+            sfAncestor = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_list" "window" Nothing) []
+                  , TypeBlock (mkTypeDecl "dw" "datawindow" (Just "w_list")) []
+                  ] }
+            idx = buildControlIndex [sfDescendant, sfAncestor]
+        in buildControlOverrideLinks idx Map.empty "w_misth_final_details_list.srw" "w_misth_final_details_list" sfDescendant
+             @?= [ ResolvedVarRef
+                     { rvrFile         = "w_misth_final_details_list.srw"
+                     , rvrObject       = "w_misth_final_details_list"
+                     , rvrFromProc     = ""
+                     , rvrLine         = Just 5
+                     , rvrName         = "dw"
+                     , rvrAccess       = "read"
+                     , rvrTargetObject = Just "w_list"
+                     , rvrKind         = "control"
+                     , rvrConfidence   = "high"
+                     , rvrSpan         = Just overrideSp
+                     , rvrDeclaredType = Just "datawindow"
+                     } ]
+
+    , testCase "plain has-a control (no backtick) emits nothing" $
+        let sf = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_main" "window" Nothing) []
+                  , mkTBAt (SourceSpan 1 1 1 2) (SourceSpan 3 5 3 15) "dw_1" "datawindow" (Just "w_main")
+                  ] }
+            idx = buildControlIndex [sf]
+        in buildControlOverrideLinks idx Map.empty "w.srw" "w_main" sf @?= []
+
+    , testCase "unresolvable override (ancestor never declares that control anywhere) emits nothing, not a guess" $
+        let overrideSp = SourceSpan 1 16 1 17
+            sf = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_child" "window" Nothing) []
+                  , mkTBAt (SourceSpan 1 1 1 5) overrideSp "x" "w_nonexistent`x" (Just "w_child")
+                  ] }
+            idx = buildControlIndex [sf]
+        in buildControlOverrideLinks idx Map.empty "w.srw" "w_child" sf @?= []
+
+    , testCase "override Ident with no real span (hand-built mkTypeDecl fixture) emits nothing, not a crash" $
+        let sfDescendant = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_child" "window" Nothing) []
+                  , TypeBlock (mkTypeDecl "tab1" "w_form_tab2`tab1" (Just "w_child")) []
+                  ] }
+            sfAncestor = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_form_tab2" "window" Nothing) []
+                  , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_form_tab2")) []
+                  ] }
+            idx = buildControlIndex [sfDescendant, sfAncestor]
+        in buildControlOverrideLinks idx Map.empty "w.srw" "w_child" sfDescendant @?= []
+
+    , testCase "override resolves via the ancestor's own further ancestor chain (inh climbing)" $
+        let overrideSp = SourceSpan 5 15 5 24
+            sfDescendant = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_misth_final_details_list" "window" Nothing) []
+                  , mkTBAt (SourceSpan 5 5 5 7) overrideSp "dw" "w_list`dw" (Just "w_misth_final_details_list")
+                  ] }
+            sfAncestor = emptySrFile
+              { srTypeBlocks = [ TypeBlock (mkTypeDecl "w_list" "w_base" Nothing) [] ] }
+            sfBase = emptySrFile
+              { srTypeBlocks =
+                  [ TypeBlock (mkTypeDecl "w_base" "window" Nothing) []
+                  , TypeBlock (mkTypeDecl "dw" "datawindow" (Just "w_base")) []
+                  ] }
+            idx = buildControlIndex [sfDescendant, sfAncestor, sfBase]
+            inh = Map.singleton "w_list" "w_base"
+        in (rvrTargetObject <$> buildControlOverrideLinks idx inh "f.srw" "w_misth_final_details_list" sfDescendant)
+             @?= [Just "w_base"]
     ]
 
   , testGroup "extractWindowMenuBindings"

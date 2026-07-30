@@ -4,7 +4,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { fireEvent, render, cleanup } from "@solidjs/testing-library";
 import { SourceViewer } from "../../app/src/views/components/source/SourceViewer.js";
 import { createTestStore } from "../helpers.js";
-import type { ProcedureInfo, ResolvedCallInfo } from "@pb/platform";
+import type { ProcedureInfo, ResolvedCallInfo, ResolvedVarRefInfo } from "@pb/platform";
 
 afterEach(() => {
   cleanup();
@@ -32,6 +32,7 @@ function renderViewer(opts: {
   lines?: string[];
   procedures?: ProcedureInfo[];
   resolvedCalls?: ResolvedCallInfo[];
+  resolvedVarRefs?: ResolvedVarRefInfo[];
   knownObjects?: { name: string; kind: string }[];
   sliceHighlight?: { lines: Set<number>; label: string } | null;
   onClearSliceHighlight?: () => void;
@@ -44,6 +45,7 @@ function renderViewer(opts: {
       procedures={opts.procedures ?? []}
       knownObjects={opts.knownObjects ?? []}
       resolvedCalls={opts.resolvedCalls ?? [resolvedCall]}
+      resolvedVarRefs={opts.resolvedVarRefs}
       objectName="w_host"
       sliceHighlight={opts.sliceHighlight}
       onClearSliceHighlight={opts.onClearSliceHighlight}
@@ -58,6 +60,10 @@ function getProcSpan(): HTMLElement | null {
 
 function getObjSpan(): HTMLElement | null {
   return document.querySelector('[data-link-type="object"]');
+}
+
+function getVarSpan(): HTMLElement | null {
+  return document.querySelector('[data-link-type="var"]');
 }
 
 describe("SourceViewer", () => {
@@ -118,6 +124,45 @@ describe("SourceViewer", () => {
     );
     expect(a).toBeDefined();
     expect((a as any).action.name).toBe("w_main");
+  });
+
+  const controlRef: ResolvedVarRefInfo = {
+    proc_name: "",
+    line: 1,
+    name: "dw",
+    access: "read",
+    target_object: "w_list",
+    kind: "control",
+    confidence: "high",
+    name_start_line: 1,
+    name_start_col: 1,
+    name_end_line: 1,
+    name_end_col: 3,
+    declared_type: "datawindow",
+  };
+
+  it("renders a linkable var span for a control-kind resolved var ref (D1 backtick override)", () => {
+    renderViewer({ lines: ["dw"], resolvedCalls: [], resolvedVarRefs: [controlRef] });
+    const span = getVarSpan();
+    expect(span).not.toBeNull();
+    expect(span?.dataset.linkName).toBe("dw");
+  });
+
+  it("clicking a control-kind var span dispatches select with its target_object", () => {
+    const { captured } = renderViewer({ lines: ["dw"], resolvedCalls: [], resolvedVarRefs: [controlRef] });
+    fireEvent.click(getVarSpan()!);
+    const a = captured.find(
+      (x) => x.tag === "objects" && (x as any).action.tag === "select",
+    );
+    expect(a).toBeDefined();
+    expect((a as any).action.name).toBe("w_list");
+  });
+
+  it("clicking a non-control var span (e.g. a local var) dispatches nothing", () => {
+    const localRef: ResolvedVarRefInfo = { ...controlRef, kind: "local", target_object: null };
+    const { captured } = renderViewer({ lines: ["dw"], resolvedCalls: [], resolvedVarRefs: [localRef] });
+    fireEvent.click(getVarSpan()!);
+    expect(captured.find((x) => x.tag === "objects")).toBeUndefined();
   });
 
   it("renders no dimmed lines or banner when sliceHighlight is absent", () => {

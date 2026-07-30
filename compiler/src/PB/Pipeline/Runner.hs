@@ -61,7 +61,7 @@ import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite, GlobalVar (..), ResolvedVarRef
   , WindowOpenRef, ObjectCreateRef, WindowMenuBinding, DwControlBinding
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractStructureFields, extractLocalVars
-  , extractVarRefs, extractDwVarRefs
+  , extractVarRefs, extractDwVarRefs, buildControlOverrideLinks
   , extractDwControlBindings
   , extractWindowOpens, extractObjectCreates, extractWindowMenuBindings
   , paramsToVars
@@ -275,6 +275,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  wsEnv controlIdx fp obj sf
         vrs  = extractVarRefs    wsEnv controlIdx fp obj sf
+               <> buildControlOverrideLinks controlIdx (weHierarchy wsEnv) fp obj sf
         gvs  = extractGlobalVars fp obj sf <> extractStructureFields fp sf
         -- Owner is Nothing exactly when the structure IS the file's own
         -- primary object (a standalone .srs file has no other TypeBlock);

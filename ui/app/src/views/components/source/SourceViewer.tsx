@@ -58,6 +58,15 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
         ? { tag: "objects", action: { tag: "proc-select", objectName: call.target_object, procName: call.target_proc } }
         : { tag: "objects", action: { tag: "select", name: linkName } }
       );
+    } else if (linkType === "var") {
+      // Only a "control" ref carries a real navigable target today (a D1
+      // backtick control-override, e.g. w_list`dw, pointing into the
+      // ancestor object's own file) -- every other var kind (local/param/
+      // instance/etc.) is hover-only, unchanged.
+      const ref = target as ResolvedVarRefInfo | undefined;
+      if (ref?.kind === "control" && ref.target_object) {
+        store.dispatch({ tag: "objects", action: { tag: "select", name: ref.target_object } });
+      }
     }
   }
 

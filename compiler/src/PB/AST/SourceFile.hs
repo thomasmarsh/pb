@@ -24,6 +24,7 @@ module PB.AST.SourceFile
   , srAllTypeDecls
   , srPrimaryObject
   , splitAncestorRef
+  , splitAncestorRefAt
   , mkTypeDecl
   , mkTypeDeclAt
   ) where
@@ -32,7 +33,7 @@ import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
 import PB.AST.Ident       (Ident, identOrig, mkIdent, mkIdentAt)
 import PB.AST.Located     (Located)
-import PB.Lexing.Token    (SourceSpan)
+import PB.Lexing.Token    (SourceSpan (..))
 import Control.DeepSeq    (NFData)
 import GHC.Generics       (Generic)
 import qualified Data.Text as T
@@ -101,12 +102,16 @@ mkTypeDecl name anc within =
        , tdWithin           = within
        }
 
--- | Like 'mkTypeDecl' but attaches a real source span to 'tdName'.
-mkTypeDeclAt :: SourceSpan -> Text -> Text -> Maybe Text -> TypeDecl
-mkTypeDeclAt sp name anc within =
-  let (ancClass, ancOverride) = splitAncestorRef anc
+-- | Like 'mkTypeDecl' but attaches real source spans to 'tdName' and to
+-- 'tdAncestorClass'\/'tdAncestorOverride' (split from the ancestor token's
+-- own span via 'splitAncestorRefAt' -- needed so a D1 backtick override's
+-- control-name segment, e.g. the @dw@ in @w_list\`dw@, carries its own real
+-- click-target span rather than the whole compound token's span).
+mkTypeDeclAt :: SourceSpan -> SourceSpan -> Text -> Text -> Maybe Text -> TypeDecl
+mkTypeDeclAt nameSp ancSp name anc within =
+  let (ancClass, ancOverride) = splitAncestorRefAt ancSp anc
   in TypeDecl
-       { tdName             = mkIdentAt sp name
+       { tdName             = mkIdentAt nameSp name
        , tdAncestor         = anc
        , tdAncestorClass    = ancClass
        , tdAncestorOverride = ancOverride
@@ -290,3 +295,20 @@ splitAncestorRef t = case T.breakOn "`" t of
   (before, rest)
     | T.null rest -> (mkIdent before, Nothing)
     | otherwise   -> (mkIdent before, Just (mkIdent (T.drop 1 rest)))
+
+-- | Like 'splitAncestorRef' but also mints a real per-segment source span
+-- for each 'Ident', split from the whole compound ancestor token's own span
+-- ('ancSp', e.g. covering @"w_list\`dw"@ in full) -- needed so a D1 backtick
+-- override's control-name segment (e.g. the @dw@ in @w_list\`dw@) carries
+-- its own real click-target span instead of the whole compound token's.
+-- The class segment gets ['ssStartCol' .. backtick), the override segment
+-- (if any) gets (backtick .. 'ssEndCol'] -- both on the same line, since the
+-- lexer only ever extends an identifier token within one logical line.
+splitAncestorRefAt :: SourceSpan -> Text -> (Ident, Maybe Ident)
+splitAncestorRefAt ancSp t = case T.breakOn "`" t of
+  (before, rest)
+    | T.null rest -> (mkIdentAt ancSp before, Nothing)
+    | otherwise   ->
+        let classSp    = ancSp { ssEndCol   = ssStartCol ancSp + T.length before }
+            overrideSp = ancSp { ssStartCol = ssStartCol ancSp + T.length before + 1 }
+        in (mkIdentAt classSp before, Just (mkIdentAt overrideSp (T.drop 1 rest)))
