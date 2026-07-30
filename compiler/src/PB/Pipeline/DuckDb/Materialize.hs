@@ -351,23 +351,24 @@ materializeColumnRisk conn _riskReady _schGraph =
 -- BFS-based reconstruction. This materializer reads that table.
 materializeTaintPaths :: Handle -> CallGraphAndTaintReady -> IO ()
 materializeTaintPaths conn CallGraphAndTaintReady{..} = do
-  -- Build temp tables for source/sink enrichment from in-memory data
-  -- instead of re-reading taint_sources/taint_sinks from DuckDB.
-  let srcRows = [ [ taintKey (Taint.tsObject s) (Taint.tsProcName s) (Taint.tsVarName s)
-                  , Taint.tsFile s, Taint.tsObject s, Taint.tsProcName s, Taint.tsVarName s
-                  ]
-                | s <- cgtrSources
-                ]
-      snkRows = [ [ taintKey (Taint.tskObject s) (Taint.tskProcName s) (Taint.tskVarName s)
-                  , Taint.tskFile s, Taint.tskObject s, Taint.tskProcName s, Taint.tskVarName s
-                  , Taint.tskSeverity s, Taint.tskSinkType s
-                  ]
-                | s <- cgtrSinks
-                ]
-  void $ executeHandle conn (Query "CREATE OR REPLACE TEMP TABLE _tmp_taint_source_info (key TEXT, file TEXT, object TEXT, proc_name TEXT, var_name TEXT)")
-  void $ executeHandle conn (Query "CREATE OR REPLACE TEMP TABLE _tmp_taint_sink_info (key TEXT, file TEXT, object TEXT, proc_name TEXT, var_name TEXT, severity TEXT, sink_type TEXT)")
-  appendTextRows conn "_tmp_taint_source_info" srcRows
-  appendTextRows conn "_tmp_taint_sink_info" snkRows
+  -- Build the confirmed-pair rows directly from 'cgtrConfirmed' -- already
+  -- deduplicated by (source key, sink key) via
+  -- 'PB.Analysis.TaintClosure.taintConfirmedClosure', so this is a rename/
+  -- reshape, not a re-derivation: no join against raw, un-deduplicated
+  -- per-occurrence source/sink lists (that join was this table's fan-out
+  -- bug -- multiple lines in one procedure can each classify the same var
+  -- as a source/sink, producing several raw rows sharing one key).
+  let confirmedRows =
+        [ [ taintKey (Taint.tsObject src) (Taint.tsProcName src) (Taint.tsVarName src)
+          , taintKey (Taint.tskObject snk) (Taint.tskProcName snk) (Taint.tskVarName snk)
+          , Taint.tsFile src, Taint.tsObject src, Taint.tsProcName src, Taint.tsVarName src
+          , Taint.tskFile snk, Taint.tskObject snk, Taint.tskProcName snk, Taint.tskVarName snk
+          , Taint.tskSeverity snk, Taint.sinkCategory (Taint.tskSinkType snk)
+          ]
+        | (src, snk) <- cgtrConfirmed
+        ]
+  void $ executeHandle conn (Query "CREATE OR REPLACE TEMP TABLE _tmp_taint_confirmed (source_key TEXT, sink_key TEXT, file TEXT, object TEXT, proc_name TEXT, var_name TEXT, target_file TEXT, target_object TEXT, target_proc TEXT, target_var TEXT, severity TEXT, category TEXT)")
+  appendTextRows conn "_tmp_taint_confirmed" confirmedRows
   void $ executeHandle conn (Query sql)
   where
     taintKey o p v = o <> "::" <> p <> "::" <> v
@@ -378,13 +379,7 @@ materializeTaintPaths conn CallGraphAndTaintReady{..} = do
       , "  (file, object, proc_name, var_name,"
       , "   target_file, target_object, target_proc, target_var,"
       , "   severity, category, steps_json)"
-      , "WITH confirmed AS ("
-      , "  SELECT tc.s AS source_key, tc.t AS sink_key"
-      , "  FROM taint_confirmed tc"
-      , "),"
-      , "source_info AS (SELECT * FROM _tmp_taint_source_info),"
-      , "sink_info AS (SELECT * FROM _tmp_taint_sink_info),"
-      , "ranked_legs AS ("
+      , "WITH ranked_legs AS ("
       , "  SELECT tsk.s AS source_key, tsk.t AS sink_key,"
       , "         CAST(tsk.leg_ord AS INTEGER) AS leg_ord,"
       , "         tsk.lf AS leg_from, tsk.lt AS leg_to,"
@@ -412,25 +407,18 @@ materializeTaintPaths conn CallGraphAndTaintReady{..} = do
       , "  GROUP BY l.source_key, l.sink_key"
       , ")"
       , "SELECT"
-      , "  si.file AS file,"
-      , "  si.object AS object,"
-      , "  si.proc_name AS proc_name,"
-      , "  si.var_name AS var_name,"
-      , "  sk.file AS target_file,"
-      , "  sk.object AS target_object,"
-      , "  sk.proc_name AS target_proc,"
-      , "  sk.var_name AS target_var,"
-      , "  sk.severity AS severity,"
-      , "  COALESCE("
-      , "    CASE WHEN sk.sink_type = 'db_write' THEN 'sql_injection'"
-      , "         WHEN sk.sink_type = 'exec_immediate' THEN 'exec_immediate'"
-      , "         ELSE 'general' END,"
-      , "    'general'"
-      , "  ) AS category,"
+      , "  c.file AS file,"
+      , "  c.object AS object,"
+      , "  c.proc_name AS proc_name,"
+      , "  c.var_name AS var_name,"
+      , "  c.target_file AS target_file,"
+      , "  c.target_object AS target_object,"
+      , "  c.target_proc AS target_proc,"
+      , "  c.target_var AS target_var,"
+      , "  c.severity AS severity,"
+      , "  c.category AS category,"
       , "  COALESCE(ch.steps_json, '[]') AS steps_json"
-      , "FROM confirmed c"
-      , "JOIN source_info si ON si.key = c.source_key"
-      , "JOIN sink_info sk ON sk.key = c.sink_key"
+      , "FROM _tmp_taint_confirmed c"
       , "LEFT JOIN chains ch ON ch.source_key = c.source_key AND ch.sink_key = c.sink_key"
       ]
 

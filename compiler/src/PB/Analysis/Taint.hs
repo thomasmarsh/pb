@@ -35,6 +35,7 @@ module PB.Analysis.Taint
     -- * Helpers used by Phase B DuckDB reconstruction
   , classifyOperation
   , hasIntoClause
+  , sinkCategory
   ) where
 
 import PB.Prelude
@@ -297,6 +298,15 @@ eventProcTypes = Set.fromList ["event", "on"]
 
 severityMap :: Map.Map Text Text
 severityMap = Map.fromList [("db_write", "high"), ("exec_immediate", "critical")]
+
+sinkCategoryMap :: Map.Map Text Text
+sinkCategoryMap = Map.fromList [("db_write", "sql_injection"), ("exec_immediate", "exec_immediate")]
+
+-- | Report category for a sink, keyed off its 'tskSinkType'. A one-row
+-- classification decision, kept in Haskell rather than a SQL @CASE@ so the
+-- DuckDB materializer that reads it stays a pure projection.
+sinkCategory :: Text -> Text
+sinkCategory st = Map.findWithDefault "general" st sinkCategoryMap
 
 -- ---------------------------------------------------------------------------
 -- AST extraction

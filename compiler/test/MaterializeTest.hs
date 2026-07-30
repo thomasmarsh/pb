@@ -4,11 +4,12 @@ import PB.Prelude
 import PB.Pipeline.DuckDb        (inMemory, withHandle, initSchema, executeHandle, queryHandle)
 import PB.Pipeline.DuckDb.Materialize
 import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphisms)
-import PB.Pipeline.DuckDb.PhaseB.Query (SchemaClosureReady (..))
+import PB.Pipeline.DuckDb.PhaseB.Query (SchemaClosureReady (..), CallGraphAndTaintReady (..))
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
   , SchGraph (..), schObjectKey
   )
+import PB.Analysis.Taint (TaintSource (..), TaintSink (..))
 import PB.Pipeline.SqlParse (TableRef (..))
 import Database.DuckDB.Simple           (Query (..))
 import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
@@ -49,6 +50,7 @@ tests = testGroup "Materialize"
   [ testCase "materializeDecompositionCoslice projects path_leg + recovers leg_source" testMaterializeDecompositionCoslice
   , testCase "materializeImpliedFk decodes ColKey pairs to namespace/table/column" testMaterializeImpliedFk
   , testCase "materializeColumnRisk decodes ColKeys, excluding non-column (stmt) nodes" testMaterializeColumnRisk
+  , testCase "materializeTaintPaths emits one row per confirmed pair, not one per duplicate-key source/sink occurrence" testMaterializeTaintPaths
   ]
 
 testMaterializeDecompositionCoslice :: IO ()
@@ -146,4 +148,46 @@ testMaterializeColumnRisk = withHandle inMemory $ \conn -> do
   rows <- queryHandle conn "SELECT table_name, column_name, downstream_count FROM column_risk"
   assertEqual "only the column-kind node is materialized, with its count"
     [RiskRow "a" "x" 3]
+    rows
+
+-- | Local row shape for reading back a full @taint_paths@ row.
+data TaintPathRow = TaintPathRow
+  Text Text Text Text Text Text Text Text Text Text Text
+  deriving (Eq, Show)
+
+instance FromRow TaintPathRow where
+  fromRow = TaintPathRow
+    <$> field <*> field <*> field <*> field <*> field
+    <*> field <*> field <*> field <*> field <*> field <*> field
+
+testMaterializeTaintPaths :: IO ()
+testMaterializeTaintPaths = withHandle inMemory $ \conn -> do
+  initSchema conn
+  -- taint_step_kind is normally populated by TaintClosure.materializeTaintStepKind;
+  -- hand-create it empty here since steps_json isn't under test.
+  void $ executeHandle conn
+    (Query "CREATE TABLE taint_step_kind (s TEXT, t TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT, step_kind TEXT, description TEXT)")
+  let src1 = TaintSource "f.srf" "obj" "proc" "var" "select_into" (Just 10)
+      -- Same (object, proc_name, var_name) key as src1, different line --
+      -- the real-corpus shape that used to fan out through a re-derived
+      -- join against raw (non-deduplicated) source/sink lists.
+      src2 = TaintSource "f.srf" "obj" "proc" "var" "select_into" (Just 20)
+      snk  = TaintSink   "f.srf" "obj" "proc" "var" "db_write" "high" (Just 30)
+      cgtr = CallGraphAndTaintReady
+        { cgtrSources      = [src1, src2]
+        , cgtrSinks        = [snk]
+        , cgtrReachesPairs = []
+        , cgtrConfirmed    = [(src1, snk)]
+        }
+  materializeTaintPaths conn cgtr
+
+  rows <- queryHandle conn
+    (Query (T.unlines
+      [ "SELECT file, object, proc_name, var_name,"
+      , "       target_file, target_object, target_proc, target_var,"
+      , "       severity, category, steps_json"
+      , "  FROM taint_paths"
+      ]))
+  assertEqual "one row per confirmed pair, driven by cgtrConfirmed not the raw duplicate-key source list"
+    [ TaintPathRow "f.srf" "obj" "proc" "var" "f.srf" "obj" "proc" "var" "high" "sql_injection" "[]" ]
     rows
