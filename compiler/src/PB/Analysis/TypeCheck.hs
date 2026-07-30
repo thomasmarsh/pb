@@ -316,7 +316,7 @@ inferExpr _   ExNull     = Nothing -- handled specially by callers, not a family
 inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = scopeFamily ctx n
 inferExpr ctx (ExLvalue (Lvalue segs@(_ : _ : _))) =
   classifyClassName ctx <$>
-    resolveMemberChainType (steControlIndex (tcEnv ctx)) (steHierarchy (tcEnv ctx)) (identOrig (steObject (tcEnv ctx))) (map (identCanon . segName) segs)
+    resolveMemberChainType (steControlIndex (tcEnv ctx)) (steHierarchy (tcEnv ctx)) (steObject (tcEnv ctx)) (map (identCanon . segName) segs)
 inferExpr ctx (ExBinOp l op r) = do
   lf <- inferExpr ctx l
   rf <- inferExpr ctx r

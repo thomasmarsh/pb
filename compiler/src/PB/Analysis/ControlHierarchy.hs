@@ -72,7 +72,7 @@ module PB.Analysis.ControlHierarchy
 import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt (..))
 import PB.AST.Expr        (Expr (..))
-import PB.AST.Ident       (Ident, mkIdent, identCanon)
+import PB.AST.Ident       (Ident, mkIdent, mkIdentSynthetic, identCanon)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import qualified Data.Map.Strict as Map
@@ -129,9 +129,9 @@ buildControlIndex sfs = Map.fromList
 -- non-overridden declaration reached after following every D1 override).
 -- 'Nothing' when any hop is unresolvable — no guessing past what the
 -- workspace actually declares.
-resolveMemberChainType :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
+resolveMemberChainType :: ControlIndex -> Map.Map Ident Ident -> Ident -> [Text] -> Maybe Text
 resolveMemberChainType idx inh obj segs =
-  identCanon . cdAncestorType . snd <$> resolveChain idx inh (mkIdent obj) (mkIdent obj) (map mkIdent segs)
+  identCanon . cdAncestorType . snd <$> resolveChain idx inh obj obj (map mkSegIdent segs)
 
 -- | Resolve a dotted member-chain to its terminal control's static
 -- DataWindow binding, walking the same chain as 'resolveMemberChainType'.
@@ -139,11 +139,18 @@ resolveMemberChainType idx inh obj segs =
 -- the binding search stops at the closest override that sets a literal
 -- @dataobject@ — a more-derived override's own binding must win over
 -- whatever its ancestor declares (or doesn't declare) further up the chain.
-resolveMemberChainDwBinding :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
+resolveMemberChainDwBinding :: ControlIndex -> Map.Map Ident Ident -> Ident -> [Text] -> Maybe Text
 resolveMemberChainDwBinding idx inh obj segs =
-  case resolveChain idx inh (mkIdent obj) (mkIdent obj) (map mkIdent segs) of
+  case resolveChain idx inh obj obj (map mkSegIdent segs) of
     Nothing              -> Nothing
     Just (dwBinding, _)  -> dwBinding
+
+-- | Mint a chain segment's 'Ident' with no recoverable span: every caller
+-- already reduced its segment to a bare canonical 'Text' (via 'identCanon')
+-- before reaching here, so the real token span is gone by this point — see
+-- the @ident-minting@ skill's widen-vs-leave-Text procedure.
+mkSegIdent :: Text -> Ident
+mkSegIdent = mkIdentSynthetic "control-chain segment name, canonicalized before reaching resolveChain"
 
 -- | Walk every chain segment, threading @root@ (Phase E) alongside @owner@.
 -- Each hop resolves via 'resolveHop', then the next lookup scope is chosen:

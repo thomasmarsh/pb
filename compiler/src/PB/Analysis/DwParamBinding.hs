@@ -20,7 +20,7 @@ module PB.Analysis.DwParamBinding
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr (Expr (..), Lvalue (..), foldExprs, segments)
-import PB.AST.Ident (Ident, IdentMap, IdentSet, identCanon, mkIdent)
+import PB.AST.Ident (Ident, IdentMap, IdentSet, identCanon, mkIdentSynthetic)
 import PB.AST.Located (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type (renderPbType)
@@ -69,6 +69,10 @@ fileCandidates procMap inherits paramsMap controlIdx sf = concat
   ]
   where
     obj = srFileObject sf
+    -- 'srFileObject' already flattened the file's own primary-object 'Ident'
+    -- to 'Text'; no token span survives to bridge back through here (see
+    -- the ident-minting skill's "mixed case" reference).
+    objIdent = mkIdentSynthetic "enclosing object name, flattened by srFileObject" obj
 
     bodyCandidates = foldStmts classifyStmt
 
@@ -102,7 +106,7 @@ fileCandidates procMap inherits paramsMap controlIdx sf = concat
     classifyExpr _ = []
 
     candidatesForCall calleeName args =
-      case resolveVirtual calleeName (mkIdent obj) procMap inherits of
+      case resolveVirtual calleeName objIdent procMap inherits of
         (Just targetObj, Just targetProc, _, _) ->
           case Map.lookup (targetObj, targetProc) paramsMap of
             Just sigs -> case selectSignature sigs (length args) of
@@ -114,7 +118,7 @@ fileCandidates procMap inherits paramsMap controlIdx sf = concat
 
     candidateForArg targetObj targetProc (idx, ExLvalue argLv, (_, paramTy))
       | isDwFamilyType inherits (renderPbType paramTy)
-      , Just dwName <- resolveMemberChainDwBinding controlIdx inherits obj
+      , Just dwName <- resolveMemberChainDwBinding controlIdx inherits objIdent
                          (map (identCanon . segName) (segments argLv))
       = [ ((targetObj, targetProc, idx), dwName) ]
     candidateForArg _ _ _ = []

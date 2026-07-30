@@ -220,9 +220,9 @@ resolveLvalueType env lv = case segments lv of
   []   -> Nothing
   [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVarOrSelf (segName s) env)
           <|> resolveMemberChainType (steControlIndex env) (steHierarchy env)
-                                     (identOrig (steObject env)) [identCanon (segName s)]
+                                     (steObject env) [identCanon (segName s)]
   segs -> resolveMemberChainType (steControlIndex env) (steHierarchy env)
-                                 (identOrig (steObject env)) (map (identCanon . segName) segs)
+                                 (steObject env) (map (identCanon . segName) segs)
 
 -- | Resolve the declared type name of a receiver expression (not walked to root).
 resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text

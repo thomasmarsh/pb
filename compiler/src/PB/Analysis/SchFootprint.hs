@@ -31,7 +31,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
-import PB.AST.Ident (Ident, mkIdent, identCanon)
+import PB.AST.Ident (Ident, mkIdent, mkIdentSynthetic, identCanon)
 import PB.Compile.IR (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), Eff (..), EffTerm (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
@@ -235,6 +235,10 @@ runtimeDwAliasBindings
   -> [Located BodyStmt] -> Map.Map (Ident, Ident) Ident
 runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
   where
+    -- 'obj' arrives as Text from the caller; no token span survives to
+    -- bridge back through here (see the ident-minting skill).
+    objIdent = mkIdentSynthetic "enclosing object name" obj
+
     go (Located _ (BsAssign lhs rhs)) = maybe [] pure (tryBind lhs rhs)
     go (Located _ (BsIf (IfStmt _ then_ eis mel))) =
       concatMap go then_
@@ -251,8 +255,8 @@ runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
         | rhsSegs <- map (\s -> identCanon (segName s)) (segments rhsLv)
         , length rhsSegs > 1
         , isDwTyped lhsName ->
-            (\dwName -> ((mkIdent obj, lhsName), mkIdent dwName))
-              <$> resolveMemberChainDwBinding idx inh obj rhsSegs
+            (\dwName -> ((objIdent, lhsName), mkIdentSynthetic "resolved .srd binding name, no token span" dwName))
+              <$> resolveMemberChainDwBinding idx inh objIdent rhsSegs
       _ -> Nothing
 
     isDwTyped lhsName = case lookupScopedVar lhsName env of

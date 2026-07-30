@@ -500,7 +500,9 @@ pbCallReceiverType env obj anc =
   case T.splitOn "`" (identOrig anc) of
     [ancPart, ctrlPart] ->
       resolveAncestorText ancPart >>= \a ->
-        resolveMemberChainType (steControlIndex env) (steHierarchy env) a [ctrlPart]
+        resolveMemberChainType (steControlIndex env) (steHierarchy env)
+          (mkIdentSynthetic "ancestor name resolved to Text via steHierarchy lookup, no token span carried through" a)
+          [ctrlPart]
     [ancPart] -> resolveAncestorText ancPart
     _         -> Nothing
   where
@@ -788,7 +790,7 @@ classifyRootIdent wsEnv env obj proc_ n
       in ("global", Nothing, "high", Just tyTxt, Just (OrdinaryRecv tyTxt Nothing literalAnchor))
   | Just ctrlTy <- literalCtrl =
       ("control", Just ctrlTy, "high", Just ctrlTy,
-       Just (OrdinaryRecv ctrlTy (resolveMemberChainDwBinding (steControlIndex env) (steHierarchy env) obj [nSeg]) literalAnchor))
+       Just (OrdinaryRecv ctrlTy (resolveMemberChainDwBinding (steControlIndex env) (steHierarchy env) objIdent [nSeg]) literalAnchor))
   | Map.member n (steHierarchy env) =
       -- A bare segment naming its own declared class/window/UDT rather
       -- than an in-scope variable holding one -- e.g. @w_main::event()@.
@@ -806,7 +808,12 @@ classifyRootIdent wsEnv env obj proc_ n
   | otherwise = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
   where
     nSeg          = identCanon n
-    literalCtrl   = resolveMemberChainType (steControlIndex env) (steHierarchy env) obj [nSeg]
+    -- 'obj' is a Text param threaded through classifyRootIdent/
+    -- classifyChainHops/classifyLvalueChain from 'srFileObject' many hops
+    -- upstream (see the ident-minting skill's "mixed case" reference); no
+    -- real Ident is in hand at this scope to bridge instead.
+    objIdent      = mkIdentSynthetic "root object name threaded as Text through classifyRootIdent" obj
+    literalCtrl   = resolveMemberChainType (steControlIndex env) (steHierarchy env) objIdent [nSeg]
     literalAnchor = const (obj, [nSeg]) <$> literalCtrl
 
 classifyChainHops :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Lvalue -> [(Text, Maybe Text, Text, Maybe Text)]
@@ -829,7 +836,8 @@ classifyChainHops wsEnv env obj proc_ lv =
     -- walking @root@ down @path@, if any -- reuses the exact @(root, path)@
     -- arguments 'resolveMemberChainType' was just called with, so this never
     -- re-derives a different chain.
-    dwBindingFor root path = resolveMemberChainDwBinding (steControlIndex env) (steHierarchy env) root path
+    dwBindingFor root path = resolveMemberChainDwBinding (steControlIndex env) (steHierarchy env)
+      (mkIdentSynthetic "chain-anchor root name, no token span carried through the fold" root) path
 
     -- | Classify one member hop given the previous hop's own continuation
     -- context (this fold's own accumulator). 'OrdinaryRecv' carries the
@@ -937,8 +945,10 @@ classifyChainHops wsEnv env obj proc_ lv =
         fSeg       = identCanon finalName
         literalExt = ctrlAnchor >>= \(r, p) ->
           let p' = p <> [fSeg]
-          in (,) (r, p') <$> resolveMemberChainType (steControlIndex env) (steHierarchy env) r p'
-        hasAExt    = (,) (recvTy, [fSeg]) <$> resolveMemberChainType (steControlIndex env) (steHierarchy env) recvTy [fSeg]
+          in (,) (r, p') <$> resolveMemberChainType (steControlIndex env) (steHierarchy env)
+               (mkIdentSynthetic "chain-anchor root name, no token span carried through the fold" r) p'
+        hasAExt    = (,) (recvTy, [fSeg]) <$> resolveMemberChainType (steControlIndex env) (steHierarchy env)
+               (mkIdentSynthetic "receiver type name rendered from PbType, not a source token" recvTy) [fSeg]
         bestExt    = literalExt <|> hasAExt
         bestAnchor = fst <$> bestExt
         bestCtrl   = snd <$> bestExt
