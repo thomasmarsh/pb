@@ -15,6 +15,7 @@ module PB.Pipeline.DuckDb.PhaseA
   , SqlStmtColumnRow (..)
   , SqlStmtFilterRow (..)
   , SqlStmtTableRow (..)
+  , SqlLintIssueRow (..)
   , CatalogColumnRow (..)
   , CatalogPkRow (..)
   , CatalogFkRow (..)
@@ -42,6 +43,7 @@ module PB.Pipeline.DuckDb.PhaseA
   , appendProcDefs
   , appendProcUses
   , appendSqlStmts
+  , appendSqlLintIssues
   , appendSqlStmtColumns
   , appendSqlStmtFilters
   , appendSqlStmtTables
@@ -245,6 +247,17 @@ data SqlStmtTableRow = SqlStmtTableRow
   , sstrOperation :: Maybe Text
   , sstrNamespace :: Maybe Text
   , sstrTableName :: Text
+  }
+
+-- | One row of sql_lint_issues, one per 'PB.Analysis.SqlLint.LintIssue'
+-- found in a procedure.
+data SqlLintIssueRow = SqlLintIssueRow
+  { slirFile      :: Text
+  , slirObject    :: Text
+  , slirProcName  :: Text
+  , slirLine      :: Int
+  , slirIssueCode :: Text
+  , slirSeverity  :: Text
   }
 
 data CatalogColumnRow = CatalogColumnRow
@@ -573,6 +586,17 @@ appendSqlStmts pool rows = appendRow pool "sql_statements" $ \app ->
     aText      app (ssrRawSql r)
     aBool      app (ssrParseOk r)
     aMaybeText app (ssrError r)
+
+appendSqlLintIssues :: AppenderPool -> [SqlLintIssueRow] -> IO ()
+appendSqlLintIssues _    [] = pure ()
+appendSqlLintIssues pool rows = appendRow pool "sql_lint_issues" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (slirFile r)
+    aText app (slirObject r)
+    aText app (slirProcName r)
+    aInt  app (slirLine r)
+    aText app (slirIssueCode r)
+    aText app (slirSeverity r)
 
 appendSqlStmtColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
 appendSqlStmtColumns _    [] = pure ()

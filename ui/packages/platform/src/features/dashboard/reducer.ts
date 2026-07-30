@@ -3,16 +3,18 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { DashboardState } from "./types.js";
 import type { DashboardAction } from "./actions.js";
-import type { CodeQualityReportResponse, StatsResponse, TableSummary } from "../../types/api.js";
+import type { CodeQualityReportResponse, SqlLintSummary, StatsResponse, TableSummary } from "../../types/api.js";
 
 export interface DashboardEnv {
   getStats(): Effect<StatsResponse>;
   getTables(): Effect<TableSummary[]>;
   getCodeQualityReport(): Effect<CodeQualityReportResponse>;
+  getSqlLintSummary(): Effect<SqlLintSummary>;
 }
 
 export const initialDashboardState: DashboardState = {
   stats: null, topTables: [], topTablesLoaded: false, report: null, reportLoaded: false,
+  sqlLint: null, sqlLintLoaded: false,
 };
 
 function reduce(draft: DashboardState, action: DashboardAction, env: DashboardEnv): Effect<DashboardAction> | null {
@@ -35,6 +37,13 @@ function reduce(draft: DashboardState, action: DashboardAction, env: DashboardEn
   case "reportLoaded":
     draft.report = action.report;
     draft.reportLoaded = true;
+    return null;
+  case "loadSqlLint":
+    if (draft.sqlLintLoaded) return null;
+    return env.getSqlLintSummary().map((sqlLint): DashboardAction => ({ tag: "sqlLintLoaded", sqlLint }));
+  case "sqlLintLoaded":
+    draft.sqlLint = action.sqlLint;
+    draft.sqlLintLoaded = true;
     return null;
   default:
     return null;

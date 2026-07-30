@@ -355,6 +355,17 @@ def get_code_quality_report(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     }
 
 
+def get_sql_lint_summary(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Aggregate counts from sql_lint_issues (PB.Analysis.SqlLint), grouped by
+    issue_code/severity, plus a grand total."""
+    by_code = rows(conn.execute(
+        "SELECT issue_code, severity, COUNT(*) AS n FROM sql_lint_issues "
+        "GROUP BY issue_code, severity ORDER BY n DESC"
+    ))
+    total = conn.execute("SELECT COUNT(*) FROM sql_lint_issues").fetchone()[0]  # type: ignore[index]
+    return {"total": total, "by_code": by_code}
+
+
 def get_taint_sinks(
     conn: duckdb.DuckDBPyConnection,
     *,

@@ -523,6 +523,19 @@ def test_explore_procedure_sql_statements_have_formatted_sql(client_with_sql):
         assert isinstance(stmt["formatted_sql"], str)
 
 
+def test_explore_procedure_sql_statements_have_lint_warnings_field(client_with_sql):
+    """Each sql_statements row carries a lint_warnings list (empty for a clean statement)."""
+    r = client_with_sql.get("/api/explore/procedure/fn_sqlerror/fn_sqlerror")
+    if r.status_code == 404:
+        pytest.skip("fn_sqlerror not found")
+    data = r.json()
+    stmts = data.get("sql_statements", [])
+    assert len(stmts) > 0, "synthetic SQL row should be present"
+    for stmt in stmts:
+        assert "lint_warnings" in stmt
+        assert isinstance(stmt["lint_warnings"], list)
+
+
 # ── SQL lineage diagrams ───────────────────────────────────────────────────────
 
 

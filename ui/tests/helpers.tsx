@@ -14,6 +14,7 @@ import type { AppEnv } from "../app/src/reducer.js";
 export const mockEnv: AppEnv = {
   getStats: () => Effect.none(),
   getCodeQualityReport: () => Effect.none(),
+  getSqlLintSummary: () => Effect.none(),
   getObjects: () => Effect.none(),
   getObject: () => Effect.none(),
   getObjectSource: () => Effect.none(),

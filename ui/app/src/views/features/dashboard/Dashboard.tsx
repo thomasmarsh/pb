@@ -1,7 +1,7 @@
 // Dashboard.tsx — Dashboard view.
 
 import { Show, For, createMemo, onMount } from "solid-js";
-import { AlertTriangle, ArrowRight, procBadge, type ProcedureRow, type Route } from "@pb/platform";
+import { AlertTriangle, ArrowRight, procBadge, lintLabel, type ProcedureRow, type Route } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
@@ -153,6 +153,39 @@ function CodeQualityReportWidget(props: { store: Store<AppState, AppAction> }) {
             </For>
           </tbody>
         </table>
+      </div>
+    </Show>
+  );
+}
+
+function SqlLintWidget(props: { store: Store<AppState, AppAction> }) {
+  const snap = props.store.getState();
+  const summary = () => snap().dashboard.sqlLint;
+
+  onMount(() => {
+    props.store.dispatch({ tag: "dashboard", action: { tag: "loadSqlLint" } });
+  });
+
+  return (
+    <Show when={summary()}>
+      <div class="card">
+        <div class="card-header"><h2>SQL Issues</h2></div>
+        <Show when={summary()!.total > 0} fallback={<div class="sql-lint-clean">No SQL issues detected</div>}>
+          <table class="data-table">
+            <thead><tr><th>Issue</th><th>Severity</th><th>Count</th></tr></thead>
+            <tbody>
+              <For each={summary()!.by_code}>
+                {(b) => (
+                  <tr>
+                    <td class="name-cell">{lintLabel(b.issue_code)}</td>
+                    <td><span class={`badge badge-${b.severity === "error" ? "error" : "warn"}`}>{b.severity}</span></td>
+                    <td>{String(b.n)}</td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </Show>
       </div>
     </Show>
   );
@@ -360,6 +393,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
 
       <TopTablesWidget store={store} />
       <CodeQualityReportWidget store={store} />
+      <SqlLintWidget store={store} />
     </Show>
   );
 }

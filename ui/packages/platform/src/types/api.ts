@@ -460,6 +460,12 @@ export interface SqlStatementRow {
   has_into: boolean;
   has_cursor: boolean;
   parse_ok: boolean;
+  lint_warnings: string[];
+}
+
+export interface SqlLintSummary {
+  total: number;
+  by_code: { issue_code: string; severity: string; n: number }[];
 }
 
 export interface ParseErrorRow {

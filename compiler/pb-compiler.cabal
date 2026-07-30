@@ -68,6 +68,7 @@ library
     PB.Analysis.DwFootprint
     PB.Analysis.DwBindingFootprint
     PB.Analysis.Taint
+    PB.Analysis.SqlLint
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
     PB.Analysis.TypeFamily
@@ -227,6 +228,7 @@ test-suite pb-compiler-test
     , DwBindingFootprintTest
     , SerialiseTest
     , SplitterTest
+    , SqlLintTest
     , SqlParseTest
     , StreamTest
     , TokenTest

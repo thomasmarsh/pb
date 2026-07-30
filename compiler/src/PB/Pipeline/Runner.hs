@@ -67,6 +67,7 @@ import PB.Analysis.TypeResolve
   , paramsToVars
   )
 import PB.Analysis.DeadVars (DeadVarFinding, findDeadVars)
+import PB.Analysis.SqlLint  (LintIssue (..), lintStmt, lintLoopSql)
 import PB.Analysis.DwParamBinding (buildDwParamBindings)
 import PB.Analysis.TypeCheck
   ( TypeCheckCtx (..), TypeCheckWorkspace (..)
@@ -100,7 +101,7 @@ import PB.Pipeline.DuckDb.Appender (AppenderPool, withAppenderPoolTimed)
 import PB.Pipeline.DuckDb.PhaseA
   ( ObjectRow (..), TypeAncestorRow (..), StructureRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
-  , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
+  , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..), SqlLintIssueRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , SourceFileRow (..)
   , IdentifierTokenRow (..), identifierTokenRows
@@ -111,7 +112,7 @@ import PB.Pipeline.DuckDb.PhaseA
   , appendDwArguments, DwArgumentRow (..)
   , appendDeadVars, appendTypeMismatches, appendCallSites, appendVarRefs, appendGlobalVars
   , flowsToDefRows, flowsToUseRows
-  , appendProcDefs, appendProcUses, appendSqlStmts
+  , appendProcDefs, appendProcUses, appendSqlStmts, appendSqlLintIssues
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
   , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
   , appendParseErrors, appendSourceFiles
@@ -177,6 +178,7 @@ data CompiledPs = CompiledPs
   , cpsSqlStmtColumns :: [SqlStmtColumnRow]
   , cpsSqlStmtFilters :: [SqlStmtFilterRow]
   , cpsSqlStmtTables :: [SqlStmtTableRow]
+  , cpsSqlLintIssues :: [SqlLintIssueRow]
   , cpsCatFootprintColumns :: [SqlStmtColumnRow]
   , cpsTaintIntraEdges :: [TaintIntraEdgeRow]
   , cpsTaintReturnRows :: [TaintReturnRow]
@@ -439,6 +441,13 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
              , concatMap (\(_,_,c,_) -> c) quads
              , concatMap (\(_,_,_,d) -> d) quads
              )
+    let lintFromStmts =
+          [ SqlLintIssueRow fp obj (ssrProcName r) (liLine li) (liIssueCode li) (liSeverity li)
+          | r <- sqlRows, li <- lintStmt (ssrLine r) (ssrOperation r) (ssrRawSql r) ]
+        lintFromLoops =
+          [ SqlLintIssueRow fp obj pName (liLine li) (liIssueCode li) (liSeverity li)
+          | (pName, body) <- procBodies, li <- lintLoopSql body ]
+        lintIssueRows = lintFromStmts <> lintFromLoops
     pure $ CFPs $ CompiledPs
       { cpsObjectRow     = ObjectRow fp "powerscript" obj anc
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
@@ -458,6 +467,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
       , cpsSqlStmtColumns = sqlColRows
       , cpsSqlStmtFilters = sqlFilterRows
       , cpsSqlStmtTables = sqlTableRows
+      , cpsSqlLintIssues = lintIssueRows
       , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _, _, _) <- procs ]
       , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes, _) <- procs ]
       , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs) <- procs ]
@@ -798,6 +808,7 @@ appendToDb pool (CFPs r) = do
   appendSqlStmtColumns pool (cpsSqlStmtColumns r)
   appendSqlStmtFilters pool (cpsSqlStmtFilters r)
   appendSqlStmtTables  pool (cpsSqlStmtTables r)
+  appendSqlLintIssues  pool (cpsSqlLintIssues r)
   appendSourceFiles pool (catMaybes [cpsSourceContent r])
   appendIdentifierTokens pool (cpsIdentifierTokens r)
   appendWindowOpens pool (cpsWindowOpens r)
@@ -1044,7 +1055,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     let phaseATables =
           [ "objects", "type_ancestors", "structures", "procedures", "dead_vars", "type_mismatches", "call_sites", "resolved_var_refs", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
-          , "sql_statement_filters", "sql_statement_tables"
+          , "sql_statement_filters", "sql_statement_tables", "sql_lint_issues"
           , "source_files", "parse_errors", "identifier_tokens"
           , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
           , "dw_joins", "dw_retrieve_where"

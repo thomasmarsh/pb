@@ -112,7 +112,7 @@ export { parsePbUrl, getPbHref, diagramUrl } from "./utils/diagram.js";
 export type { DiagramKind } from "./utils/diagram.js";
 export { HAS_FOCUS, AUTO_GENERATE, DIAGRAM_KINDS } from "./utils/diagram.js";
 export { debounce } from "./utils/debounce.js";
-export { procBadge, shortFile } from "./utils/format.js";
+export { procBadge, shortFile, lintLabel, lintSeverity, lintDescription } from "./utils/format.js";
 export {
   highlightSql,
   highlightPowerScript,

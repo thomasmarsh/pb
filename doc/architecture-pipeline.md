@@ -383,6 +383,10 @@ sql_statement_filters  (file TEXT, object TEXT, proc_name TEXT, line INT,
                          namespace TEXT, table_name TEXT, column_name TEXT, op TEXT, values_json TEXT)
 sql_statement_tables   (file TEXT, object TEXT, proc_name TEXT, line INT,
                          operation TEXT, namespace TEXT, table_name TEXT)
+-- SQL anti-pattern findings (PB.Analysis.SqlLint): select_star,
+-- write_no_where, sql_in_loop. Keyed like sql_statements (no stmt_idx).
+sql_lint_issues        (file TEXT, object TEXT, proc_name TEXT, line INT,
+                         issue_code TEXT, severity TEXT)
 -- Same shape as sql_statement_columns, populated from DataWindow SetItem
 -- calls with a statically-resolvable column/control binding rather than
 -- sqlglot text extraction; kept as its own table so a row's producer is

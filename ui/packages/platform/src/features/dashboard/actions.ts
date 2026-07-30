@@ -1,6 +1,6 @@
 // features/dashboard/actions.ts
 
-import type { CodeQualityReportResponse, StatsResponse, TableSummary } from "../../types/api.js";
+import type { CodeQualityReportResponse, SqlLintSummary, StatsResponse, TableSummary } from "../../types/api.js";
 
 export type DashboardAction =
   | { tag: "load" }
@@ -9,4 +9,6 @@ export type DashboardAction =
   | { tag: "topTablesLoaded"; tables: TableSummary[] }
   | { tag: "loadReport" }
   | { tag: "reportLoaded"; report: CodeQualityReportResponse }
+  | { tag: "loadSqlLint" }
+  | { tag: "sqlLintLoaded"; sqlLint: SqlLintSummary }
   ;

@@ -41,6 +41,7 @@ import qualified SchFootprintTest
 import qualified DwFootprintTest
 import qualified DwBindingFootprintTest
 import qualified SerialiseTest
+import qualified SqlLintTest
 import qualified SqlParseTest
 import qualified SplitterTest
 import qualified StreamTest
@@ -107,6 +108,7 @@ tests = testGroup "pb-compiler"
   , SerialiseTest.tests
   , TokenTest.tests
   , SplitterTest.tests
+  , SqlLintTest.tests
   , SqlParseTest.tests
   , StreamTest.tests
   , TypeEnvTest.tests

@@ -10,7 +10,7 @@ import { initialDashboardState } from "@pb/platform";
 import { mockEnv } from "../helpers.js";
 import type { AppEnv } from "../../app/src/reducer.js";
 import type { AppAction } from "../../app/src/actions.js";
-import type { StatsResponse, CodeQualityReportResponse } from "@pb/platform";
+import type { StatsResponse, CodeQualityReportResponse, SqlLintSummary } from "@pb/platform";
 
 const sampleStats: StatsResponse = {
   objects: 150,
@@ -60,6 +60,16 @@ const sampleReport: CodeQualityReportResponse = {
     { table_count: 3, statement_count: 6 },
   ],
 };
+
+const sampleSqlLint: SqlLintSummary = {
+  total: 3,
+  by_code: [
+    { issue_code: "write_no_where", severity: "error", n: 2 },
+    { issue_code: "select_star", severity: "warning", n: 1 },
+  ],
+};
+
+const emptySqlLint: SqlLintSummary = { total: 0, by_code: [] };
 
 afterEach(() => {
   cleanup();
@@ -229,6 +239,24 @@ describe("Dashboard component", () => {
       tag: "objects",
       action: { tag: "select", name: "w_zzzdead" },
     });
+  });
+
+  it("renders SQL Issues card with by-code counts", async () => {
+    const env = { ...mockEnv, getSqlLintSummary: () => Effect.send(sampleSqlLint) } as AppEnv;
+    const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
+    const store = createStore(state, reducer, env);
+    render(() => <Dashboard store={store} />);
+    await vi.waitUntil(() => screen.queryByText("SQL Issues") != null);
+    expect(screen.getByText("No WHERE")).toBeDefined();
+    expect(screen.getByText("SELECT *")).toBeDefined();
+  });
+
+  it("shows a clean message when there are no SQL lint issues", async () => {
+    const env = { ...mockEnv, getSqlLintSummary: () => Effect.send(emptySqlLint) } as AppEnv;
+    const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
+    const store = createStore(state, reducer, env);
+    render(() => <Dashboard store={store} />);
+    await vi.waitUntil(() => screen.queryByText("No SQL issues detected") != null);
   });
 
   it("hides schema tiles and shows a banner when ddl is not loaded", () => {

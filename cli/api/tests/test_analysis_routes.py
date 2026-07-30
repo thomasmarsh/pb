@@ -915,6 +915,20 @@ def report_client(tmp_path_factory):
             ["w.srf", "obj_a", "proc_a", 1, "SELECT", tables, "", "SELECT 1", True, None],
         )
 
+    conn.execute("""
+        CREATE TABLE sql_lint_issues (
+            file TEXT, object TEXT, proc_name TEXT, line INT,
+            issue_code TEXT, severity TEXT
+        )
+    """)
+    for row in [
+        ("w.srf", "obj_a", "proc_a", 1, "select_star", "warning"),
+        ("w.srf", "obj_a", "proc_b", 5, "write_no_where", "error"),
+        ("w.srf", "obj_a", "proc_b", 5, "write_no_where", "error"),
+        ("w.srf", "obj_b", "proc_c", 9, "sql_in_loop", "warning"),
+    ]:
+        conn.execute("INSERT INTO sql_lint_issues VALUES (?,?,?,?,?,?)", row)
+
     conn.close()
 
     from fastapi.testclient import TestClient
@@ -972,6 +986,37 @@ def test_report_endpoint_works_against_real_corpus(db_path):
     assert "dead_procedures_by_object" in body
     assert "taint_severity_distribution" in body
     assert "sql_statement_complexity_histogram" in body
+
+
+def test_sql_lint_total(report_client):
+    r = report_client.get("/api/analysis/sql-lint")
+    assert r.status_code == 200
+    assert r.json()["total"] == 4
+
+
+def test_sql_lint_by_code(report_client):
+    r = report_client.get("/api/analysis/sql-lint")
+    assert r.status_code == 200
+    by_code = {(b["issue_code"], b["severity"]): b["n"] for b in r.json()["by_code"]}
+    assert by_code == {
+        ("select_star", "warning"): 1,
+        ("write_no_where", "error"): 2,
+        ("sql_in_loop", "warning"): 1,
+    }
+
+
+def test_sql_lint_endpoint_works_against_real_corpus(db_path):
+    """Ensure the endpoint works against the real openpay corpus (table may be empty)."""
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    client = TestClient(app)
+    r = client.get("/api/analysis/sql-lint")
+    assert r.status_code == 200
+    body = r.json()
+    assert "total" in body
+    assert "by_code" in body
 
 
 def test_live_procedures_endpoint_works_against_real_corpus(db_path):

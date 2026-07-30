@@ -80,7 +80,7 @@ describe("ProcedureDetail source-first", () => {
   it("shows SQL pill when sql_statements is non-empty", () => {
     renderProcDetail({
       ...baseProc,
-      sql_statements: [{ line: 1, operation: "SELECT", raw_sql: "SELECT 1", formatted_sql: "SELECT 1", parse_ok: true, tables: [], columns: null, has_into: false, has_cursor: false }],
+      sql_statements: [{ line: 1, operation: "SELECT", raw_sql: "SELECT 1", formatted_sql: "SELECT 1", parse_ok: true, tables: [], columns: null, has_into: false, has_cursor: false, lint_warnings: [] }],
     });
     const bar = document.querySelector(".analysis-summary-bar");
     expect(bar?.textContent).toContain("SQL (1)");

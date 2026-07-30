@@ -10,6 +10,22 @@ from pb.api.routes.dependencies import rows
 from pb.api.services.objects import _get_root, get_known_objects, get_resolved_calls, get_resolved_var_refs
 
 
+def _sql_stmts_with_lint(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str) -> list[dict[str, Any]]:
+    """sql_statements for one procedure, each row carrying its
+    sql_lint_issues issue_codes (PB.Analysis.SqlLint) as lint_warnings."""
+    return rows(conn.execute(
+        "SELECT s.line, s.operation, s.raw_sql, s.tables, s.columns, s.parse_ok, s.error, "
+        "COALESCE(list(l.issue_code) FILTER (WHERE l.issue_code IS NOT NULL), []) AS lint_warnings "
+        "FROM sql_statements s "
+        "LEFT JOIN sql_lint_issues l "
+        "  ON l.object = s.object AND l.proc_name = s.proc_name AND l.line = s.line "
+        "WHERE s.object = ? AND s.proc_name = ? "
+        "GROUP BY s.line, s.operation, s.raw_sql, s.tables, s.columns, s.parse_ok, s.error "
+        "ORDER BY s.line",
+        [object_name, proc_name],
+    ))
+
+
 def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str) -> dict[str, Any] | None:
     proc_rows = rows(
         conn.execute(
@@ -68,12 +84,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     ))
     proc["callees"] = [c["callee"] for c in callees]
 
-    sql_stmts = rows(conn.execute(
-        "SELECT line, operation, raw_sql, tables, columns, parse_ok, error "
-        "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY line",
-        [object_name, proc_name],
-    ))
-    proc["sql_statements"] = sql_stmts
+    proc["sql_statements"] = _sql_stmts_with_lint(conn, object_name, proc_name)
 
     proc["knownObjects"] = get_known_objects(conn, object_name)
     proc["resolvedCalls"] = get_resolved_calls(conn, object_name)
@@ -106,13 +117,7 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
     if not proc_rows:
         return None
     row = proc_rows[0]
-    sql_stmts = rows(
-        conn.execute(
-            "SELECT line, operation, raw_sql, tables, columns, parse_ok, error "
-            "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY line",
-            [object_name, proc_name],
-        )
-    )
+    sql_stmts = _sql_stmts_with_lint(conn, object_name, proc_name)
     import sqlglot as _sqlglot
 
     for stmt in sql_stmts:

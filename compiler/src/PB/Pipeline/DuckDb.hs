@@ -254,6 +254,14 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       , "CREATE TABLE IF NOT EXISTS sql_statement_tables \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \operation TEXT, namespace TEXT, table_name TEXT)"
+      -- One row per SQL anti-pattern finding from 'PB.Analysis.SqlLint',
+      -- keyed the same way as sql_statements (file/object/proc_name/line,
+      -- no separate stmt_idx -- a statement's line is already unique per
+      -- procedure). issue_code is "select_star" | "write_no_where" |
+      -- "sql_in_loop"; severity is "warning" | "error".
+      , "CREATE TABLE IF NOT EXISTS sql_lint_issues \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
+        \issue_code TEXT, severity TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_objects \
         \(file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \

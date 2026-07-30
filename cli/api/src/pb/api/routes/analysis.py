@@ -12,6 +12,7 @@ from pb.api.services.analysis import (
     get_dead_vars,
     get_live_procedures,
     get_program_slice,
+    get_sql_lint_summary,
     get_taint_annotations,
     get_taint_path,
     get_taint_paths,
@@ -128,6 +129,11 @@ async def taint_sources(
 @router.get("/api/analysis/report")
 async def code_quality_report(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     return get_code_quality_report(conn)
+
+
+@router.get("/api/analysis/sql-lint")
+async def sql_lint(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    return get_sql_lint_summary(conn)
 
 
 @router.get("/api/analysis/sinks")

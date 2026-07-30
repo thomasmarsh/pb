@@ -6,7 +6,7 @@ import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
 import type { SqlStatementRow } from "@pb/platform";
-import { SqlBlock } from "@pb/platform";
+import { SqlBlock, lintLabel, lintSeverity, lintDescription } from "@pb/platform";
 import { TableChip } from "./TableChip.js";
 
 interface SqlStatementCardProps {
@@ -32,6 +32,16 @@ export function SqlStatementCard(props: SqlStatementCardProps): JSX.Element {
         <Show when={!props.stmt.parse_ok}>
           <span class="badge badge-warn">&#x26A0; unparsed</span>
         </Show>
+        <For each={props.stmt.lint_warnings}>
+          {(code) => (
+            <span
+              class={`badge badge-${lintSeverity(code) === "error" ? "error" : "warn"}`}
+              title={lintDescription(code)}
+            >
+              {lintLabel(code)}
+            </span>
+          )}
+        </For>
       </div>
       <SqlBlock code={props.stmt.formatted_sql} />
       <Show when={props.stmt.tables && props.stmt.tables.length > 0}>

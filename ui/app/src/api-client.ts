@@ -10,6 +10,7 @@ import type {
   SearchResponse,
   StatsResponse,
   CodeQualityReportResponse,
+  SqlLintSummary,
   QueryDef,
   QueryResult,
   ExploreTreeResponse,
@@ -41,6 +42,7 @@ import type { NavigationAction } from "@pb/platform";
 export interface ApiClient {
   getStats(): Promise<StatsResponse>;
   getCodeQualityReport(): Promise<CodeQualityReportResponse>;
+  getSqlLintSummary(): Promise<SqlLintSummary>;
   getObjects(params: Record<string, string | number>): Promise<ListObjectsResponse>;
   getObject(name: string): Promise<ObjectDetailResponse>;
   getObjectSource(name: string): Promise<ObjectSourceResponse>;
@@ -122,6 +124,7 @@ export function createEnv(api: ApiClient): Env {
   return {
     getStats: () => lift(() => api.getStats()),
     getCodeQualityReport: () => lift(() => api.getCodeQualityReport()),
+    getSqlLintSummary: () => lift(() => api.getSqlLintSummary()),
     getObjects: (p) => lift(() => api.getObjects(p)),
     getObject: (n) => lift(() => api.getObject(n)),
     getObjectSource: (n) => lift(() => api.getObjectSource(n)),
@@ -186,6 +189,10 @@ export function createApiClient(): ApiClient {
 
     async getCodeQualityReport(): Promise<CodeQualityReportResponse> {
       return fetchJson("/api/analysis/report");
+    },
+
+    async getSqlLintSummary(): Promise<SqlLintSummary> {
+      return fetchJson("/api/analysis/sql-lint");
     },
 
     async getObjects(
