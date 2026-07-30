@@ -27,7 +27,7 @@ cd compiler && cabal build                          # compile library + executab
 cd compiler && cabal build --enable-tests           # compile tests too
 cd compiler && cabal test                           # run test suite
 cd compiler && cabal test --test-show-details=direct # verbose output
-./pb check-corpus                    # 0 errors / 1053 files = baseline
+./pb check-corpus                    # 0 errors / 1490 files = baseline
 cd cli && uv run pytest lib/tests/ pipeline/tests/ api/tests/  # Python tests
 cd cli && uv run ruff check     # Python lint
 cd cli && uv run pyright        # Python type check (0 errors baseline)
@@ -309,7 +309,7 @@ together.
 - Stage 2 failing-test stubs may be committed, marked with
   `assertFailure "unimplemented: ..."`
 - Before committing parser changes: `./pb check-corpus` — error count must
-  not increase (baseline: 0 errors / 1053 files)
+  not increase (baseline: 0 errors / 1490 files)
 - New failure categories found this session go in `BACKLOG.md` before
   committing
 

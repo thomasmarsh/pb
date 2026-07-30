@@ -727,6 +727,12 @@ body {
 .src-link-control:hover { color: #86efac; }
 .src-link-builtin { color: #dcdcaa; }
 .src-link-builtin:hover { color: #ececc0; }
+.src-link-dwcolumn { color: #2dd4bf; }
+.src-link-dwcolumn:hover { color: #5eead4; }
+.src-link-dwcontrol { color: #f472b6; }
+.src-link-dwcontrol:hover { color: #f9a8d4; }
+.src-link-dwproperty { color: #eab308; }
+.src-link-dwproperty:hover { color: #fde047; }
 .source-file-header {
     display: flex;
     align-items: center;

@@ -118,7 +118,15 @@ def _bundle_stale(explorer_dir: "Path", dist_js: "Path") -> bool:
     if not dist_js.exists():
         return True
     cutoff = dist_js.stat().st_mtime
-    for pattern in ["src/**/*.ts", "src/**/*.tsx", "package.json", "vite.config.ts"]:
+    patterns = [
+        "app/src/**/*.ts",
+        "app/src/**/*.tsx",
+        "packages/*/src/**/*.ts",
+        "packages/*/src/**/*.tsx",
+        "package.json",
+        "vite.config.ts",
+    ]
+    for pattern in patterns:
         if any(f.stat().st_mtime > cutoff for f in explorer_dir.glob(pattern)):
             return True
     return False
