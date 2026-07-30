@@ -10,7 +10,7 @@ module PB.Pipeline.Passes
   ) where
 
 import PB.Prelude
-import PB.AST.Ident            (Ident, IdentMap, IdentSet, identMapFromListWith, identSetDifference, identSetFromList, identSetSingleton, identSetUnion, mkIdent, mkIdentAt, mkIdentSynthetic)
+import PB.AST.Ident            (Ident, IdentMap, IdentSet, identSetDifference, identSetFromList, mkIdent, mkIdentAt, mkIdentSynthetic)
 import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TaintEdges  qualified as TaintEdges
@@ -30,7 +30,7 @@ import Control.DeepSeq       (force)
 import Control.Exception    (evaluate)
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb (Handle)
-import PB.Pipeline.DuckDb.PhaseA (ObjectRow (..), StructureRow (..), ProcRow (..))
+import PB.Pipeline.DuckDb.PhaseA (ObjectRow (..), StructureRow (..))
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( ProcRows (..)
   , queryTaintInputs
@@ -80,19 +80,11 @@ data PhaseAData = PhaseAData
   , padDwJoinLegs        :: ![DwJoinLegRow]
   , padObjectRows        :: ![ObjectRow]
   , padStructureRows     :: ![StructureRow]
-  , padProcedureRows     :: ![ProcRow]
-  -- | Ancestor pairs for every nested (@within@-qualified) control
-  -- 'TypeBlock', additive to 'padObjectRows''s per-file ancestor -- see
-  -- 'PB.Analysis.TypeEnv.extractNestedTypeDecls'. Set once (not accumulated
-  -- per-'CompiledFile' the way every other 'pad*' field is) by
-  -- 'PB.Pipeline.Runner.runModeDb', since it doesn't depend on per-file
-  -- compilation output.
-  , padTypeAncestors     :: !(Map.Map Ident Ident)
   } deriving (Eq, Show)
 
 -- | Empty initial 'PhaseAData'.
 emptyPhaseAData :: PhaseAData
-emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] Map.empty
+emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] []
 
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
@@ -259,14 +251,19 @@ timedQueryRows label action = Progress.timedStepRows label (do
 --   genuine data dependency. Finally the schema materializer projects its
 --   derived output table into its API-facing shape (@path_leg_fwd@\/
 --   @path_leg_back@->@decomposition_coslice@).
-runPhaseB :: Handle -> Maybe Text -> PhaseAData -> IO ()
-runPhaseB conn mDefaultNamespace pad =
+runPhaseB :: Handle -> Maybe Text -> Map.Map Ident Ident -> IdentMap IdentSet -> IdentMap IdentSet -> PhaseAData -> IO ()
+runPhaseB conn mDefaultNamespace hierarchy procMap callableProcMap pad =
   let PhaseAData{..} = pad
   in do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
+  -- 'hierarchy'/'procMap'/'callableProcMap' are threaded straight from the
+  -- workspace-wide, parse-time-minted 'WorkspaceEnv' the caller already
+  -- built ('weHierarchy'/'weProcMap'/'buildCallableProcMap') rather than
+  -- re-derived here from DB-round-tripped 'ObjectRow'/'ProcRow' rows -- see
+  -- 'fetchResolveInputs''s own doc comment for why.
   (_inh, rcReady) <- resolveTypesAndCalls
-    (fetchResolveInputs padLocalVars padGlobalVars padCallSites padObjectRows padStructureRows padProcedureRows padTypeAncestors)
+    (fetchResolveInputs padLocalVars padGlobalVars padCallSites padObjectRows padStructureRows hierarchy procMap callableProcMap)
     (sinkResolvedOutput conn)
   -- Thread resolved_calls in-memory (Plan 208 Phase 2): extract from the
   -- proof token to avoid re-querying DuckDB for Phase B's own data.
@@ -301,8 +298,21 @@ runPhaseB conn mDefaultNamespace pad =
 -- Fetch/sink helpers for the shape-1 stages (constructed once in runPhaseB,
 -- closed over a real Handle)
 
-fetchResolveInputs :: [LocalVar] -> [GlobalVar] -> [CallSite] -> [ObjectRow] -> [StructureRow] -> [ProcRow] -> Map.Map Ident Ident -> IO ResolveInputs
-fetchResolveInputs lvs gvs css objRows structRows procRows nestedAncestors = do
+-- | 'hierarchy'\/'procMap'\/'callableProcMap' are taken as already-built
+-- inputs, not derived here from 'objRows'\/a proc-row list: the DB
+-- (\"PhaseAData\")-round-tripped 'ObjectRow.orAncestor'\/'ProcRow.prObject'
+-- text used to be re-minted into 'Ident's via 'mkIdent' on every 'runPhaseB'
+-- run, which both threw away every real declaration-site span and violated
+-- the rule that an 'Ident' is only minted at parse time (see
+-- 'PB.AST.Ident'). The correct, already-'Ident'-typed, already-real-span
+-- primitives already exist and are built once, in memory, straight from
+-- parsed 'SrFile's -- 'PB.Analysis.TypeEnv.WorkspaceEnv''s
+-- 'weHierarchy'\/'weProcMap' and the standalone 'buildCallableProcMap' --
+-- and the caller ('PB.Pipeline.Runner.runModeDb') already has them built
+-- before 'runPhaseB' is ever called, so this function just takes them
+-- as-is instead of re-deriving a parallel, inferior copy.
+fetchResolveInputs :: [LocalVar] -> [GlobalVar] -> [CallSite] -> [ObjectRow] -> [StructureRow] -> Map.Map Ident Ident -> IdentMap IdentSet -> IdentMap IdentSet -> IO ResolveInputs
+fetchResolveInputs lvs gvs css objRows structRows hierarchy procMap callableProcMap = do
   -- usrTypes sources from 'structures' (one row per 'StructureBlock', inline
   -- or standalone) rather than 'objRows'' ancestor text: 'objects' is one
   -- row per *file*, so before this a structure only got counted when it was
@@ -328,28 +338,13 @@ fetchResolveInputs lvs gvs css objRows structRows procRows nestedAncestors = do
       -- unaffected by the category override) always can.
       objSet = identSetFromList [rowIdent (orObject r) (orObjectSpan r) | r <- objRows]
                  `identSetDifference` usrTypes
-      -- Left-biased union: a primary object's own ancestor (from 'objRows')
-      -- always wins over 'nestedAncestors' on a key collision, though in
-      -- practice a primary object name and a nested control's own literal
-      -- name are different universes. 'nestedAncestors' (Plan 214 scope-item-3
-      -- follow-on) is additive -- it only ever adds ancestor-chain reach
-      -- 'riInherits' didn't have before, for a nested (@within@-qualified)
-      -- control's own declared class (e.g. an implicit system control like
-      -- an MDI frame's @mdi_1@), never removes or overrides an existing
-      -- resolution.
-      inh = Map.fromList [(mkIdent (orObject r), mkIdent a) | r <- objRows, Just a <- [orAncestor r]]
-              <> nestedAncestors
-      procMap = identMapFromListWith identSetUnion
-          [(mkIdent (prObject r), identSetSingleton (mkIdent (prProcName r))) | r <- procRows]
-      callableProcMap = identMapFromListWith identSetUnion
-          [(mkIdent (prObject r), identSetSingleton (mkIdent (prProcName r))) | r <- procRows, prProcType r `elem` ["function", "subroutine"]]
   pure ResolveInputs
     { riLocalVars       = lvs
     , riGlobalVars      = gvs
     , riCallSites       = css
     , riObjSet          = objSet
     , riUsrTypes        = usrTypes
-    , riInherits        = inh
+    , riInherits        = hierarchy
     , riProcMap         = procMap
     , riCallableProcMap = callableProcMap
     }

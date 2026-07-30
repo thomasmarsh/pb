@@ -1,7 +1,10 @@
 module PassesTest (tests) where
 
 import PB.Prelude
-import PB.AST.Ident (IdentProvenance (..), identSetLookup, identSetToList, identSpan, mkIdent)
+import PB.AST.Ident
+  ( IdentProvenance (..), identSetLookup, identSetToList, identSpan, mkIdent
+  , identMapEmpty, identMapFromListWith, identMapLookup, identSetSingleton, identSetUnion
+  )
 import PB.Lexing.Token (SourceSpan (..))
 import PB.Pipeline.Passes (ResolveInputs (..), fetchResolveInputs)
 import PB.Pipeline.DuckDb.PhaseA (ObjectRow (..), StructureRow (..))
@@ -29,7 +32,8 @@ tests = testGroup "Passes"
   [ testGroup "fetchResolveInputs: objSet/usrTypes"
     [ testCase "a real window ends up in objSet, not usrTypes" $ do
         ri <- fetchResolveInputs [] [] []
-                [mkObjRow "w_foo" (Just "window") "window"] [] [] Map.empty
+                [mkObjRow "w_foo" (Just "window") "window"] []
+                Map.empty identMapEmpty identMapEmpty
         identSetToList (riObjSet ri) @?= [mkIdent "w_foo"]
         identSetToList (riUsrTypes ri) @?= []
 
@@ -37,7 +41,7 @@ tests = testGroup "Passes"
         ri <- fetchResolveInputs [] [] []
                 [mkObjRow "os_data" (Just "structure") "structure"]
                 [mkStructRow "os_data.srs" "os_data" Nothing]
-                [] Map.empty
+                Map.empty identMapEmpty identMapEmpty
         identSetToList (riUsrTypes ri) @?= [mkIdent "os_data"]
         identSetToList (riObjSet ri) @?= []
 
@@ -48,7 +52,7 @@ tests = testGroup "Passes"
         ri <- fetchResolveInputs [] [] []
                 [mkObjRow "w_foo" (Just "window") "window"]
                 [mkStructRow "w_foo.srw" "os_data" (Just "w_foo")]
-                [] Map.empty
+                Map.empty identMapEmpty identMapEmpty
         identSetToList (riObjSet ri) @?= [mkIdent "w_foo"]
         identSetToList (riUsrTypes ri) @?= [mkIdent "os_data"]
 
@@ -61,7 +65,7 @@ tests = testGroup "Passes"
         ri <- fetchResolveInputs [] [] []
                 [mkObjRow "datawindowchild" (Just "structure") "system"]
                 [mkStructRow "__stdlib__/datawindowchild.sru" "datawindowchild" Nothing]
-                [] Map.empty
+                Map.empty identMapEmpty identMapEmpty
         identSetToList (riUsrTypes ri) @?= [mkIdent "datawindowchild"]
         identSetToList (riObjSet ri) @?= []
     ]
@@ -70,35 +74,42 @@ tests = testGroup "Passes"
         let sp = SourceSpan 3 6 3 11
         ri <- fetchResolveInputs [] [] []
                 [ObjectRow "w_foo.srw" "powerscript" "w_foo" (Just "window") Nothing Nothing "confirmed" "window" (Just sp)]
-                [] [] Map.empty
+                [] Map.empty identMapEmpty identMapEmpty
         case identSetLookup (mkIdent "w_foo") (riObjSet ri) of
           Just i -> identSpan i @?= FromSource (sp :| [])
           Nothing -> fail "expected w_foo in riObjSet"
 
     , testCase "an ObjectRow with no recorded span (e.g. DataWindow-sourced) is honestly Synthetic" $ do
         ri <- fetchResolveInputs [] [] []
-                [mkObjRow "d_report" Nothing "datawindow"] [] [] Map.empty
+                [mkObjRow "d_report" Nothing "datawindow"] []
+                Map.empty identMapEmpty identMapEmpty
         case identSetLookup (mkIdent "d_report") (riObjSet ri) of
           Just i -> case identSpan i of
             Synthetic _ -> pure ()
             other -> fail $ "expected Synthetic, got " <> show other
           Nothing -> fail "expected d_report in riObjSet"
     ]
-  , testGroup "fetchResolveInputs: nested control ancestors (Plan 214 scope-item-3 follow-on)"
-    [ testCase "a nested control's ancestor is visible in riInherits even though it has no objects row of its own" $ do
-        -- Real corpus shape: 'type mdi_1 from mdiclient within w_main' never
-        -- gets its own 'objects' row (that table is one row per *file*), so
-        -- riInherits must learn "mdi_1"'s ancestor from the nested-ancestor
-        -- map instead.
-        ri <- fetchResolveInputs [] [] []
-                [mkObjRow "w_main" (Just "window") "window"] [] []
-                (Map.fromList [(mkIdent "mdi_1", mkIdent "mdiclient")])
-        Map.lookup (mkIdent "mdi_1") (riInherits ri) @?= Just (mkIdent "mdiclient")
+  , testGroup "fetchResolveInputs: hierarchy/procMap/callableProcMap are threaded through, not re-derived"
+    -- 'riInherits'/'riProcMap'/'riCallableProcMap' used to be rebuilt here
+    -- from DB-round-tripped 'ObjectRow'/'ProcRow' text via 'mkIdent',
+    -- discarding real declaration-site spans and re-minting 'Ident's
+    -- post-parse. The caller now passes the workspace's own already-correct,
+    -- parse-time-minted maps ('weHierarchy'/'weProcMap'/
+    -- 'buildCallableProcMap') straight through -- these tests confirm the
+    -- wiring is a plain pass-through, not a re-derivation.
+    [ testCase "riInherits is exactly the hierarchy map passed in" $ do
+        let hierarchy = Map.fromList [(mkIdent "mdi_1", mkIdent "mdiclient")]
+        ri <- fetchResolveInputs [] [] [] [] [] hierarchy identMapEmpty identMapEmpty
+        riInherits ri @?= hierarchy
 
-    , testCase "a primary object's own ancestor still wins on a key collision with the nested map" $ do
-        ri <- fetchResolveInputs [] [] []
-                [mkObjRow "w_app" (Just "w_main") "window"] [] []
-                (Map.fromList [(mkIdent "w_app", mkIdent "some_other_ancestor")])
-        Map.lookup (mkIdent "w_app") (riInherits ri) @?= Just (mkIdent "w_main")
+    , testCase "riProcMap is exactly the procMap passed in" $ do
+        let pm = identMapFromListWith identSetUnion [(mkIdent "w_test", identSetSingleton (mkIdent "f_go"))]
+        ri <- fetchResolveInputs [] [] [] [] [] Map.empty pm identMapEmpty
+        (identSetToList . snd <$> identMapLookup (mkIdent "w_test") (riProcMap ri)) @?= Just [mkIdent "f_go"]
+
+    , testCase "riCallableProcMap is exactly the callableProcMap passed in" $ do
+        let cpm = identMapFromListWith identSetUnion [(mkIdent "w_test", identSetSingleton (mkIdent "of_help"))]
+        ri <- fetchResolveInputs [] [] [] [] [] Map.empty identMapEmpty cpm
+        (identSetToList . snd <$> identMapLookup (mkIdent "w_test") (riCallableProcMap ri)) @?= Just [mkIdent "of_help"]
     ]
   ]

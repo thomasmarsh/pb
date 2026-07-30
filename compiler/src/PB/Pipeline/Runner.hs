@@ -41,7 +41,7 @@ import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, withDwTables,
                                  withDwControls, withDwParamBindings, procEnv,
-                                 extractNestedTypeDecls)
+                                 extractNestedTypeDecls, buildCallableProcMap)
 import PB.Analysis.DwBuiltins  (classifyDwControlKind)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
@@ -768,7 +768,6 @@ accumulatePhaseAData pad (CFPs r) = pad
   , padCallSites        = cpsCallSites r ++ padCallSites pad
   , padObjectRows       = cpsObjectRow r : padObjectRows pad
   , padStructureRows    = cpsStructureRows r ++ padStructureRows pad
-  , padProcedureRows    = cpsProcRows r ++ padProcedureRows pad
   }
 accumulatePhaseAData pad (CFDw r) = pad
   { padDwWriteColumns    = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWriteColumns r) ++ padDwWriteColumns pad
@@ -1001,13 +1000,14 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
 
   -- Ancestor pairs for every nested (@within@-qualified) control 'TypeBlock'
   -- -- additive to 'objects.ancestor' (one row per file, so a control
-  -- declared within another object never appears there). Feeds both
-  -- 'riInherits' (Phase B's in-memory ancestor-chain method dispatch, via
-  -- 'PhaseAData'\'s 'padTypeAncestors') and the persisted @type_ancestors@
-  -- table (unioned into @inherits@\/@dcrAncestors@ by 'queryObjectAncestors'),
-  -- so a call on an implicit system control (e.g. an MDI frame's own
-  -- @mdi_1@) can resolve an inherited builtin method the same way an
-  -- ordinary object's own ancestor chain already does.
+  -- declared within another object never appears there). Feeds the
+  -- persisted @type_ancestors@ table (unioned into @inherits@\/
+  -- @dcrAncestors@ by 'queryObjectAncestors'), the UI-facing materialized
+  -- relation. 'riInherits' (Phase B's in-memory ancestor-chain method
+  -- dispatch) no longer needs this separately -- 'wsEnv0''s own
+  -- 'weHierarchy' already folds every 'TypeBlock' in the workspace,
+  -- primary and nested alike, straight from parse-time 'Ident's (see
+  -- 'fetchResolveInputs''s doc comment).
   nestedAncestors <- Progress.timedStep "Building nested control ancestors" $ do
     let nested' = foldl' (\m sf -> m <> extractNestedTypeDecls sf) Map.empty allParsedSrFiles
     _ <- evaluate (Map.size nested')
@@ -1150,9 +1150,9 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
       pure (stdlibCfs ++ userCfs)
     -- Pool scope closed here: all Phase A appenders flushed + destroyed.
     -- Phase B SQL queries now see the complete data.
-    let phaseAData = (foldl' accumulatePhaseAData emptyPhaseAData allCfs)
-          { padTypeAncestors = nestedAncestors }
-    runPhaseB conn mDefaultNamespace phaseAData  -- Phase B: link analysis (passes 5–8)
+    let phaseAData = foldl' accumulatePhaseAData emptyPhaseAData allCfs
+    runPhaseB conn mDefaultNamespace (weHierarchy wsEnv) (weProcMap wsEnv) (buildCallableProcMap allParsedSrFiles)
+      phaseAData  -- Phase B: link analysis (passes 5–8)
 
   errors <- readIORef errCount
   emitProgress (object ["tag" .= ("done" :: Text), "parsed" .= (total - errors), "errors" .= errors])
