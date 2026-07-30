@@ -87,6 +87,12 @@ tests = testGroup "Taint"
                      "SELECT col FROM tbl" False]
         in classifySources sql [] @?= []
 
+    , testCase "SELECT INTO with WHERE-clause bind var doesn't leak into db_read sources" $
+        let sql = [SqlStmt "w.srf" "oa" "pA" (Just 5) "SELECT"
+                     "SELECT col INTO :ls_result FROM tbl WHERE key = :ls_bind" True]
+        in classifySources sql [] @?=
+           [TaintSource "w.srf" "oa" "pA" "ls_result" "db_read" (Just 5)]
+
     , testCase "event handler param produces request_param source" $
         let procs = [ProcMeta "w.srf" "oa" "pA" "event" ["as_arg"] "" (Just 3)]
         in classifySources [] procs @?=
