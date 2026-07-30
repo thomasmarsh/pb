@@ -507,9 +507,13 @@ buildCallGraphAndTaint _rcReady fetchInputs sinkOutput = Progress.timedStep "Bui
   allSources <- Progress.timedStep "  Classifying taint sources" $
     evaluate (force (Taint.classifySources allSqlStmts allProcMetas))
 
-  -- Sub-step 6: classify taint sinks (pure, forced via evaluate + force)
+  -- Sub-step 6: classify taint sinks (pure, forced via evaluate + force).
+  -- Includes 'Taint.classifyUnresolvedDispatchSinks': an unresolved (dynamic
+  -- dispatch) call site has no known callee to jump 'arg' edges into, so
+  -- flagging its arguments as sinks is the only sound signal available.
   allSinks <- Progress.timedStep "  Classifying taint sinks" $
-    evaluate (force (Taint.classifySinks allSqlStmts))
+    evaluate (force (Taint.classifySinks allSqlStmts
+      <> Taint.classifyUnresolvedDispatchSinks cgiResolvedCalls cgiProcUses))
 
   -- Sub-step 7: build taint closure (pure; WHNF via evaluate is sufficient
   -- since buildTaintClosure uses strict folds internally)

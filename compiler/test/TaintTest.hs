@@ -142,6 +142,45 @@ tests = testGroup "Taint"
            [TaintSink "w.srf" "oa" "pA" "*exec" "db_write" "high" (Just 15)]
     ]
 
+  , testGroup "classifyUnresolvedDispatchSinks"
+    [ testCase "single-arg unresolved call produces one sink" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "foo" "unresolved"
+                    (Just 10) Nothing Nothing "unresolved" "low" Nothing Nothing]
+            uses = [useRow "w.srf" "oa" "pA" "ls_x" 10 "rhs"]
+        in classifyUnresolvedDispatchSinks rc uses @?=
+           [TaintSink "w.srf" "oa" "pA" "ls_x" "dynamic_dispatch" "medium" (Just 10)]
+
+    , testCase "multi-arg unresolved call produces one sink per arg" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "foo" "unresolved"
+                    (Just 10) Nothing Nothing "unresolved" "low" Nothing Nothing]
+            uses = [ useRow "w.srf" "oa" "pA" "ls_x" 10 "rhs"
+                   , useRow "w.srf" "oa" "pA" "ls_y" 10 "rhs"
+                   ]
+            sks = classifyUnresolvedDispatchSinks rc uses
+        in do
+          length sks @?= 2
+          map tskVarName sks @?= ["ls_x", "ls_y"]
+          all (\s -> tskSinkType s == "dynamic_dispatch" && tskSeverity s == "medium") sks @?= True
+
+    , testCase "resolved (virtual) call produces no sink" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "of_calc" "virtual"
+                    (Just 10) (Just "ob") (Just "pB") "virtual" "high" Nothing Nothing]
+            uses = [useRow "w.srf" "oa" "pA" "ls_x" 10 "rhs"]
+        in classifyUnresolvedDispatchSinks rc uses @?= []
+
+    , testCase "builtin call produces no sink" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "len" "builtin"
+                    (Just 10) Nothing Nothing "builtin" "high" (Just "long") Nothing]
+            uses = [useRow "w.srf" "oa" "pA" "ls_x" 10 "rhs"]
+        in classifyUnresolvedDispatchSinks rc uses @?= []
+
+    , testCase "no matching UseRow at call line produces no sink" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "foo" "unresolved"
+                    (Just 10) Nothing Nothing "unresolved" "low" Nothing Nothing]
+            uses = [useRow "w.srf" "oa" "pA" "ls_x" 99 "rhs"]
+        in classifyUnresolvedDispatchSinks rc uses @?= []
+    ]
+
   , testGroup "buildInterprocEdges"
     [ testCase "arg edge from resolved call" $
         let rc = [ResolvedCallRow "w.srf" "oa" "pA" "of_calc" "virtual"

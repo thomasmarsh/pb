@@ -25,6 +25,7 @@ module PB.Analysis.Taint
     -- * Classification
   , classifySources
   , classifySinks
+  , classifyUnresolvedDispatchSinks
   , buildInterprocEdges
   , buildInterprocEdgeMaps
   , buildProcedureSummaries
@@ -297,10 +298,14 @@ eventProcTypes :: Set.Set Text
 eventProcTypes = Set.fromList ["event", "on"]
 
 severityMap :: Map.Map Text Text
-severityMap = Map.fromList [("db_write", "high"), ("exec_immediate", "critical")]
+severityMap = Map.fromList
+  [ ("db_write", "high"), ("exec_immediate", "critical"), ("dynamic_dispatch", "medium") ]
 
 sinkCategoryMap :: Map.Map Text Text
-sinkCategoryMap = Map.fromList [("db_write", "sql_injection"), ("exec_immediate", "exec_immediate")]
+sinkCategoryMap = Map.fromList
+  [ ("db_write", "sql_injection"), ("exec_immediate", "exec_immediate")
+  , ("dynamic_dispatch", "unresolved_call")
+  ]
 
 -- | Report category for a sink, keyed off its 'tskSinkType'. A one-row
 -- classification decision, kept in Haskell rather than a SQL @CASE@ so the
@@ -475,6 +480,39 @@ classifySinks sqlStmts =
              else [TaintSink (ssFile s) (ssObject s) (ssProcName s)
                      v sinkType sev (ssLine s) | v <- vars]
       where op = T.toUpper (ssOperation s)
+
+-- | Flag arguments passed into a call whose target could not be statically
+-- resolved (PowerBuilder's string-based dynamic dispatch, @ExDispatch@) as
+-- taint sinks. Deliberately sink-only, not source-side: 'buildInterprocEdges'
+-- reaches a sink inside a resolved callee by jumping into that callee's own
+-- intra-procedural edges via an 'arg'-kind edge, which is structurally
+-- impossible here -- there is no known callee body to jump into. Flagging
+-- the argument itself as a sink is the only signal available without
+-- fabricating a guessed target.
+classifyUnresolvedDispatchSinks :: [ResolvedCallRow] -> [UseRow] -> [TaintSink]
+classifyUnresolvedDispatchSinks resolvedCalls uses =
+  concatMap go resolvedCalls
+  where
+    usesByProc :: HM.HashMap (Text, Text) [UseRow]
+    usesByProc = HM.fromListWith (++)
+      [ ((urObject u, urProcName u), [u]) | u <- uses ]
+
+    go rc
+      | rcrResolutionKind rc /= "unresolved" = []
+      | otherwise =
+          let callerKey = (rcrObject rc, rcrFromProc rc)
+              calleeNameLower = T.toLower (rcrToName rc)
+              sev = Map.findWithDefault "medium" "dynamic_dispatch" severityMap
+              argVars = nubOrd
+                [ urVarName u
+                | u <- HM.findWithDefault [] callerKey usesByProc
+                , urLine u == rcrCallLine rc
+                , T.toLower (urVarName u) /= calleeNameLower
+                ]
+          in [ TaintSink (rcrFile rc) (rcrObject rc) (rcrFromProc rc)
+                 v "dynamic_dispatch" sev (rcrCallLine rc)
+             | v <- argVars
+             ]
 
 -- ---------------------------------------------------------------------------
 -- Inter-procedural edge computation
