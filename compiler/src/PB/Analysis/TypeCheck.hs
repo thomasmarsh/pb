@@ -120,7 +120,7 @@ buildParamsMap :: [SrFile] -> Map.Map (Text, Text) [ProcSignature]
 buildParamsMap = foldl' addFile Map.empty
   where
     addFile acc sf =
-      let obj = srFileObject sf
+      let obj = identOrig (srFileObject sf)
           paramPairs = map (\p -> (identOrig (paramName p), parseTypeTextAt (paramTypeSpan p) (paramType p)))
           fnEntries =
             [ ( (obj, identOrig (fnsName (fbSig fb)))

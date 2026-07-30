@@ -26,7 +26,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig, identSpan, mkIdent, provenanceSpan)
+import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig, identSpan, mkIdent, mkIdentSynthetic, provenanceSpan)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText, parseTypeTextAt)
@@ -274,11 +274,11 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
           $  map (identCanon . fnsName . fbSig) (srFunctions  sf)
           <> map (identCanon . ssName  . sbSig) (srSubroutines sf)
         mkProcEnv params = procEnv wsEnv controlIdx objIdent params
-        lvs  = extractLocalVars  fp obj sf
-        css  = extractCallSites  wsEnv controlIdx fp obj sf
-        vrs  = extractVarRefs    wsEnv controlIdx fp obj sf
-               <> buildControlOverrideLinks controlIdx (weHierarchy wsEnv) fp obj sf
-        gvs  = extractGlobalVars fp obj sf <> extractStructureFields fp sf
+        lvs  = extractLocalVars  fp objIdent sf
+        css  = extractCallSites  wsEnv controlIdx fp objIdent sf
+        vrs  = extractVarRefs    wsEnv controlIdx fp objIdent sf
+               <> buildControlOverrideLinks controlIdx (weHierarchy wsEnv) fp objIdent sf
+        gvs  = extractGlobalVars fp objIdent sf <> extractStructureFields fp sf
         -- Owner is Nothing exactly when the structure IS the file's own
         -- primary object (a standalone .srs file has no other TypeBlock);
         -- otherwise it's an inline structure nested under this file's real
@@ -296,8 +296,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
           ]
         dwBindingRows = extractDwControlBindings fp sf
         controlBindings = controlBindingsMap dwBindingRows
-        windowOpens = extractWindowOpens wsEnv controlIdx fp obj sf
-        objectCreates = extractObjectCreates wsEnv controlIdx fp obj sf
+        windowOpens = extractWindowOpens wsEnv controlIdx fp objIdent sf
+        objectCreates = extractObjectCreates wsEnv controlIdx fp objIdent sf
         windowMenuBindings = extractWindowMenuBindings fp sf
         -- Shared by both 'aliasBindings' and 'procs' below: one
         -- 'ScopedTypeEnv' per procedure (params + its own body locals),
@@ -318,7 +318,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         -- order) -- an accepted simplification, since a real alias var is
         -- assigned once (constructor/open event) in practice.
         aliasBindings = Map.unions
-          [ runtimeDwAliasBindings controlIdx (weHierarchy wsEnv) obj (puEnv pu) (puBody pu)
+          [ runtimeDwAliasBindings controlIdx (weHierarchy wsEnv) objIdent (puEnv pu) (puBody pu)
           | pu <- procUnits
           ]
         -- Static literal bindings win on key collision -- a directly
@@ -362,7 +362,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- list. Re-deriving params from this comprehension's own
                 -- params/sLine sidesteps that; body locals are
                 -- span-filtered against this procedure's own (sLine, eLine).
-                scopedParams  = paramsToVars fp obj pName params sLine
+                scopedParams  = paramsToVars fp objIdent pName params sLine
                 scopedBodyLvs =
                   [ lv | lv <- lvs, lvProcName lv == pName, not (lvIsParam lv)
                        , sLine <= lvScopeLine lv, lvScopeLine lv <= eLine ]
@@ -483,6 +483,9 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
 
   PsDw fp contents dw -> do
     let obj        = T.pack (takeBaseName fp)
+        -- 'obj' is derived from the file's own basename, not a real source
+        -- token -- no span to bridge through, unlike 'PsParsed''s objIdent.
+        objIdent   = mkIdentSynthetic "DataWindow file's own name (from filename), no token span" obj
         fpT        = T.pack fp
         style      = Map.findWithDefault "" "style" (doaAttrs (dwObject dw))
         layoutJson = jsonText (toJSON dw)
@@ -492,8 +495,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                     (dwcX c) (dwcY c) (dwcWidth c) (dwcHeight c)
                     (dwcExpression c)
                 | c <- dwControls dw ]
-        css   = extractDwCallSites wsEnv controlIdx fpT obj dw
-        vrs   = extractDwVarRefs   wsEnv controlIdx fpT obj dw
+        css   = extractDwCallSites wsEnv controlIdx fpT objIdent dw
+        vrs   = extractDwVarRefs   wsEnv controlIdx fpT objIdent dw
         retrieveSql = fmap reconstructRetrieveSql (dwTable dw >>= dtRetrieve)
         rtbls = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) ->

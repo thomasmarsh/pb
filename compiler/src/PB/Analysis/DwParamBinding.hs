@@ -20,7 +20,7 @@ module PB.Analysis.DwParamBinding
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr (Expr (..), Lvalue (..), foldExprs, segments)
-import PB.AST.Ident (Ident, IdentMap, IdentSet, identCanon, mkIdentSynthetic)
+import PB.AST.Ident (Ident, IdentMap, IdentSet, identCanon)
 import PB.AST.Located (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type (renderPbType)
@@ -68,11 +68,7 @@ fileCandidates procMap inherits paramsMap controlIdx sf = concat
   , concatMap (bodyCandidates . obBody) (srOnBlocks sf)
   ]
   where
-    obj = srFileObject sf
-    -- 'srFileObject' already flattened the file's own primary-object 'Ident'
-    -- to 'Text'; no token span survives to bridge back through here (see
-    -- the ident-minting skill's "mixed case" reference).
-    objIdent = mkIdentSynthetic "enclosing object name, flattened by srFileObject" obj
+    objIdent = srFileObject sf
 
     bodyCandidates = foldStmts classifyStmt
 

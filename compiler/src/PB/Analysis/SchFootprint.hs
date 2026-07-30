@@ -231,14 +231,10 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
 -- nothing to the result -- no guessing past what the resolver itself can
 -- resolve.
 runtimeDwAliasBindings
-  :: ControlIndex -> Map.Map Ident Ident -> Text -> ScopedTypeEnv
+  :: ControlIndex -> Map.Map Ident Ident -> Ident -> ScopedTypeEnv
   -> [Located BodyStmt] -> Map.Map (Ident, Ident) Ident
-runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
+runtimeDwAliasBindings idx inh objIdent env stmts = Map.fromList (concatMap go stmts)
   where
-    -- 'obj' arrives as Text from the caller; no token span survives to
-    -- bridge back through here (see the ident-minting skill).
-    objIdent = mkIdentSynthetic "enclosing object name" obj
-
     go (Located _ (BsAssign lhs rhs)) = maybe [] pure (tryBind lhs rhs)
     go (Located _ (BsIf (IfStmt _ then_ eis mel))) =
       concatMap go then_

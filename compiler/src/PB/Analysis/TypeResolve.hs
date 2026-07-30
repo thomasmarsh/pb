@@ -3,9 +3,9 @@
 --
 -- Pure module — no I/O.  Public API:
 --
---   extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]
---   extractCallSites  :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [CallSite]
---   extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
+--   extractLocalVars  :: Text -> Ident -> SrFile -> [LocalVar]
+--   extractCallSites  :: WorkspaceEnv -> ControlIndex -> Text -> Ident -> SrFile -> [CallSite]
+--   extractGlobalVars :: Text -> Ident -> SrFile -> [GlobalVar]
 --   resolveTypes      :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 --   resolveCalls      :: [CallSite] -> IdentMap IdentSet -> IdentMap IdentSet -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 --   resolveVirtual    :: Ident -> Text -> IdentMap IdentSet -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
@@ -404,20 +404,20 @@ dispatchName (DispatchExpr _ _ _ _ n _) = identOrig n
 lvalueName :: Lvalue -> Text
 lvalueName lv = T.intercalate "." (map (identOrig . segName) (segments lv))
 
-srFileObject :: SrFile -> Text
-srFileObject = identOrig . fst . srPrimaryObject
+srFileObject :: SrFile -> Ident
+srFileObject = fst . srPrimaryObject
 
 -- ---------------------------------------------------------------------------
 -- Local variable extraction
 
-walkBodyLocalVars :: Text -> Text -> Text -> [Located BodyStmt] -> [LocalVar]
+walkBodyLocalVars :: Text -> Ident -> Text -> [Located BodyStmt] -> [LocalVar]
 walkBodyLocalVars file obj proc_ = foldStmts classify
   where
     classify (Located line stmt) = case stmt of
       BsLocalVar { varType = ty, varName = n } ->
         [ LocalVar
             { lvFile      = file
-            , lvObject    = obj
+            , lvObject    = identOrig obj
             , lvProcName  = proc_
             , lvVarName   = identOrig n
             , lvRawType   = renderPbType ty
@@ -427,11 +427,11 @@ walkBodyLocalVars file obj proc_ = foldStmts classify
             } ]
       _ -> []
 
-paramsToVars :: Text -> Text -> Text -> [Param] -> Int -> [LocalVar]
+paramsToVars :: Text -> Ident -> Text -> [Param] -> Int -> [LocalVar]
 paramsToVars file obj procN params scopeLine =
   [ LocalVar
       { lvFile      = file
-      , lvObject    = obj
+      , lvObject    = identOrig obj
       , lvProcName  = procN
       , lvVarName   = identOrig (paramName p)
       , lvRawType   = renderPbType ty
@@ -446,7 +446,7 @@ paramsToVars file obj procN params scopeLine =
 -- ---------------------------------------------------------------------------
 -- Call site extraction
 
-walkBodyCallSites :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [CallSite]
+walkBodyCallSites :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> [Located BodyStmt] -> [CallSite]
 walkBodyCallSites wsEnv env file obj proc_ = foldStmts classify
   where
     classify (Located line stmt) = case stmt of
@@ -482,11 +482,11 @@ walkBodyCallSites wsEnv env file obj proc_ = foldStmts classify
 -- 'resolveMemberChainType' -- the same D1-override\/inheritance walk an
 -- ordinary member chain already gets, just rooted at the ancestor instead of
 -- the enclosing object.
-pbCallSite :: ScopedTypeEnv -> Text -> Text -> Text -> Int -> PbCall -> CallSite
+pbCallSite :: ScopedTypeEnv -> Text -> Ident -> Text -> Int -> PbCall -> CallSite
 pbCallSite env file obj proc_ line (PbCall anc ev) =
   CallSite
     { csFile           = file
-    , csObject         = obj
+    , csObject         = identOrig obj
     , csFromProc       = proc_
     , csToName         = identOrig ev
     , csCallType       = "ExMethodCall"
@@ -495,7 +495,7 @@ pbCallSite env file obj proc_ line (PbCall anc ev) =
     , csToNameSpan     = provenanceSpan (identSpan ev)
     }
 
-pbCallReceiverType :: ScopedTypeEnv -> Text -> Ident -> Maybe Text
+pbCallReceiverType :: ScopedTypeEnv -> Ident -> Ident -> Maybe Text
 pbCallReceiverType env obj anc =
   case T.splitOn "`" (identOrig anc) of
     [ancPart, ctrlPart] ->
@@ -516,7 +516,7 @@ pbCallReceiverType env obj anc =
     -- and reporting it as resolved would be a dead link.
     resolveAncestorText ancPart
       | T.toLower ancPart == "super" =
-          identOrig <$> Map.lookup (mkIdent obj) (steHierarchy env)
+          identOrig <$> Map.lookup obj (steHierarchy env)
       | Map.member (mkIdent ancPart) (steHierarchy env) = Just ancPart
       | otherwise = Nothing
 
@@ -531,13 +531,13 @@ pbCallReceiverType env obj anc =
 -- compound token (@ancestor\`control@) is treated as one span pointing at
 -- the control's resolved type -- there is no separate token to split the
 -- ancestor and control names into independent links.
-pbCallAncestorVarRef :: ScopedTypeEnv -> Text -> Text -> Text -> Int -> PbCall -> ResolvedVarRef
+pbCallAncestorVarRef :: ScopedTypeEnv -> Text -> Ident -> Text -> Int -> PbCall -> ResolvedVarRef
 pbCallAncestorVarRef env file obj proc_ line (PbCall anc _) =
   case pbCallReceiverType env obj anc of
-    Just tgt -> ResolvedVarRef file obj proc_ (Just line) (identOrig anc) "read"
+    Just tgt -> ResolvedVarRef file (identOrig obj) proc_ (Just line) (identOrig anc) "read"
                   (Just tgt) "class_static" "high"
                   (provenanceSpan (identSpan anc)) (Just (T.toLower tgt))
-    Nothing  -> ResolvedVarRef file obj proc_ (Just line) (identOrig anc) "read"
+    Nothing  -> ResolvedVarRef file (identOrig obj) proc_ (Just line) (identOrig anc) "read"
                   Nothing "unresolved" "unresolved"
                   (provenanceSpan (identSpan anc)) Nothing
 
@@ -548,7 +548,7 @@ pbCallAncestorVarRef env file obj proc_ line (PbCall anc _) =
 -- already has (Plan 196 Phase 4 item 2). 'PB.Analysis.CallClassify.
 -- resolveReceiverType' is a different, narrower resolver reused by SSA
 -- effect classification and deliberately left alone.
-resolveReceiverTypeXref :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Expr -> Maybe Text
+resolveReceiverTypeXref :: WorkspaceEnv -> ScopedTypeEnv -> Ident -> Text -> Expr -> Maybe Text
 resolveReceiverTypeXref wsEnv env obj proc_ (ExLvalue lv) = terminalDeclTy (classifyChainHops wsEnv env obj proc_ lv)
 resolveReceiverTypeXref wsEnv env obj proc_ (ExCall lv _) = terminalDeclTy (classifyChainHops wsEnv env obj proc_ lv)
 resolveReceiverTypeXref _     _   _   _     _             = Nothing
@@ -558,13 +558,13 @@ terminalDeclTy hops = case reverse hops of
   ((_, _, _, declTy) : _) -> declTy
   []                      -> Nothing
 
-callSitesExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Expr -> [CallSite]
+callSitesExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> Maybe Int -> Expr -> [CallSite]
 callSitesExpr wsEnv env file obj proc_ mLine = foldExprs classify
   where
     classify ExCall { callee = lv } =
       [ CallSite
           { csFile           = file
-          , csObject         = obj
+          , csObject         = identOrig obj
           , csFromProc       = proc_
           , csToName         = lvalueName lv
           , csCallType       = "ExCall"
@@ -577,7 +577,7 @@ callSitesExpr wsEnv env file obj proc_ mLine = foldExprs classify
     classify ExMethodCall { receiver = recv, method = m } =
       [ CallSite
           { csFile           = file
-          , csObject         = obj
+          , csObject         = identOrig obj
           , csFromProc       = proc_
           , csToName         = identOrig m
           , csCallType       = "ExMethodCall"
@@ -588,7 +588,7 @@ callSitesExpr wsEnv env file obj proc_ mLine = foldExprs classify
     classify (ExDispatch de@DispatchExpr { name = n }) =
       [ CallSite
           { csFile           = file
-          , csObject         = obj
+          , csObject         = identOrig obj
           , csFromProc       = proc_
           , csToName         = dispatchName de
           , csCallType       = "ExDispatch"
@@ -602,7 +602,7 @@ callSitesExpr wsEnv env file obj proc_ mLine = foldExprs classify
 -- Exported extraction functions
 
 -- | Extract local variable declarations (body vars + params) from all procedures.
-extractLocalVars :: Text -> Text -> SrFile -> [LocalVar]
+extractLocalVars :: Text -> Ident -> SrFile -> [LocalVar]
 extractLocalVars file obj sf = concat
   [ concatMap (\fb ->
       paramsToVars file obj (identOrig (fnsName (fbSig fb))) (fnsParams (fbSig fb)) 0
@@ -629,20 +629,20 @@ extractLocalVars file obj sf = concat
 -- receiver's declared type via 'PB.Analysis.CallClassify.resolveReceiverType'
 -- -- see this module's header comment for why that resolution happens at
 -- extraction time rather than in Pass 5.
-extractCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [CallSite]
+extractCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Ident -> SrFile -> [CallSite]
 extractCallSites wsEnv controlIdx file obj sf =
   concatMap
     (\pu -> walkBodyCallSites wsEnv (puEnv pu) file obj (puName pu) (puBody pu))
-    (forProcedures wsEnv controlIdx obj sf)
+    (forProcedures wsEnv controlIdx (identOrig obj) sf)
 
 -- | Extract call sites from DataWindow control expressions and format strings.
 -- Uses fromProc = "" (no containing procedure) and no line information; the
 -- env carries only params/body-locals-free workspace scope (a DW control
 -- expression has no enclosing procedure to seed locals from).
-extractDwCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Text -> DataWindowFile -> [CallSite]
+extractDwCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Ident -> DataWindowFile -> [CallSite]
 extractDwCallSites wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls dw)
   where
-    env = procEnv wsEnv controlIdx (mkIdent obj) []
+    env = procEnv wsEnv controlIdx obj []
     fromCtrl ctrl =
       foldMap (callSitesExpr wsEnv env file obj "" Nothing) (dwcParsedExpression ctrl)
       <> foldMap (callSitesExpr wsEnv env file obj "" Nothing) (dwcParsedFormat ctrl)
@@ -682,16 +682,16 @@ extractDwCallSites wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls
 -- @arr[i]@) are not covered here; see 'PB.Analysis.Dataflow.walkExprIdents'
 -- for that concern.
 classifyLvalueChain
-  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Text -> Lvalue -> [ResolvedVarRef]
+  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> Maybe Int -> Text -> Lvalue -> [ResolvedVarRef]
 classifyLvalueChain wsEnv env file obj proc_ mLine access lv =
   case segments lv of
-    [] -> [ ResolvedVarRef file obj proc_ mLine "" access Nothing "unresolved" "unresolved" Nothing Nothing ]
+    [] -> [ ResolvedVarRef file (identOrig obj) proc_ mLine "" access Nothing "unresolved" "unresolved" Nothing Nothing ]
     segs -> concat (zipWith3 mkRow segs (accesses segs) (classifyChainHops wsEnv env obj proc_ lv))
   where
     accesses segs = replicate (length segs - 1) "read" ++ [access]
 
     mkRow seg acc (kind, tgt, conf, declTy) =
-      ResolvedVarRef file obj proc_ mLine (identOrig (segName seg)) acc tgt kind conf
+      ResolvedVarRef file (identOrig obj) proc_ mLine (identOrig (segName seg)) acc tgt kind conf
         (provenanceSpan (identSpan (segName seg))) declTy
       : maybe [] (classifySubscriptRefs wsEnv env file obj proc_ mLine) (subscript seg)
 
@@ -709,7 +709,7 @@ classifyLvalueChain wsEnv env file obj proc_ mLine access lv =
 -- the chain's own root token (not preceded by '.') is classified, exactly
 -- like a real chain root would be at the top level.
 classifySubscriptRefs
-  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> [Token] -> [ResolvedVarRef]
+  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> Maybe Int -> [Token] -> [ResolvedVarRef]
 classifySubscriptRefs wsEnv env file obj proc_ mLine toks =
   [ mkRef t
   | (mPrev, t, mNext) <- zip3 (Nothing : map Just toks) toks (map Just (drop 1 toks) ++ [Nothing])
@@ -721,7 +721,7 @@ classifySubscriptRefs wsEnv env file obj proc_ mLine toks =
     mkRef t =
       let n = mkIdentAt (tkSpan t) (tkText t)
           (kind, tgt, conf, declTy, _) = classifyRootIdent wsEnv env obj proc_ n
-      in ResolvedVarRef file obj proc_ mLine (identOrig n) "read" tgt kind conf
+      in ResolvedVarRef file (identOrig obj) proc_ mLine (identOrig n) "read" tgt kind conf
            (provenanceSpan (identSpan n)) declTy
 
 -- | Classify every segment of a dotted 'Lvalue' chain into a (kind, target
@@ -757,13 +757,13 @@ isDwFamily env recvTy = isDwFamilyType (steHierarchy env) recvTy
 -- consumers see identical resolution power
 -- (doc/plan/213-varref-resolution-gaps.md).
 classifyRootIdent
-  :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Ident
+  :: WorkspaceEnv -> ScopedTypeEnv -> Ident -> Text -> Ident
   -> (Text, Maybe Text, Text, Maybe Text, Maybe ChainContinuation)
 classifyRootIdent wsEnv env obj proc_ n
   | identCanon n == "this"  =
-      ("class", Just obj, "high", Just (T.toLower obj), Just (OrdinaryRecv (T.toLower obj) Nothing literalAnchor))
+      ("class", Just objTxt, "high", Just (T.toLower objTxt), Just (OrdinaryRecv (T.toLower objTxt) Nothing literalAnchor))
   | identCanon n == "super" =
-      case Map.lookup (mkIdent obj) (steHierarchy env) of
+      case Map.lookup obj (steHierarchy env) of
         Just anc -> let ancTy = T.toLower (identOrig anc)
                     in ("class_static", Just (identOrig anc), "high", Just ancTy, Just (OrdinaryRecv ancTy Nothing literalAnchor))
         Nothing  -> ("unresolved", Nothing, "unresolved", Nothing, Nothing)
@@ -778,11 +778,11 @@ classifyRootIdent wsEnv env obj proc_ n
           dwBind
             | isParam, isDwFamily env tyTxt
             = Map.lookup n (steParamIndex env)
-                >>= \idx -> Map.lookup (obj, proc_, idx) (weDwParamBindings wsEnv)
+                >>= \idx -> Map.lookup (objTxt, proc_, idx) (weDwParamBindings wsEnv)
             | otherwise = Nothing
       in ( if isParam then "param" else "local"
          , Nothing, "high", Just tyTxt, Just (OrdinaryRecv tyTxt dwBind literalAnchor) )
-  | Just (ancIdent, ty) <- lookupInstanceVarOwner wsEnv (mkIdent obj) n =
+  | Just (ancIdent, ty) <- lookupInstanceVarOwner wsEnv obj n =
       let tyTxt = T.toLower (renderPbType ty)
       in ("instance", Just (identOrig ancIdent), "high", Just tyTxt, Just (OrdinaryRecv tyTxt Nothing literalAnchor))
   | Just ty <- Map.lookup n (steGlobal env) =
@@ -790,7 +790,7 @@ classifyRootIdent wsEnv env obj proc_ n
       in ("global", Nothing, "high", Just tyTxt, Just (OrdinaryRecv tyTxt Nothing literalAnchor))
   | Just ctrlTy <- literalCtrl =
       ("control", Just ctrlTy, "high", Just ctrlTy,
-       Just (OrdinaryRecv ctrlTy (resolveMemberChainDwBinding (steControlIndex env) (steHierarchy env) objIdent [nSeg]) literalAnchor))
+       Just (OrdinaryRecv ctrlTy (resolveMemberChainDwBinding (steControlIndex env) (steHierarchy env) obj [nSeg]) literalAnchor))
   | Map.member n (steHierarchy env) =
       -- A bare segment naming its own declared class/window/UDT rather
       -- than an in-scope variable holding one -- e.g. @w_main::event()@.
@@ -798,7 +798,7 @@ classifyRootIdent wsEnv env obj proc_ n
       -- local\/instance\/global\/control wins over a same-named type.
       let tyTxt = identCanon n
       in ("class_static", Just (identOrig n), "high", Just tyTxt, Just (OrdinaryRecv tyTxt Nothing literalAnchor))
-  | isBuiltinFamily env obj =
+  | isBuiltinFamily env objTxt =
       -- A bare, unqualified name inside the enclosing object's own
       -- script is an implicit @this.@ access -- if 'obj' itself is (or
       -- descends from) a builtin class, an otherwise-unresolvable bare
@@ -807,16 +807,12 @@ classifyRootIdent wsEnv env obj proc_ n
       ("builtin_property", Nothing, "high", Nothing, Nothing)
   | otherwise = ("unresolved", Nothing, "unresolved", Nothing, Nothing)
   where
+    objTxt        = identOrig obj
     nSeg          = identCanon n
-    -- 'obj' is a Text param threaded through classifyRootIdent/
-    -- classifyChainHops/classifyLvalueChain from 'srFileObject' many hops
-    -- upstream (see the ident-minting skill's "mixed case" reference); no
-    -- real Ident is in hand at this scope to bridge instead.
-    objIdent      = mkIdentSynthetic "root object name threaded as Text through classifyRootIdent" obj
-    literalCtrl   = resolveMemberChainType (steControlIndex env) (steHierarchy env) objIdent [nSeg]
-    literalAnchor = const (obj, [nSeg]) <$> literalCtrl
+    literalCtrl   = resolveMemberChainType (steControlIndex env) (steHierarchy env) obj [nSeg]
+    literalAnchor = const (objTxt, [nSeg]) <$> literalCtrl
 
-classifyChainHops :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Lvalue -> [(Text, Maybe Text, Text, Maybe Text)]
+classifyChainHops :: WorkspaceEnv -> ScopedTypeEnv -> Ident -> Text -> Lvalue -> [(Text, Maybe Text, Text, Maybe Text)]
 classifyChainHops wsEnv env obj proc_ lv =
   case segments lv of
     []            -> []
@@ -965,7 +961,7 @@ data ChainContinuation
 -- | Read references to every named identifier appearing in an expression
 -- tree (RHS, conditions, call args, returns, ...) -- calls
 -- 'classifyLvalueChain' on every 'ExLvalue' node 'foldExprs' reaches.
-varRefsExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Maybe Int -> Expr -> [ResolvedVarRef]
+varRefsExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> Maybe Int -> Expr -> [ResolvedVarRef]
 varRefsExpr wsEnv env file obj proc_ mLine = foldExprs classify
   where
     classify (ExLvalue lv) = classifyLvalueChain wsEnv env file obj proc_ mLine "read" lv
@@ -976,7 +972,7 @@ varRefsExpr wsEnv env file obj proc_ mLine = foldExprs classify
 -- timing (per-procedure 'ScopedTypeEnv', built once by the caller) but
 -- covers every statement shape that reads or writes an 'Lvalue', not just
 -- call sites.
-walkBodyVarRefs :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [ResolvedVarRef]
+walkBodyVarRefs :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> [Located BodyStmt] -> [ResolvedVarRef]
 walkBodyVarRefs wsEnv env file obj proc_ = foldStmts classify
   where
     classify (Located line stmt) = case stmt of
@@ -1019,18 +1015,18 @@ walkBodyVarRefs wsEnv env file obj proc_ = foldStmts classify
 -- 'extractCallSites''s own traversal, since the two extractions serve
 -- different consumers and this keeps 'extractCallSites''s own shape and
 -- tests untouched.
-extractVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [ResolvedVarRef]
+extractVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Ident -> SrFile -> [ResolvedVarRef]
 extractVarRefs wsEnv controlIdx file obj sf =
   concatMap
     (\pu -> walkBodyVarRefs wsEnv (puEnv pu) file obj (puName pu) (puBody pu))
-    (forProcedures wsEnv controlIdx obj sf)
+    (forProcedures wsEnv controlIdx (identOrig obj) sf)
 
 -- | Extract variable\/property references from DataWindow control
 -- expressions and format strings, mirroring 'extractDwCallSites'.
-extractDwVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Text -> DataWindowFile -> [ResolvedVarRef]
+extractDwVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Ident -> DataWindowFile -> [ResolvedVarRef]
 extractDwVarRefs wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls dw)
   where
-    env = procEnv wsEnv controlIdx (mkIdent obj) []
+    env = procEnv wsEnv controlIdx obj []
     fromCtrl ctrl =
       foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedExpression ctrl)
       <> foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedFormat ctrl)
@@ -1048,11 +1044,11 @@ extractDwVarRefs wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls d
 -- (e.g. a hand-built 'mkTypeDecl' fixture), or an override that resolves to
 -- no real declaration anywhere in the workspace -- no guessing past what's
 -- actually declared, mirroring 'resolveMemberChainType'\'s 'Nothing' rule.
-buildControlOverrideLinks :: ControlIndex -> Map.Map Ident Ident -> Text -> Text -> SrFile -> [ResolvedVarRef]
+buildControlOverrideLinks :: ControlIndex -> Map.Map Ident Ident -> Text -> Ident -> SrFile -> [ResolvedVarRef]
 buildControlOverrideLinks idx inh file obj sf =
   [ ResolvedVarRef
       { rvrFile         = file
-      , rvrObject       = obj
+      , rvrObject       = identOrig obj
       , rvrFromProc     = ""
       , rvrLine         = Just (ssStartLine overrideSp)
       , rvrName         = identOrig overrideIdent
@@ -1078,14 +1074,14 @@ buildControlOverrideLinks idx inh file obj sf =
   ]
 
 -- | Extract global variable declarations (variables block + global instances).
-extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
+extractGlobalVars :: Text -> Ident -> SrFile -> [GlobalVar]
 extractGlobalVars file obj sf =
   declGlobals <> instanceGlobals <> forwardInstanceGlobals
   where
     declGlobals =
       [ GlobalVar
           { gvFile   = file
-          , gvObject = obj
+          , gvObject = identOrig obj
           , gvName   = identOrig (vdName d)
           , gvType   = vdType d
           , gvMods   = vdModifiers d
@@ -1097,7 +1093,7 @@ extractGlobalVars file obj sf =
     instanceGlobals =
       [ GlobalVar
           { gvFile   = file
-          , gvObject = obj
+          , gvObject = identOrig obj
           , gvName   = identOrig (giName gi)
           , gvType   = giType gi
           , gvMods   = []
@@ -1110,7 +1106,7 @@ extractGlobalVars file obj sf =
       Just ForwardBlock { fwdInstances = gis } ->
         [ GlobalVar
             { gvFile   = file
-            , gvObject = obj
+            , gvObject = identOrig obj
             , gvName   = identOrig (giName gi)
             , gvType   = giType gi
             , gvMods   = []
@@ -1202,7 +1198,7 @@ data WindowOpenRef = WindowOpenRef
 openFamilyNames :: Set.Set Text
 openFamilyNames = Set.fromList ["open", "opensheet", "openwithparm", "opensheetwithparm"]
 
-windowOpenRefsExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> Int -> Expr -> [WindowOpenRef]
+windowOpenRefsExpr :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> Int -> Expr -> [WindowOpenRef]
 windowOpenRefsExpr wsEnv env file obj proc_ line = foldExprs classify
   where
     classify (ExCall lv (arg : _))
@@ -1213,18 +1209,18 @@ windowOpenRefsExpr wsEnv env file obj proc_ line = foldExprs classify
       , (r : _) <- classifyLvalueChain wsEnv env file obj proc_ (Just line) "read" argLv
       , rvrKind r `elem` ["class_static", "global"]
       , Just tgt <- rvrTargetObject r <|> rvrDeclaredType r
-      = [WindowOpenRef file obj proc_ line tgt]
+      = [WindowOpenRef file (identOrig obj) proc_ line tgt]
     classify _ = []
 
 -- | Extract every statically-resolvable window-open reference from all of a
 -- file's procedure bodies. Mirrors 'walkBodyCallSites''s traversal shape
 -- (the same statement kinds an @Open(...)@ call can appear inside).
-extractWindowOpens :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [WindowOpenRef]
+extractWindowOpens :: WorkspaceEnv -> ControlIndex -> Text -> Ident -> SrFile -> [WindowOpenRef]
 extractWindowOpens wsEnv controlIdx file obj sf =
   concatMap (\pu -> walkBodyWindowOpens wsEnv (puEnv pu) file obj (puName pu) (puBody pu))
-    (forProcedures wsEnv controlIdx obj sf)
+    (forProcedures wsEnv controlIdx (identOrig obj) sf)
 
-walkBodyWindowOpens :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Text -> Text -> [Located BodyStmt] -> [WindowOpenRef]
+walkBodyWindowOpens :: WorkspaceEnv -> ScopedTypeEnv -> Text -> Ident -> Text -> [Located BodyStmt] -> [WindowOpenRef]
 walkBodyWindowOpens wsEnv env file obj proc_ = foldStmts classify
   where
     exprAt = windowOpenRefsExpr wsEnv env file obj proc_
@@ -1259,10 +1255,10 @@ data ObjectCreateRef = ObjectCreateRef
   , ocrTargetObject :: Text
   } deriving (Eq, Show)
 
-objectCreateRefsExpr :: Text -> Text -> Text -> Int -> Expr -> [ObjectCreateRef]
+objectCreateRefsExpr :: Text -> Ident -> Text -> Int -> Expr -> [ObjectCreateRef]
 objectCreateRefsExpr file obj proc_ line = foldExprs classify
   where
-    classify (ExCreate cls) = [ObjectCreateRef file obj proc_ line (identOrig cls)]
+    classify (ExCreate cls) = [ObjectCreateRef file (identOrig obj) proc_ line (identOrig cls)]
     classify _              = []
 
 -- | Extract every @CREATE ClassName@ reference from all of a file's
@@ -1270,12 +1266,12 @@ objectCreateRefsExpr file obj proc_ line = foldExprs classify
 -- 'ObjectCreateRef'), but still walked per-procedure via 'forProcedures' to
 -- match this module's other extractors' shape and stay ready for a future
 -- per-procedure field (e.g. once this needs a 'ScopedTypeEnv').
-extractObjectCreates :: WorkspaceEnv -> ControlIndex -> Text -> Text -> SrFile -> [ObjectCreateRef]
+extractObjectCreates :: WorkspaceEnv -> ControlIndex -> Text -> Ident -> SrFile -> [ObjectCreateRef]
 extractObjectCreates wsEnv controlIdx file obj sf =
   concatMap (\pu -> walkBodyObjectCreates file obj (puName pu) (puBody pu))
-    (forProcedures wsEnv controlIdx obj sf)
+    (forProcedures wsEnv controlIdx (identOrig obj) sf)
 
-walkBodyObjectCreates :: Text -> Text -> Text -> [Located BodyStmt] -> [ObjectCreateRef]
+walkBodyObjectCreates :: Text -> Ident -> Text -> [Located BodyStmt] -> [ObjectCreateRef]
 walkBodyObjectCreates file obj proc_ = foldStmts classify
   where
     exprAt = objectCreateRefsExpr file obj proc_
