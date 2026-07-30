@@ -59,12 +59,14 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
         : { tag: "objects", action: { tag: "select", name: linkName } }
       );
     } else if (linkType === "var") {
-      // Only a "control" ref carries a real navigable target today (a D1
-      // backtick control-override, e.g. w_list`dw, pointing into the
-      // ancestor object's own file) -- every other var kind (local/param/
-      // instance/etc.) is hover-only, unchanged.
+      // target_object is only ever populated (by PB.Analysis.TypeResolve)
+      // for kinds that resolve to a real object -- control, instance
+      // (the ancestor that declares it), class_static (super/bare class
+      // name), and class (this) -- so its presence is the navigability
+      // signal itself; every other kind always carries target_object=null
+      // and stays hover-only.
       const ref = target as ResolvedVarRefInfo | undefined;
-      if (ref?.kind === "control" && ref.target_object) {
+      if (ref?.target_object) {
         store.dispatch({ tag: "objects", action: { tag: "select", name: ref.target_object } });
       }
     }

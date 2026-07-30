@@ -165,6 +165,24 @@ describe("SourceViewer", () => {
     expect(captured.find((x) => x.tag === "objects")).toBeUndefined();
   });
 
+  const kindsWithNavigableTarget: { kind: ResolvedVarRefInfo["kind"]; target_object: string }[] = [
+    { kind: "instance", target_object: "w_base" },
+    { kind: "class_static", target_object: "w_ancestor" },
+    { kind: "class", target_object: "w_test" },
+  ];
+  for (const { kind, target_object } of kindsWithNavigableTarget) {
+    it(`clicking a ${kind}-kind var span dispatches select with its target_object`, () => {
+      const ref: ResolvedVarRefInfo = { ...controlRef, kind, target_object };
+      const { captured } = renderViewer({ lines: ["dw"], resolvedCalls: [], resolvedVarRefs: [ref] });
+      fireEvent.click(getVarSpan()!);
+      const a = captured.find(
+        (x) => x.tag === "objects" && (x as any).action.tag === "select",
+      );
+      expect(a).toBeDefined();
+      expect((a as any).action.name).toBe(target_object);
+    });
+  }
+
   it("renders no dimmed lines or banner when sliceHighlight is absent", () => {
     renderViewer();
     expect(document.querySelector(".source-slice-banner")).toBeNull();
