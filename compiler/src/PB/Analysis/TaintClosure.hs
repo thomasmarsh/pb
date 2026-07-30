@@ -56,6 +56,8 @@ import PB.Algebra.Closure
   )
 
 import PB.Pipeline.DuckDb (Handle, recreateTextTable, appendTextRows)
+import Control.DeepSeq (NFData)
+import GHC.Generics    (Generic)
 import qualified Data.Text as T
 
 import qualified Data.HashMap.Strict as HM
@@ -140,6 +142,9 @@ data TaintClosure = TaintClosure
   (Relation (PathValue (Text, Text, Text)))
   [Int]
   (Relation (PathValue (Text, Text, Text)))
+  deriving (Eq, Show, Generic)
+
+instance NFData TaintClosure
 
 -- | Build the shared 'TaintClosure' once: intern the PathValue relation and
 -- precompute the 'reachFrom' fixpoint the derived outputs consume.

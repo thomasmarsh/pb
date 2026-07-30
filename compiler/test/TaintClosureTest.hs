@@ -16,6 +16,7 @@ import PB.Analysis.Taint
   , InterprocEdge (..)
   , TaintSource (..)
   , TaintSink (..)
+  , buildInterprocEdgeMaps
   )
 import PB.Analysis.TaintClosure
   ( taintReachable
@@ -23,6 +24,7 @@ import PB.Analysis.TaintClosure
   , taintConfirmed
   , taintWitnesses
   , taintWitnessLegs
+  , buildTaintClosure
   )
 import PB.Analysis.TaintEdges (TaintIntraEdgeRow (..), TaintReturnRow (..), foldTaintEdgesEff)
 import PB.AST.BodyStmt  (BodyStmt (..))
@@ -32,6 +34,7 @@ import PB.AST.Located   (Located (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.Flatten (compileProcedureToEff)
 
+import Control.DeepSeq (force)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Test.Tasty (TestTree, testGroup)
@@ -418,6 +421,18 @@ tests = testGroup "TaintClosure"
             fromFold = Set.fromList
               [ TaintReturnRow "oa" "pA" v | v <- Set.toList returnVars ]
         in fromFold @?= fromRows
+    ]
+
+  , testGroup "NFData"
+    [ testCase "force on a built closure equals the unforced value" $
+        let sources = [src "w" "oa" "pA" "ls_a" (Just 5)]
+            defs = [defRow "w" "oa" "pA" "ls_a" 5 0, defRow "w" "oa" "pA" "ls_b" 5 1]
+            uses = [useRow "w" "oa" "pA" "ls_a" 5 "var"]
+            edges = []
+            (argMap, retMap, globalMap) = buildInterprocEdgeMaps edges
+            tc = buildTaintClosure (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses)
+                   edges argMap retMap globalMap sources
+        in force tc @?= tc
     ]
   ]
 

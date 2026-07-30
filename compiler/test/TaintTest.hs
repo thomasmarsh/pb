@@ -404,4 +404,17 @@ tests = testGroup "Taint"
              Left err -> assertFailure ("parse failed: " <> err)
              Right row -> gvrVarName row @?= "g_val"
     ]
+
+  , testGroup "parChunkSizeFor"
+    [ testCase "floors to 1 on an empty list" $
+        parChunkSizeFor 1 0 @?= 1
+    , testCase "floors to 1 when list is smaller than caps*4" $
+        parChunkSizeFor 8 10 @?= 1
+    , testCase "scales down for a large list on one capability" $
+        parChunkSizeFor 1 1000 @?= 250
+    , testCase "scales down further as capabilities increase" $
+        parChunkSizeFor 8 1000 @?= 31
+    , testCase "scales for a very large corpus" $
+        parChunkSizeFor 4 100000 @?= 6250
+    ]
   ]

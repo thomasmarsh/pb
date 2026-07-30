@@ -29,6 +29,7 @@ module PB.Analysis.Taint
   , buildInterprocEdgeMaps
   , buildProcedureSummaries
   , buildTaintAnnotations
+  , parChunkSizeFor
     -- * Pre-extraction (for streaming pipelines)
   , extractTaintInputs
     -- * Helpers used by Phase B DuckDB reconstruction
@@ -46,6 +47,7 @@ import PB.Analysis.Dataflow (extractSqlHostVars)
 
 import Control.DeepSeq            (NFData)
 import Control.Parallel.Strategies (parListChunk, rdeepseq, withStrategy)
+import GHC.Conc                    (numCapabilities)
 import GHC.Generics                (Generic)
 
 import Data.Aeson
@@ -380,14 +382,31 @@ extractTaintInputs file sf =
   in TaintFileInputs file objName sqlStmts procMetas
 
 -- ---------------------------------------------------------------------------
+-- Parallel chunk sizing
+-- ---------------------------------------------------------------------------
+
+-- | Chunk size for 'parListChunk' given a capability count and list length,
+-- spread evenly across the available capabilities (a few chunks per
+-- capability so the runtime can still load-balance) instead of a size
+-- tuned for one corpus size.
+parChunkSizeFor :: Int -> Int -> Int
+parChunkSizeFor caps n = max 1 (n `div` (caps * chunksPerCapability))
+  where
+    chunksPerCapability = 4
+
+-- | 'parChunkSizeFor' against the actual runtime capability count.
+parChunkSize :: Int -> Int
+parChunkSize = parChunkSizeFor numCapabilities
+
+-- ---------------------------------------------------------------------------
 -- Source classification
 -- ---------------------------------------------------------------------------
 
 -- | Classify taint sources from SQL statements and procedure metadata.
 classifySources :: [SqlStmt] -> [ProcMeta] -> [TaintSource]
 classifySources sqlStmts procs =
-  concat (withStrategy (parListChunk 512 rdeepseq) (map sqlSources sqlStmts))
-  <> concat (withStrategy (parListChunk 512 rdeepseq) (map procSources procs))
+  concat (withStrategy (parListChunk (parChunkSize (length sqlStmts)) rdeepseq) (map sqlSources sqlStmts))
+  <> concat (withStrategy (parListChunk (parChunkSize (length procs)) rdeepseq) (map procSources procs))
   where
     sqlSources s
       | ssOperation s /= "SELECT" || not (ssHasInto s) = []
@@ -412,7 +431,8 @@ classifySources sqlStmts procs =
 
 -- | Classify taint sinks from SQL statements.
 classifySinks :: [SqlStmt] -> [TaintSink]
-classifySinks = concat . withStrategy (parListChunk 512 rdeepseq) . map go
+classifySinks sqlStmts =
+  concat (withStrategy (parListChunk (parChunkSize (length sqlStmts)) rdeepseq) (map go sqlStmts))
   where
     go s
       | op `Set.notMember` writeOps && op `Set.notMember` execOps = []
@@ -468,7 +488,7 @@ buildInterprocEdges
   -> [ProcMeta]
   -> [InterprocEdge]
 buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
-  concat (withStrategy (parListChunk 512 rdeepseq) (map allEdges resolvedCalls))
+  concat (withStrategy (parListChunk (parChunkSize (length resolvedCalls)) rdeepseq) (map allEdges resolvedCalls))
   <> globalEdges
   where
     allEdges rc = callEdges rc <> builtinReturnEdges rc <> builtinArgEdges rc
@@ -621,7 +641,7 @@ buildProcedureSummaries
   -> [ProcMeta]
   -> [ProcedureSummary]
 buildProcedureSummaries edges defs uses globalVarNames procMetas =
-  withStrategy (parListChunk 512 rdeepseq) (map mkSummary procMetas)
+  withStrategy (parListChunk (parChunkSize (length procMetas)) rdeepseq) (map mkSummary procMetas)
   where
     defsByProc :: HM.HashMap (Text, Text) [DefRow]
     defsByProc = HM.fromListWith (++)

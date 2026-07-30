@@ -39,13 +39,16 @@ import qualified Data.List        as L
 import qualified Data.Sequence   as Seq
 import qualified Data.Set        as Set
 import           Data.Set         (Set)
+import           GHC.Generics     (Generic)
 
 -- | Bidirectional interned-id <-> value mapping.
 data Interner a = Interner
   { internCount :: !Int
   , internById  :: IntMap a
   , internByVal :: HM.HashMap a Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData a => NFData (Interner a)
 
 emptyInterner :: Interner a
 emptyInterner = Interner 0 IM.empty HM.empty
