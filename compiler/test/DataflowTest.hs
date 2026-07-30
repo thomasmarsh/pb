@@ -29,6 +29,11 @@ at n x = Located n x
 lv1 :: Text -> Lvalue
 lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
+-- | A raw subscript token with a dummy span -- these tests only care about
+-- 'lvalueSubscriptIdents'' text-shape filtering, not real positions.
+subTok :: Text -> Token
+subTok t = Token TkIdent t (SourceSpan 0 0 0 0)
+
 -- | Real-lex a single value for its correct TokenKind, then normalize its
 -- span to a constant dummy -- callers compare against hand-built ASTs that
 -- carry the same dummy span, not a real per-character position.
@@ -213,7 +218,7 @@ tests = testGroup "Dataflow"
         -- an expression tree -- not just an assignment's own LHS -- must
         -- surface the subscript's own identifiers too. `y = arr[i]` reads
         -- both `arr` and `i`.
-        let rhsLv = Lvalue [LvSegment "arr" (Just ["i"])]
+        let rhsLv = Lvalue [LvSegment "arr" (Just (map subTok ["i"]))]
             blk = mkBlock "b0" [at 1 (BsAssign (lv1 "y") (ExLvalue rhsLv))]
             bf  = extractDefsUses blk
         in do
@@ -224,7 +229,7 @@ tests = testGroup "Dataflow"
         -- iCurrent is read (to compute which array slot to write) but only
         -- appears inside the LHS's subscript, which extractUseVars never
         -- looked at (it only ever walked the RHS).
-        let lhs = Lvalue [LvSegment "this" Nothing, LvSegment "control" (Just ["iCurrent", "+", "1"])]
+        let lhs = Lvalue [LvSegment "this" Nothing, LvSegment "control" (Just (map subTok ["iCurrent", "+", "1"]))]
             blk = mkBlock "b0" [at 1 (BsAssign lhs (ExLvalue (lv1 "pb_expr")))]
             bf  = extractDefsUses blk
         in do

@@ -82,7 +82,7 @@ tests = testGroup "Expr"
       , testCase "subscript access → ExLvalue" $
           parseExpr [ mkTok TkIdent "arr", mkTok TkLBracket "["
                     , mkTok TkIntLiteral "0", mkTok TkRBracket "]" ]
-            @?= ExLvalue (Lvalue [LvSegment "arr" (Just ["0"])])
+            @?= ExLvalue (Lvalue [LvSegment "arr" (Just [mkTok TkIntLiteral "0"])])
       ]
 
     , testGroup "calls"
@@ -872,8 +872,9 @@ propNotBindsAboveAnd = property $ do
 genIdentText :: Gen Text
 genIdentText = Gen.element ["foo", "bar", "baz", "ll_row", "idx", "obj", "dw_1", "is_ok", "count", "value"]
 
-genSubscript :: Gen (Maybe [Text])
-genSubscript = Gen.maybe (Gen.element [["0"], ["1"], ["i"]])
+genSubscript :: Gen (Maybe [Token])
+genSubscript = Gen.maybe (Gen.element
+  [ [mkTok TkIntLiteral "0"], [mkTok TkIntLiteral "1"], [mkTok TkIdent "i"] ])
 
 genLvSegment :: Gen LvSegment
 genLvSegment = LvSegment <$> (mkIdent <$> genIdentText) <*> genSubscript
@@ -948,6 +949,30 @@ genExpr = Gen.recursive Gen.choice
   , (\lhs op rhs -> ExBinOp lhs op rhs) <$> genExpr <*> Gen.element allBinOps <*> genExpr
   ]
 
+-- | Zero real token spans on every 'Lvalue' subscript reachable from an
+-- 'Expr', mirroring 'BodyStmtTest.normalizeBodyStmt''s 'zeroSpan' for the
+-- same reason: a generator can't predict the real column a reparse assigns
+-- to a subscript token (unlike a bare identifier's own 'Ident', whose 'Eq'
+-- instance already ignores span). Covers exactly the constructors 'genExpr'
+-- and 'propUnparseRoundtrip' produce.
+normalizeExpr :: Expr -> Expr
+normalizeExpr e = case e of
+  ExLvalue lv                  -> ExLvalue (normalizeLvalue lv)
+  ExHostVar lv                 -> ExHostVar (normalizeLvalue lv)
+  ExCall { callee = c, callArgs = as } ->
+    ExCall { callee = normalizeLvalue c, callArgs = map normalizeExpr as }
+  ExCreateUsing e'              -> ExCreateUsing (normalizeExpr e')
+  ExArray es                    -> ExArray (map normalizeExpr es)
+  ExNot e'                      -> ExNot (normalizeExpr e')
+  ExNeg e'                      -> ExNeg (normalizeExpr e')
+  ExBinOp { lhs = l, op = o, rhs = r } ->
+    ExBinOp { lhs = normalizeExpr l, op = o, rhs = normalizeExpr r }
+  other                          -> other
+  where
+    normalizeLvalue (Lvalue segs) = Lvalue (map normalizeSeg segs)
+    normalizeSeg (LvSegment n sub) = LvSegment n (fmap (map zeroSpan) sub)
+    zeroSpan t = t { tkSpan = SourceSpan 0 0 0 0 }
+
 propUnparseRoundtrip :: Property
 propUnparseRoundtrip = property $ do
   -- ExHostVar only ever at the top level -- see genExpr's exclusion note.
@@ -956,7 +981,7 @@ propUnparseRoundtrip = property $ do
       ll   = mkLogicalLine text 1
   case lexResult (tokenizeLine ll) of
     Left err   -> footnote ("lex error: " <> show err <> " for unparsed text: " <> show text) >> failure
-    Right toks -> parseExpr toks === expr
+    Right toks -> normalizeExpr (parseExpr toks) === normalizeExpr expr
 
 -- | Exhaustive counterpart to 'propUnparseRoundtrip': enumerates every
 -- 'StructuredExpr' up to the SmallCheck depth (set to 3 at the call site)

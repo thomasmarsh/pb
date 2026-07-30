@@ -18,6 +18,7 @@ module PB.Analysis.Dataflow
   , extractDefsUses
   , extractSqlHostVars
   , walkExprIdents
+  , isIdent
   , reachingDefinitions
   , liveVariables
   , analyzeProcedure
@@ -156,7 +157,7 @@ identTexts ts = Set.fromList [ mkIdent t | t <- ts, isIdent t ]
 -- itself wrapped in an 'ExLvalue' node for 'walkExprIdents' to see.
 lvalueSubscriptIdents :: Lvalue -> Set.Set Ident
 lvalueSubscriptIdents (Lvalue segs) =
-  Set.unions [ identTexts toks | LvSegment _ (Just toks) <- segs ]
+  Set.unions [ Set.fromList (identTokenList toks) | LvSegment _ (Just toks) <- segs ]
 
 -- | A valid PB identifier: first char alpha/underscore, rest alnum/underscore.
 -- Applied to 'ExRaw'/lvalue-subscript/augmented-assignment token strings,

@@ -69,7 +69,7 @@ tests = testGroup "InterpCoverage"
         classifyExprCoverage (ExLvalue (Lvalue [LvSegment "a" Nothing, LvSegment "b" Nothing]))
           @?= StructurallyUnmodeled
     , testCase "subscripted lvalue is structurally unmodeled" $
-        classifyExprCoverage (ExLvalue (Lvalue [LvSegment "a" (Just ["1"])]))
+        classifyExprCoverage (ExLvalue (Lvalue [LvSegment "a" (Just [Token TkIntLiteral "1" (SourceSpan 0 0 0 0)])]))
           @?= StructurallyUnmodeled
     , testCase "ExCall is needs-mock" $
         classifyExprCoverage (call "f") @?= NeedsMock

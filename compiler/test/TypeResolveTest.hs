@@ -820,6 +820,35 @@ tests = testGroup "TypeResolve"
                 @?= ("instance", Just "w_test", Just "long")
             other -> assertFailure ("expected 2 refs, got " ++ show (length other))
 
+      , testCase "structure field member access resolves to kind instance, not unresolved (real corpus gsc_misth_zpepidom.kodepidom shape)" $ do
+          let sf = emptySrFile
+                { srStructureBlocks = [ StructureBlock "sc_epidom" [ VarDecl [] "string" (SourceSpan 1 1 1 1) "kodepidom" ] ]
+                , srGlobalInstances = [ GlobalInstance "sc_epidom" (SourceSpan 1 1 1 1) "gsc_epidom" ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsAssign (Lvalue [LvSegment "gsc_epidom" Nothing, LvSegment "kodepidom" Nothing]) (ExInt "1")) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [receiver, field] -> do
+              (rvrKind receiver, rvrAccess receiver) @?= ("global", "read")
+              (rvrKind field, rvrAccess field, rvrTargetObject field, rvrDeclaredType field)
+                @?= ("instance", "write", Just "sc_epidom", Just "string")
+            other -> assertFailure ("expected 2 refs, got " ++ show (length other))
+
+      , testCase "structure field read (not just write) resolves to kind instance" $ do
+          let sf = emptySrFile
+                { srStructureBlocks = [ StructureBlock "sc_epidom" [ VarDecl [] "string" (SourceSpan 1 1 1 1) "kodepidom" ] ]
+                , srGlobalInstances = [ GlobalInstance "sc_epidom" (SourceSpan 1 1 1 1) "gsc_epidom" ]
+                , srFunctions = [ mkFn "f_go" ""
+                    [ Located 5 (BsReturn (Just (ExLvalue (Lvalue
+                        [LvSegment "gsc_epidom" Nothing, LvSegment "kodepidom" Nothing])))) ] ]
+                }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            [_receiver, field] ->
+              (rvrKind field, rvrAccess field) @?= ("instance", "read")
+            other -> assertFailure ("expected 2 refs, got " ++ show (length other))
+
       , testCase "TypeVars-scoped instance var of one class does not leak into another class's global scope (collision regression)" $ do
           let sfA = emptySrFile
                 { srTypeBlocks = [ mkTB "w_a" "window" ]
@@ -1287,6 +1316,77 @@ tests = testGroup "TypeResolve"
           case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
             [r] -> rvrKind r @?= "unresolved"
             other -> assertFailure ("expected 1 ref, got " ++ show (length other))
+      ]
+
+  , testGroup "classifySubscriptRefs (via extractVarRefs)"
+      [ testCase "bare-identifier subscript resolves to its own ResolvedVarRef (local var index, real corpus row/ll_row shape)" $ do
+          let body = [ localVarStmt "ll_row" (PtPrimitive "long") 5
+                     , Located 6 (BsReturn (Just (ExLvalue (Lvalue
+                         [LvSegment "arr" (Just [Token TkIdent "ll_row" (SourceSpan 6 5 6 11)])])))) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            refs -> case filter ((== "ll_row") . rvrName) refs of
+              [subRef] -> (rvrKind subRef, rvrAccess subRef) @?= ("local", "read")
+              other    -> assertFailure ("expected 1 ref named ll_row, got " ++ show (length other))
+
+      , testCase "arithmetic subscript (iCurrent+1 shape) classifies only the identifier token, not the literal" $ do
+          let body = [ localVarStmt "iCurrent" (PtPrimitive "integer") 5
+                     , Located 6 (BsReturn (Just (ExLvalue (Lvalue
+                         [ LvSegment "this" Nothing
+                         , LvSegment "control"
+                             (Just [ Token TkIdent "iCurrent" (SourceSpan 6 5 6 13)
+                                   , Token TkArithOp "+" (SourceSpan 6 13 6 14)
+                                   , Token TkIntLiteral "1" (SourceSpan 6 14 6 15)
+                                   ]) ]))) ) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            refs -> case filter ((== "iCurrent") . rvrName) refs of
+              [subRef] -> rvrKind subRef @?= "local"
+              other    -> assertFailure ("expected 1 ref named iCurrent, got " ++ show (length other))
+
+      , testCase "UpperBound(this.Item)+1 shape: call-target and chain-member tokens are not misclassified as bare variables (real corpus idiom, 133 occurrences)" $ do
+          -- Outer receiver deliberately named "Container", distinct from the
+          -- subscript's own inner "UpperBound"/"Item" tokens, so a failure to
+          -- suppress the inner tokens can't hide behind the outer chain's own
+          -- (legitimate, pre-existing) segment ref of the same name.
+          let subToks =
+                [ Token TkIdent    "UpperBound" (SourceSpan 6 5 6 15)
+                , Token TkLParen   "("          (SourceSpan 6 15 6 16)
+                , Token TkOtherKw  "this"       (SourceSpan 6 16 6 20)
+                , Token TkDot      "."          (SourceSpan 6 20 6 21)
+                , Token TkIdent    "Item"       (SourceSpan 6 21 6 25)
+                , Token TkRParen   ")"          (SourceSpan 6 25 6 26)
+                , Token TkArithOp  "+"          (SourceSpan 6 26 6 27)
+                , Token TkIntLiteral "1"        (SourceSpan 6 27 6 28)
+                ]
+              body = [ Located 6 (BsReturn (Just (ExLvalue (Lvalue
+                         [LvSegment "this" Nothing, LvSegment "Container" (Just subToks)])))) ]
+              sf = emptySrFile { srTypeBlocks = [ mkTB "w_test" "window" ]
+                                , srFunctions = [ mkFn "f_go" "" body ] }
+              wsEnv = buildWorkspaceEnv [sf]
+          case extractVarRefs wsEnv emptyControlIdx "test.srw" "w_test" sf of
+            refs -> do
+              -- "UpperBound" is a call target (followed by '(') and "Item" is a
+              -- chain-continuation member (preceded by '.') -- neither is a bare
+              -- variable reference, so neither gets a spurious ResolvedVarRef.
+              filter ((`elem` ["UpperBound", "Item"]) . rvrName) refs @?= []
+              -- "this" is the subscript's own chain root (not preceded by '.',
+              -- not followed by '('), so it resolves exactly like a top-level
+              -- "this" reference does. Two "this" refs exist (the outer chain
+              -- root and the subscript's own), so match on span to isolate
+              -- the subscript's occurrence specifically.
+              case filter (\r -> rvrName r == "this" && rvrSpan r == Just (SourceSpan 6 16 6 20)) refs of
+                [subRef] -> rvrKind subRef @?= "class"
+                other    -> assertFailure ("expected 1 'this' ref from the subscript, got " ++ show (length other))
+
+      , testCase "unresolved subscript identifier still emits a ResolvedVarRef, not a silent drop" $ do
+          let body = [ Located 6 (BsReturn (Just (ExLvalue (Lvalue
+                         [LvSegment "arr" (Just [Token TkIdent "zzz_unknown" (SourceSpan 6 5 6 16)])])))) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractVarRefs emptyWsEnv emptyControlIdx "test.srw" "w_test" sf of
+            refs -> case filter ((== "zzz_unknown") . rvrName) refs of
+              [subRef] -> rvrKind subRef @?= "unresolved"
+              other    -> assertFailure ("expected 1 ref named zzz_unknown, got " ++ show (length other))
       ]
 
   , testGroup "ancestorChain"

@@ -184,9 +184,15 @@ extractWsGlobals sf =
 -- in "global type X from Y ... end type"), unioned with any TypeVars-scoped
 -- srVariables block (the standalone "type variables ... end variables"
 -- convention real corpus .sru/.srw files and runtime/*.sru stdlib stubs use
--- for named instance vars) -- both attach to the file's own primary object.
+-- for named instance vars), unioned with every structure's own field list
+-- (a structure has no ancestor chain, so keying its fields into this same
+-- map lets 'lookupInstanceVarOwner' resolve a structure-field hop for free
+-- -- see doc/plan/213-varref-resolution-gaps.md's root cause 1). All three
+-- attach to their own declared type name, never the file's primary object
+-- for the structure case.
 extractInstanceVars :: SrFile -> Map.Map Ident (Map.Map Ident PbType)
-extractInstanceVars sf = Map.unionWith (<>) fromTypeBlocks fromTypeVarsBlock
+extractInstanceVars sf =
+  Map.unionWith (<>) fromTypeBlocks (Map.unionWith (<>) fromTypeVarsBlock fromStructureBlocks)
   where
     fromTypeBlocks = Map.fromList
       [ ( tdName (tbDecl tb)
@@ -205,6 +211,11 @@ extractInstanceVars sf = Map.unionWith (<>) fromTypeBlocks fromTypeVarsBlock
             , d <- decls
             ]
       in if Map.null vars then Map.empty else Map.singleton (fst (srPrimaryObject sf)) vars
+    fromStructureBlocks = Map.fromListWith (<>)
+      [ (sbName sb, Map.singleton (vdName d) (parseTypeTextAt (vdTypeSpan d) (vdType d)))
+      | sb <- srStructureBlocks sf
+      , d  <- sbFields sb
+      ]
 
 -- | Build a ScopedTypeEnv for one (object, params) pair from a WorkspaceEnv.
 -- 'steInstance' merges every ancestor's own instance vars, nearest first

@@ -78,7 +78,7 @@ unparseLvalue :: Lvalue -> Text
 unparseLvalue (Lvalue segs) = T.intercalate "." (map unparseSeg segs)
   where
     unparseSeg (LvSegment nm sub) =
-      identOrig nm <> maybe "" (\ts -> "[" <> T.unwords ts <> "]") sub
+      identOrig nm <> maybe "" (\ts -> "[" <> T.unwords (map tkText ts) <> "]") sub
 
 unparseArgGroups :: [Expr] -> Text
 unparseArgGroups = T.intercalate ", " . map unparseExpr

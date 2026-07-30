@@ -9,6 +9,7 @@ import PB.AST.Expr
 import PB.AST.Ident       (identMapEmpty, identMapFromList, identSetEmpty, identSetFromList, identSetSingleton, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.Type        (PbType (..))
+import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Analysis.ControlHierarchy (ControlDecl (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Analysis.TypeFamily
@@ -60,7 +61,7 @@ assignStmt :: Text -> Expr -> Int -> Located BodyStmt
 assignStmt n rhs line = Located line (BsAssign (Lvalue [LvSegment (mkIdent n) Nothing]) rhs)
 
 subscriptAssignStmt :: Text -> Expr -> Int -> Located BodyStmt
-subscriptAssignStmt n rhs line = Located line (BsAssign (Lvalue [LvSegment (mkIdent n) (Just ["1"])]) rhs)
+subscriptAssignStmt n rhs line = Located line (BsAssign (Lvalue [LvSegment (mkIdent n) (Just [Token TkIntLiteral "1" (SourceSpan 0 0 0 0)])]) rhs)
 
 returnStmt :: Expr -> Int -> Located BodyStmt
 returnStmt e line = Located line (BsReturn (Just e))

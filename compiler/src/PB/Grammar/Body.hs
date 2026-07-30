@@ -145,7 +145,7 @@ lvaluePrefix = goSegs
     consumeSub (lb:rest)
       | tkKind lb == TkLBracket =
           case break (\t -> tkKind t == TkRBracket) rest of
-            (inner, _rb:after) -> Just (Just (map tkText inner), after)
+            (inner, _rb:after) -> Just (Just inner, after)
             (_,     [])        -> Nothing
     consumeSub ts = Just (Nothing, ts)
 

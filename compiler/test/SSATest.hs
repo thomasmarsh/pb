@@ -163,7 +163,7 @@ tests = testGroup "SSA"
     -- 'SsaConst' expression, matching the old compiler (which never
     -- simplifies a RHS at all).
     , testCase "multi-segment lvalue RHS is not collapsed to its head variable" $ do
-        let rhsLv = Lvalue [LvSegment "adw_dw" Nothing, LvSegment "object" Nothing, LvSegment "level" (Just ["al_row"])]
+        let rhsLv = Lvalue [LvSegment "adw_dw" Nothing, LvSegment "object" Nothing, LvSegment "level" (Just [Token TkIdent "al_row" (SourceSpan 0 0 0 0)])]
             sa = buildSsa emptyEnv "proc"
                   [at 1 (BsAssign (lv1 "li_level") (ExLvalue rhsLv))]
         case sbAssigns (entryBlock sa) of
@@ -171,7 +171,7 @@ tests = testGroup "SSA"
           other -> assertBool ("expected one SsaConst-wrapped assign, got " <> show other) False
 
     , testCase "subscripted single-segment lvalue RHS is not collapsed either" $ do
-        let rhsLv = Lvalue [LvSegment "la_items" (Just ["1"])]
+        let rhsLv = Lvalue [LvSegment "la_items" (Just [Token TkIntLiteral "1" (SourceSpan 0 0 0 0)])]
             sa = buildSsa emptyEnv "proc"
                   [at 1 (BsAssign (lv1 "x") (ExLvalue rhsLv))]
         case sbAssigns (entryBlock sa) of

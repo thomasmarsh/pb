@@ -221,7 +221,7 @@ tests = testGroup "Body"
         classifyBodyStmt
           (mkStmt [ (TkIdent, "arr"), (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
                   , (TkAugmentOp, "++") ])
-          @?= [BsInc (Lvalue [LvSegment "arr" (Just ["i"])])]
+          @?= [BsInc (Lvalue [LvSegment "arr" (Just [mkTok TkIdent "i"])])]
 
     , testCase "aug_assign: chained-call LHS (not a valid lvalue) falls back to BsRaw" $
         case classifyBodyStmt
@@ -374,7 +374,7 @@ tests = testGroup "Body"
         classifyBodyStmt
           (mkStmt [ (TkOtherKw, "destroy"), (TkIdent, "ids_Data")
                   , (TkLBracket, "["), (TkIdent, "li_Cnt"), (TkRBracket, "]") ])
-          @?= [BsDestroy (Lvalue [LvSegment "ids_Data" (Just ["li_Cnt"])])]
+          @?= [BsDestroy (Lvalue [LvSegment "ids_Data" (Just [mkTok TkIdent "li_Cnt"])])]
 
     , testCase "destroy with no argument emits BsCall" $
         classifyBodyStmt (mkStmt [(TkOtherKw, "destroy")])
@@ -444,7 +444,7 @@ tests = testGroup "Body"
                       , mkTok TkLBracket "["
                       , mkTok TkIdent "ii_steps"
                       , mkTok TkRBracket "]" ]
-            @?= Just (Lvalue [LvSegment "is_steps" (Just ["ii_steps"])])
+            @?= Just (Lvalue [LvSegment "is_steps" (Just [mkTok TkIdent "ii_steps"])])
 
       , testCase "chain plus subscript on last segment" $
           parseLvalue [ mkTok TkIdent "adw",    mkTok TkDot "."
@@ -453,7 +453,7 @@ tests = testGroup "Body"
                       , mkTok TkLBracket "[", mkTok TkIdent "row", mkTok TkRBracket "]" ]
             @?= Just (Lvalue [ LvSegment "adw"     Nothing
                               , LvSegment "object"  Nothing
-                              , LvSegment "kodypal" (Just ["row"]) ])
+                              , LvSegment "kodypal" (Just [mkTok TkIdent "row"]) ])
 
       , testCase "TkOtherKw head (this.member)" $
           parseLvalue [mkTok TkOtherKw "this", mkTok TkDot ".", mkTok TkIdent "enabled"]
@@ -470,7 +470,7 @@ tests = testGroup "Body"
                       <> [mkTok TkRBracket "]"]
           parseLvalue input
             @?= Just (Lvalue [ LvSegment "this" Nothing
-                              , LvSegment "Item" (Just (map tkText subTokens)) ])
+                              , LvSegment "Item" (Just subTokens) ])
 
       , testCase "empty tokens returns Nothing" $
           parseLvalue [] @?= Nothing
@@ -492,7 +492,7 @@ tests = testGroup "Body"
                       , mkTok TkLBracket "[", mkTok TkIdent "i", mkTok TkRBracket "]" ]
             @?= Just (Lvalue [ LvSegment "adw"    Nothing
                               , LvSegment "object" Nothing
-                              , LvSegment "open"   (Just ["i"]) ])
+                              , LvSegment "open"   (Just [mkTok TkIdent "i"]) ])
       ]
 
     , testGroup "classifyBodyStmt BsAssign with Lvalue"
@@ -514,7 +514,7 @@ tests = testGroup "Body"
             (mkStmt [ (TkIdent, "arr"), (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
                     , (TkAssignOp, "="), (TkIntLiteral, "0") ])
             @?= [BsAssign
-                  (Lvalue [LvSegment "arr" (Just ["i"])])
+                  (Lvalue [LvSegment "arr" (Just [mkTok TkIdent "i"])])
                   (ExInt "0")]
 
       , testCase "unparseable lhs falls back to BsRaw" $
@@ -533,7 +533,7 @@ tests = testGroup "Body"
             @?= [BsAssign
                   (Lvalue [ LvSegment "adw"    Nothing
                            , LvSegment "object" Nothing
-                           , LvSegment "open"   (Just ["i"]) ])
+                           , LvSegment "open"   (Just [mkTok TkIdent "i"]) ])
                   (ExInt "0")]
 
       , testCase "array literal rhs: this.Item[]={this.m_file, this.m_edit}" $
@@ -754,14 +754,15 @@ reparseBodyStmt text =
 
 -- | Zero token spans and nested locLine numbers before comparing a
 -- reparsed BodyStmt against the value that generated it. Two things a
--- generator can never predict: (1) real token spans on the one leaf field
--- that carries raw Tokens (BsAugAssign's RHS, CaseClause's ccExpr) -- every
--- other leaf field is span-free (Lvalue's subscript is [Text], not
--- [Token], since Plan 178/179); (2) the real source line numbers pBodyStmt
--- assigns to every nested [Located BodyStmt] body (BsIf/BsFor/BsDo/
--- BsChoose/BsTry and their ElseIf/CaseClause/CatchClause sub-bodies).
--- Recurses into every nested body so a control-flow constructor containing
--- another control-flow constructor is normalized all the way down.
+-- generator can never predict: (1) real token spans on the leaf fields that
+-- carry raw Tokens (BsAugAssign's RHS, CaseClause's ccExpr; Lvalue's
+-- subscript too, though this suite's own 'genSimpleLvalue' never generates
+-- one, so that field isn't exercised here); (2) the real source line
+-- numbers pBodyStmt assigns to every nested [Located BodyStmt] body
+-- (BsIf/BsFor/BsDo/BsChoose/BsTry and their ElseIf/CaseClause/CatchClause
+-- sub-bodies). Recurses into every nested body so a control-flow
+-- constructor containing another control-flow constructor is normalized
+-- all the way down.
 normalizeBodyStmt :: BodyStmt -> BodyStmt
 normalizeBodyStmt stmt = case stmt of
   BsAugAssign lv op rhs -> BsAugAssign lv op (map zeroSpan rhs)

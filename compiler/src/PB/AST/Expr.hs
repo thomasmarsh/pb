@@ -13,16 +13,20 @@ module PB.AST.Expr
 
 import PB.Prelude
 import PB.AST.Ident (Ident)
+import PB.Lexing.Token (Token)
 import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
 
 -- | One segment of a dotted name, e.g. the `arr[i]` in `obj.arr[i].field`.
--- subscript holds the raw subscript expression tokens when present. name's
--- derived Eq compares only Ident's canonical form, so two LvSegments
+-- subscript holds the raw subscript tokens when present, spans intact --
+-- not parsed into 'Expr' (real subscripts include call/chain shapes like
+-- @UpperBound(this.Item)+1@ that a per-token classifier can't safely treat
+-- as flat variable references; see 'PB.Analysis.TypeResolve.classifySubscriptRefs').
+-- name's derived Eq compares only Ident's canonical form, so two LvSegments
 -- differing only in case are equal (PB identifiers are case-insensitive).
 data LvSegment = LvSegment
   { name      :: Ident
-  , subscript :: Maybe [Text]
+  , subscript :: Maybe [Token]
   } deriving (Eq, Show, Generic)
 
 segName :: LvSegment -> Ident

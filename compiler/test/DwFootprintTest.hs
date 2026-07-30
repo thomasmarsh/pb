@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.AST.DataWindow      (DwTable (..), DwColumn (..), DwRetrieve (..), DwRetrieveOrRaw (..),
                                 DwWhereClause (..), DwJoin (..))
 import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
+import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Analysis.DwFootprint
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..),
                                     LegSource (..), CatColumnRow (..))
@@ -66,7 +67,7 @@ tests = testGroup "DwFootprint"
             @?= Nothing
 
       , testCase "subscripted segment -> Nothing" $
-          lvalueColumnRef (ExLvalue (Lvalue [LvSegment "t" (Just ["1"]), LvSegment "c" Nothing]))
+          lvalueColumnRef (ExLvalue (Lvalue [LvSegment "t" (Just [Token TkIntLiteral "1" (SourceSpan 0 0 0 0)]), LvSegment "c" Nothing]))
             @?= Nothing
 
       , testCase "host var expression -> Nothing (not an ExLvalue)" $

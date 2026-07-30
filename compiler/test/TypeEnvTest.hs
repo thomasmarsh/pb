@@ -6,7 +6,7 @@ import PB.AST.Located        (Located (..))
 import PB.AST.Ident          (IdentProvenance (..), identCanon, identOrig, identSetMember, identSpan, mkIdent, mkIdentAt)
 import PB.Lexing.Token       (SourceSpan (..))
 import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..), StructureBlock (..),
-                              GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
+                              GlobalInstance (..), VarDecl (..), srAllTypeDecls, srPrimaryObject,
                               splitAncestorRef, mkTypeDecl)
 import PB.AST.Type           (PbType (..), parseTypeText, parseTypeTextAt)
 import PB.Analysis.TypeEnv   (isDescendantOf, ancestorChain,
@@ -223,6 +223,21 @@ tests = testGroup "TypeEnv"
     , testCase "body-declared structure block is excluded from buildObjectSet" $
         let sf = emptyFile { srStructureBlocks = [StructureBlock "os_data" []] }
         in identSetMember "os_data" (buildObjectSet [sf]) @?= False
+    ]
+
+  , testGroup "weInstanceVars (structure fields)"
+    [ testCase "structure field resolves into the instance-var map, keyed by structure name" $
+        let sb = StructureBlock "sc_epidom" [VarDecl [] "string" (SourceSpan 1 1 1 1) "kodepidom"]
+            sf = emptyFile { srStructureBlocks = [sb] }
+            ws = buildWorkspaceEnv [sf]
+        in (Map.lookup "kodepidom" =<< Map.lookup "sc_epidom" (weInstanceVars ws))
+             @?= Just (PtPrimitive "string")
+
+    , testCase "structure with no fields contributes no entry" $
+        let sb = StructureBlock "sc_empty" []
+            sf = emptyFile { srStructureBlocks = [sb] }
+            ws = buildWorkspaceEnv [sf]
+        in Map.lookup "sc_empty" (weInstanceVars ws) @?= Nothing
     ]
 
   , testGroup "weGlobals forward instances"

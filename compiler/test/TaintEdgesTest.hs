@@ -6,6 +6,7 @@ import PB.AST.BodyStmt   (BodyStmt (..), IfStmt (..), ForStmt (..))
 import PB.AST.Expr       (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Ident      (mkIdent)
 import PB.AST.Located    (Located (..))
+import PB.Lexing.Token   (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Compile.Flatten (compileProcedureToEff)
 import PB.Analysis.TaintEdges (foldTaintEdgesEff)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -38,11 +39,16 @@ assignStmt :: Int -> Text -> Expr -> Located BodyStmt
 assignStmt line lhs rhs = Located line (BsAssign (Lvalue [LvSegment (mkIdent lhs) Nothing]) rhs)
 
 -- | An assignment whose LHS is a subscripted member (@root.member[subToks]@).
+-- Each raw text in 'subToks' becomes a dummy-span identifier-kind 'Token' --
+-- this suite only cares about which identifiers taint-edge extraction reads
+-- out of the subscript, not real token kinds or positions.
 subscriptedAssignStmt :: Int -> Text -> Text -> [Text] -> Expr -> Located BodyStmt
 subscriptedAssignStmt line root member subToks rhs =
   Located line (BsAssign
-    (Lvalue [LvSegment (mkIdent root) Nothing, LvSegment (mkIdent member) (Just subToks)])
+    (Lvalue [LvSegment (mkIdent root) Nothing, LvSegment (mkIdent member) (Just (map mkSubTok subToks))])
     rhs)
+  where
+    mkSubTok t = Token TkIdent t (SourceSpan 0 0 0 0)
 
 foldEdges :: [Located BodyStmt] -> Set.Set (Text, Text)
 foldEdges body = fst (foldTaintEdgesEff (compileProcedureToEff emptyEnv Set.empty body))
