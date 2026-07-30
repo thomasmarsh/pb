@@ -13,6 +13,16 @@ existing types, and type signatures weakened relative to plan or prior code
 — including in code the diff didn't touch but should have. This is mandatory,
 not optional, for this subsystem.
 
+**Read the `ident-minting` skill (`.claude/skills/ident-minting/SKILL.md`)
+before touching anything Ident-minting-shaped** — adding or removing a
+`mkIdent`/`mkIdentAt`/`mkIdentDerived`/`mkIdentSynthetic` call, deciding
+whether a `Text`/`[Token]` field should become `Ident`/`IdentSet`/`Lvalue`,
+or judging a "caller bridges via `identOrig` then the callee re-mints via
+`mkIdent`" gap. It's the worked decision procedure for the two standing
+rules below (identifier typing, parse-time-only minting), including the
+widen-vs-leave-Text split when only some callers of a shared function
+already hold a real `Ident`.
+
 ## Stage 0 — Compiler-Specific Diagnostics
 
 **Diagnosing corpus failures.** When the charter is to reduce corpus errors, sample raw error messages before touching code:

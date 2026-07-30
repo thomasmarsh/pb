@@ -391,7 +391,7 @@ building a structural fix correctly the first time.
   structural version, not _whether_ it needs Stage 0/1 discipline — an
   architecturally large fix still gets scoped as its own plan.
 - **Reference case:** `PB.AST.Ident` — see `compiler/AGENTS.md`'s
-  "Identifier typing is a standing goal" rule — and
-  `doc/plan/170-datalog-discipline.md`'s three-question placement test
-  apply this posture to two different axes: how identifiers are typed, and
-  where logic lives.
+  "Identifier typing is a standing goal" rule (worked procedure: the
+  `ident-minting` skill) — and `doc/plan/170-datalog-discipline.md`'s
+  three-question placement test apply this posture to two different axes:
+  how identifiers are typed, and where logic lives.
