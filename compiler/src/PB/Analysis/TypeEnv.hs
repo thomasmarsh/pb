@@ -23,7 +23,7 @@ import PB.AST.BodyStmt (BodyStmt (..))
 import PB.AST.DataWindow (DwTable)
 import PB.AST.DwPropertySchema (DwControlKind)
 import PB.AST.Ident    (Ident, IdentMap, IdentSet, identCanon, identMapEmpty, identMapInsertWith,
-                         identSetFromList, identSetUnion, mkIdent, mkIdentSynthetic)
+                         identSetFromList, identSetUnion, mkIdent)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
@@ -109,7 +109,7 @@ data ScopedTypeEnv = ScopedTypeEnv
                                                -- 'ref datawindow' param be looked up in
                                                -- 'weDwParamBindings' by position (Plan 196 Phase 4 item 1).
   , steHierarchy    :: Map.Map Ident Ident
-  , steObject       :: Text          -- enclosing object name; root for multi-hop chain resolution
+  , steObject       :: Ident         -- enclosing object's own declaration-site Ident; root for multi-hop chain resolution
   , steControlIndex :: ControlIndex  -- workspace-wide control index; see PB.Analysis.ControlHierarchy
   } deriving (Eq, Show)
 
@@ -244,23 +244,23 @@ extractInstanceVars sf =
 
 -- | Build a ScopedTypeEnv for one (object, params) pair from a WorkspaceEnv.
 -- 'steInstance' merges every ancestor's own instance vars, nearest first
--- ('Map.unions' is left-biased, so 'objName''s own declaration shadows an
+-- ('Map.unions' is left-biased, so 'objIdent''s own declaration shadows an
 -- ancestor's same-named var) -- an instance var declared only on an
 -- ancestor class was previously invisible to any procedure of a descendant
 -- object, since the pre-Plan-195-Phase-E version looked up 'weInstanceVars'
--- for 'objName' alone with no chain walk.
-procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [Param] -> ScopedTypeEnv
-procEnv ws idx objName params = ScopedTypeEnv
+-- for 'objIdent' alone with no chain walk.
+procEnv :: WorkspaceEnv -> ControlIndex -> Ident -> [Param] -> ScopedTypeEnv
+procEnv ws idx objIdent params = ScopedTypeEnv
   { steGlobal       = weGlobals ws
   , steInstance     = Map.unions
                          [ fromMaybe Map.empty (Map.lookup anc (weInstanceVars ws))
-                         | anc <- ancestorChain (mkIdent objName) (weHierarchy ws)
+                         | anc <- ancestorChain objIdent (weHierarchy ws)
                          ]
   , steLocal        = Map.fromList [(paramName p, parseTypeTextAt (paramTypeSpan p) (paramType p)) | p <- params]
   , steParams       = Set.fromList [paramName p | p <- params]
   , steParamIndex   = Map.fromList [(paramName p, i) | (p, i) <- zip params [0 ..]]
   , steHierarchy    = weHierarchy ws
-  , steObject       = objName
+  , steObject       = objIdent
   , steControlIndex = idx
   }
 
@@ -282,14 +282,9 @@ lookupScopedVar name env =
 -- others.
 lookupScopedVarOrSelf :: Ident -> ScopedTypeEnv -> Maybe PbType
 lookupScopedVarOrSelf n env
-  | identCanon n == "this"  = Just (PtUserDefined thisIdent)
-  | identCanon n == "super" = PtUserDefined <$> Map.lookup (mkIdent (steObject env)) (steHierarchy env)
+  | identCanon n == "this"  = Just (PtUserDefined (steObject env))
+  | identCanon n == "super" = PtUserDefined <$> Map.lookup (steObject env) (steHierarchy env)
   | otherwise               = lookupScopedVar n env
-  where
-    -- 'this' has no type-name token of its own to point at -- 'steObject'
-    -- only carries the enclosing object's name as plain 'Text', not the
-    -- 'Ident' its own 'TypeDecl' declaration was minted with.
-    thisIdent = mkIdentSynthetic "'this' keyword has no direct type-name token" (steObject env)
 
 -- | Walk the inheritance chain from a starting object, including itself.
 -- Lives here (rather than in 'PB.Analysis.TypeResolve', which re-exports

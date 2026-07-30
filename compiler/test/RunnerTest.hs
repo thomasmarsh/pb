@@ -23,7 +23,7 @@ import PB.AST.DataWindow
   , DataWindowFile (..), DwObjectAttrs (..), DwTable (..), DwArgument (..)
   )
 import PB.AST.Expr         (Expr (..))
-import PB.AST.Ident        (Ident, identCanon, identOrig)
+import PB.AST.Ident        (Ident, identCanon)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), mkTypeDecl, srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
@@ -416,11 +416,10 @@ tests = testGroup "Pipeline.Runner"
         Right (sf, spans, _) ->
           let ws           = buildWorkspaceEnv [sf]
               (objNameIdent, _) = srPrimaryObject sf
-              objName       = identOrig objNameIdent
               fb            = case srFunctions sf of { (f:_) -> f; [] -> error "impossible: fixture has one function" }
               body          = fbBody fb
               userFns       = Set.fromList [identCanon (fnsName (fbSig fb))]
-              env           = procEnv ws (buildControlIndex [sf]) objName []
+              env           = procEnv ws (buildControlIndex [sf]) objNameIdent []
               newJson       = toJSON (compileProcedureViaEffTerm env userFns body)
           in testGroup "if/else with shared trailing call"
             [ testCase "wrapSrFile's instrGraph matches compileProcedureViaEffTerm" $

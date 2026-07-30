@@ -197,10 +197,10 @@ wrapSrFile withInstr path sf spans ws =
 
         -- Per-procedure env: params + object instance vars from workspace.
         procEnvFor :: [Param] -> ScopedTypeEnv
-        procEnvFor params = procEnv ws controlIdx objName params
+        procEnvFor params = procEnv ws controlIdx objNameIdent params
 
         emptyProcEnv :: ScopedTypeEnv
-        emptyProcEnv = procEnv ws controlIdx objName []
+        emptyProcEnv = procEnv ws controlIdx objNameIdent []
 
         -- User-defined function names (lower-cased) for InstrGraph callproc dispatch.
         userFns :: Set.Set Text

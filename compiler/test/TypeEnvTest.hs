@@ -420,6 +420,16 @@ tests = testGroup "TypeEnv"
           Just (PtUserDefined i) -> identSpan i @?= FromSource (SourceSpan 7 1 7 8 :| [])
           other -> assertFailure ("expected Just (PtUserDefined ...), got " ++ show other)
 
+    , testCase "'this' reuses steObject's own real span, not a re-synthesized one" $
+        let selfIdent = mkIdentAt (SourceSpan 3 6 3 12) "w_main"
+            env = ScopedTypeEnv
+              { steLocal = Map.empty, steInstance = Map.empty, steGlobal = Map.empty
+              , steHierarchy = Map.empty, steObject = selfIdent, steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty
+              }
+        in case lookupScopedVarOrSelf "this" env of
+          Just (PtUserDefined i) -> identSpan i @?= FromSource (SourceSpan 3 6 3 12 :| [])
+          other -> assertFailure ("expected Just (PtUserDefined ...), got " ++ show other)
+
     , testCase "any other name falls back to ordinary lookupScopedVar" $
         let env = ScopedTypeEnv
               { steLocal = Map.singleton "ls_x" (PtPrimitive "string")

@@ -273,7 +273,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         userFns = Set.fromList
           $  map (identCanon . fnsName . fbSig) (srFunctions  sf)
           <> map (identCanon . ssName  . sbSig) (srSubroutines sf)
-        mkProcEnv params = procEnv wsEnv controlIdx obj params
+        mkProcEnv params = procEnv wsEnv controlIdx objIdent params
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  wsEnv controlIdx fp obj sf
         vrs  = extractVarRefs    wsEnv controlIdx fp obj sf

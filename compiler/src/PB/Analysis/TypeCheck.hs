@@ -272,7 +272,7 @@ resolveCallTarget :: TypeCheckCtx -> Expr -> Maybe (Text, Text)
 resolveCallTarget ctx ExCall { callee = Lvalue [LvSegment nameIdent _] } =
   if identCanon nameIdent `Set.member` tcBuiltinFns ctx
     then Nothing
-    else case resolveVirtual nameIdent (mkIdent (steObject (tcEnv ctx))) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
+    else case resolveVirtual nameIdent (steObject (tcEnv ctx)) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
            (Just o, Just p, _, _) -> Just (o, p)
            _                      -> Nothing
 resolveCallTarget _ ExCall {} = Nothing
@@ -316,7 +316,7 @@ inferExpr _   ExNull     = Nothing -- handled specially by callers, not a family
 inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = scopeFamily ctx n
 inferExpr ctx (ExLvalue (Lvalue segs@(_ : _ : _))) =
   classifyClassName ctx <$>
-    resolveMemberChainType (steControlIndex (tcEnv ctx)) (steHierarchy (tcEnv ctx)) (steObject (tcEnv ctx)) (map (identCanon . segName) segs)
+    resolveMemberChainType (steControlIndex (tcEnv ctx)) (steHierarchy (tcEnv ctx)) (identOrig (steObject (tcEnv ctx))) (map (identCanon . segName) segs)
 inferExpr ctx (ExBinOp l op r) = do
   lf <- inferExpr ctx l
   rf <- inferExpr ctx r
@@ -371,7 +371,7 @@ callArgFindings ctx procN line e = concatMap oneCall (callExprsIn e)
       Just sigs -> case selectSignature sigs (length (rawArgs callExpr)) of
         Nothing  -> []
         Just sig ->
-          [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
+          [ TypeMismatchFinding (identOrig (steObject (tcEnv ctx))) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
           | ((paramN, paramTy), argExpr) <- zip (psParams sig) (rawArgs callExpr)
           , let paramFam = classifyFamily paramTy (tcObjects ctx) (tcUserTypes ctx)
           , Just argFam <- [inferExpr ctx argExpr]
@@ -394,7 +394,7 @@ rhsDesc _ = "<expr>"
 
 assignFinding :: TypeCheckCtx -> Text -> Int -> Ident -> Expr -> [TypeMismatchFinding]
 assignFinding ctx procN line varN rhs =
-  [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line (identOrig varN) (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
+  [ TypeMismatchFinding (identOrig (steObject (tcEnv ctx))) procN line (identOrig varN) (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
   | Just lhsFam <- [scopeFamily ctx varN]
   , Just rhsFam <- [inferExpr ctx rhs]
   , not (compatible (steHierarchy (tcEnv ctx)) lhsFam rhsFam)
@@ -402,7 +402,7 @@ assignFinding ctx procN line varN rhs =
 
 returnFinding :: TypeCheckCtx -> Text -> Int -> Expr -> [TypeMismatchFinding]
 returnFinding ctx procN line e =
-  [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line procN (renderFamily retFam) (rhsDesc e) ReturnMismatch
+  [ TypeMismatchFinding (identOrig (steObject (tcEnv ctx))) procN line procN (renderFamily retFam) (rhsDesc e) ReturnMismatch
   | Just retTy <- [tcOwnReturnType ctx]
   , let retFam = classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx)
   , Just eFam  <- [inferExpr ctx e]

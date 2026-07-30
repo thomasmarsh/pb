@@ -28,7 +28,7 @@ module PB.Analysis.CallClassify
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident      (Ident, identCanon, identOrig)
+import PB.AST.Ident      (Ident, identCanon, identOrig, mkIdent)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile (SrFile (..), FnSig (..), SubSig (..), EventSig (..), FunctionBlock (..),
                            SubroutineBlock (..), EventBlock (..), OnBlock (..), Param)
@@ -220,9 +220,9 @@ resolveLvalueType env lv = case segments lv of
   []   -> Nothing
   [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVarOrSelf (segName s) env)
           <|> resolveMemberChainType (steControlIndex env) (steHierarchy env)
-                                     (steObject env) [identCanon (segName s)]
+                                     (identOrig (steObject env)) [identCanon (segName s)]
   segs -> resolveMemberChainType (steControlIndex env) (steHierarchy env)
-                                 (steObject env) (map (identCanon . segName) segs)
+                                 (identOrig (steObject env)) (map (identCanon . segName) segs)
 
 -- | Resolve the declared type name of a receiver expression (not walked to root).
 resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
@@ -320,4 +320,4 @@ forProcedures wsEnv controlIdx obj sf = concat
       , puBody        = body
       , puEnv         = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
       }
-      where baseEnv = procEnv wsEnv controlIdx obj params
+      where baseEnv = procEnv wsEnv controlIdx (mkIdent obj) params

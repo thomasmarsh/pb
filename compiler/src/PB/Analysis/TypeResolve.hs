@@ -640,7 +640,7 @@ extractCallSites wsEnv controlIdx file obj sf =
 extractDwCallSites :: WorkspaceEnv -> ControlIndex -> Text -> Text -> DataWindowFile -> [CallSite]
 extractDwCallSites wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls dw)
   where
-    env = procEnv wsEnv controlIdx obj []
+    env = procEnv wsEnv controlIdx (mkIdent obj) []
     fromCtrl ctrl =
       foldMap (callSitesExpr wsEnv env file obj "" Nothing) (dwcParsedExpression ctrl)
       <> foldMap (callSitesExpr wsEnv env file obj "" Nothing) (dwcParsedFormat ctrl)
@@ -1020,7 +1020,7 @@ extractVarRefs wsEnv controlIdx file obj sf =
 extractDwVarRefs :: WorkspaceEnv -> ControlIndex -> Text -> Text -> DataWindowFile -> [ResolvedVarRef]
 extractDwVarRefs wsEnv controlIdx file obj dw = concatMap fromCtrl (dwControls dw)
   where
-    env = procEnv wsEnv controlIdx obj []
+    env = procEnv wsEnv controlIdx (mkIdent obj) []
     fromCtrl ctrl =
       foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedExpression ctrl)
       <> foldMap (varRefsExpr wsEnv env file obj "" Nothing) (dwcParsedFormat ctrl)
