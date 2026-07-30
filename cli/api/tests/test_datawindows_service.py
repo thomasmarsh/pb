@@ -9,20 +9,27 @@ import pytest
 from pb.api.services.datawindows import get_dw_detail
 
 
-def _any_dw_object(conn: duckdb.DuckDBPyConnection) -> str:
-    row = conn.execute("SELECT DISTINCT object FROM dw_controls LIMIT 1").fetchone()
-    assert row is not None, "expected at least one DataWindow in the test corpus"
+def _any_dw_object_without_arguments(conn: duckdb.DuckDBPyConnection) -> str:
+    """A DW object with zero declared retrieve arguments -- deterministic
+    (some openpay DataWindows do have real dw_arguments rows; an unordered
+    `LIMIT 1` over all DW objects can land on either kind)."""
+    row = conn.execute(
+        "SELECT DISTINCT dc.object FROM dw_controls dc "
+        "WHERE NOT EXISTS (SELECT 1 FROM dw_arguments da WHERE da.object = dc.object) "
+        "ORDER BY dc.object LIMIT 1"
+    ).fetchone()
+    assert row is not None, "expected at least one argument-free DataWindow in the test corpus"
     return row[0]
 
 
 def test_get_dw_detail_arguments_field_present_for_real_dw_without_declared_args(
     db_conn: duckdb.DuckDBPyConnection,
 ):
-    """openpay's DataWindows declare no retrieve arguments, so this exercises the
-    real dw_arguments query returning an empty list without raising -- the bug
-    Finding 6 (doc/plan/198) describes was that the query was silently swallowed
-    by a try/except, not that it raised."""
-    name = _any_dw_object(db_conn)
+    """Exercises the real dw_arguments query returning an empty list without
+    raising for a DW that declares no retrieve arguments -- the bug Finding 6
+    (doc/plan/198) describes was that the query was silently swallowed by a
+    try/except, not that it raised."""
+    name = _any_dw_object_without_arguments(db_conn)
     result = get_dw_detail(db_conn, name)
     assert result["arguments"] == []
 

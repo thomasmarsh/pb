@@ -140,6 +140,44 @@ def test_get_resolved_calls_target_signature_null_when_unresolved(db_conn: duckd
     assert unresolved[0]["target_proc_type"] is None
 
 
+def test_get_resolved_calls_signature_resolves_through_multihop_ancestor_chain(
+    db_conn: duckdb.DuckDBPyConnection,
+):
+    """Plan 214 scope-item-3: a builtin method declared only on a distant
+    runtime/*.sru ancestor (TriggerEvent lives on powerobject.sru, 4 hops up
+    from a real window's own ancestor chain) must still resolve to a real
+    target signature, not just the resolution kind/confidence."""
+    row = db_conn.execute(
+        "SELECT object FROM resolved_calls "
+        "WHERE LOWER(to_name) = 'triggerevent' AND kind = 'inherited' LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no inherited TriggerEvent call in fixture corpus"
+    result = get_resolved_calls(db_conn, row[0])
+    hits = [c for c in result if c["to_name"].lower() == "triggerevent" and c["kind"] == "inherited"]
+    assert len(hits) > 0
+    assert hits[0]["target_object"] == "powerobject"
+    assert hits[0]["target_proc_type"] == "function"
+    assert hits[0]["target_params"] is not None
+
+
+def test_get_resolved_calls_signature_resolves_for_plan_214_backfilled_method(
+    db_conn: duckdb.DuckDBPyConnection,
+):
+    """Plan 214 backfill: datastore.Retrieve had zero methods declared on
+    runtime/datastore.sru before this plan (the file was 10 lines, type
+    variables only) -- a real corpus call to it must now get a signature."""
+    row = db_conn.execute(
+        "SELECT object FROM resolved_calls "
+        "WHERE LOWER(to_name) = 'retrieve' AND target_object = 'datastore' LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no datastore.Retrieve call in fixture corpus"
+    result = get_resolved_calls(db_conn, row[0])
+    hits = [c for c in result if c["to_name"].lower() == "retrieve" and c["target_object"] == "datastore"]
+    assert len(hits) > 0
+    assert hits[0]["target_proc_type"] == "function"
+    assert hits[0]["target_params"] is not None
+
+
 def test_get_resolved_var_refs_returns_span_columns(db_conn: duckdb.DuckDBPyConnection):
     row = db_conn.execute(
         "SELECT object FROM resolved_var_refs GROUP BY object ORDER BY count(*) DESC LIMIT 1"

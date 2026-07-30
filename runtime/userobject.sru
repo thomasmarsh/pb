@@ -38,3 +38,54 @@ integer Width
 integer X
 integer Y
 end variables
+
+public function integer additem (any item)
+end function
+
+public function integer closeuserobject (any targetobjectname)
+end function
+
+public function integer createpage ()
+end function
+
+public function integer deleteitem (any index)
+end function
+
+public function integer drag (dragmodes m)
+end function
+
+public function integer getcontextservice (string servicename, powerobject servicereference)
+end function
+
+public function integer insertitem (any item, any index)
+end function
+
+public function integer openuserobject (any targetobjectvar, any x, any y)
+end function
+
+public function integer openuserobjectwithparm (any targetobjectvar, any parameter, string targetobjecttype, any x, any y)
+end function
+
+public function boolean pagecreated ()
+end function
+
+public function integer pointerx ()
+end function
+
+public function integer pointery ()
+end function
+
+public function integer print (any printjobnumber, any x, any y, any width, any height)
+end function
+
+public function integer setfocus ()
+end function
+
+public function integer setposition (any position, any precedingobject)
+end function
+
+public function integer setredraw (any boolean)
+end function
+
+public function any typeof ()
+end function
