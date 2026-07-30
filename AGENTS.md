@@ -18,7 +18,10 @@ subtree, even if not explicitly instructed to.
 
 Deeper design judgment calls — fixing a bug that reads from a shared
 primitive, or deciding whether a structural gap justifies building the
-principled fix now — live in "Principles" section at the end of this document`. Read it in full before Stage 1 whenever either applies.
+principled fix now — live in the "Design Principles" section at the end of
+this document. Read it in full before Stage 1 whenever either applies. The
+primitive-vs-symptom judgment itself runs as the `primitive-vs-symptom`
+skill at Stage 0b (below), not just from memory.
 
 ## Quick Reference
 
@@ -97,7 +100,7 @@ Scale gates to the size of the change. Trivial changes (typo, rename,
 single-line fix) may auto-proceed. Non-trivial changes stop at Stage 1 and
 optionally Stage 3.
 
-### Stage 0 — Read First (always)
+### Stage 0a — Discover (always)
 
 - Read every file that will be touched before proposing a change. Use `rg
 -n`/`rg -l` to locate the relevant section first.
@@ -107,6 +110,22 @@ optionally Stage 3.
   `AGENTS.md` — read it before diagnosing a failure in that subsystem.
 - **Confirm hypotheses with a narrow failing test before Stage 1.** A test
   that currently fails is worth more than a long analysis. Don't skip it.
+
+### Stage 0b — Groom (before writing the Stage 1 proposal)
+
+- **Invoke the `primitive-vs-symptom` skill** for any fix that isn't
+  purely local to the file where the symptom appeared — it forces the
+  primitive-vs-consumer judgment now, before the proposal is written,
+  instead of relying on it being recalled under time pressure or raised
+  by the user after the fact. Its verdict sentence goes directly into the
+  Stage 1 proposal.
+- If `compiler/` is touched, run the `constraint-evasion` posture check
+  now on the *planned* fix, not just before `/finish`: does the plan
+  suppress a warning, stuff a case into an existing ADT/field, or weaken a
+  type, rather than extending it properly?
+- This step produces one or two sentences appended to the Stage 1
+  proposal — it is not a separate deliverable and does not need its own
+  review pause.
 
 ### Stage 1 — Propose
 
@@ -285,13 +304,19 @@ or:
 No commit needed — this session only edited gitignored plan/BACKLOG files.
 ```
 
-1. **Next-session seed prompt** — a self-contained paragraph: charter, plan
-   file to read, key counts/baselines, prerequisite check:
+1. **Next-session seed prompt** — forward-looking only: charter, plan file
+   to read, and any hard prerequisite (a baseline count, a completed
+   dependency). **Do not restate what happened this session** — what was
+   tried, fixed, or learned belongs in the plan file's Status/close-out
+   section, which the next session reads separately per "Continuing a
+   prior session" above; the seed prompt cites it, it doesn't repeat it.
+   Name a concrete next task and the first file to open if one is
+   identifiable; if none is, say so in one line ("no specific next task —
+   resume from BACKLOG.md") instead of listing speculative options:
 
 ```
 Charter: DW-A2 — implement typed `table(...)` parsing per doc/plan/21-dw-a2.md.
 Prerequisite: DW-A1 complete and `cabal test` passing (619 tests).
-Baseline: 262 DW files non-stub; ExRaw ≤ 1; BsRaw other ≤ 18.
 Start at Stage 0: read doc/plan/21-dw-a2.md in full, then read
 PB.AST.DataWindow and PB.Grammar.DataWindow to locate the stub functions
 that need replacing.
@@ -324,23 +349,20 @@ principled fix now rather than deferring it.
 
 Applies whenever a fix reads from or derives from another module's computed
 structure — an analysis pass on a shared `ProcFlow`/CFG, a UI reducer on an
-API response, a materializer on a Datalog relation.
+API response, a materializer on a Datalog relation. The judgment mechanics
+(finding the producer, enumerating consumers, the primitive-vs-consumer
+verdict) live in the `primitive-vs-symptom` skill, run mandatorily at Stage
+0b — this section states the policy the skill enforces:
 
-- **Find the primitive before fixing.** Identify which module actually
-  produces the wrong value, then `rg` for every other consumer of it. A fix
-  that only changes the output where the bug was observed — while the
+- A fix that only changes the output where the bug was observed — while the
   primitive still produces the same wrong value elsewhere — is a symptom
-  fix, not a root fix.
-- **State it in Stage 1.** Name the primitive, name the other known
-  consumers, and say explicitly whether the fix lands in the primitive or
-  the consumer, and why. If a consumer re-derives policy the primitive
-  already half-encodes (a kill/use rule, a validation rule, a formatting
-  rule), move that policy into the primitive as data/fields rather than
-  re-implementing it locally.
-- **Corpus-discovered bugs need this check especially.** The fastest fix is
-  almost always at the consumer, not the source — that's the trap.
+  fix, not a root fix. Corpus-discovered bugs are the trap case: the
+  fastest fix is almost always at the consumer, not the source.
+- If a consumer re-derives policy the primitive already half-encodes (a
+  kill/use rule, a validation rule, a formatting rule), move that policy
+  into the primitive as data/fields rather than re-implementing it locally.
 - **A missed shared-primitive gap caught later is a process gap.** Log why
-  Stage 1 missed it in `doc/plan/BACKLOG.md`, not just the fix itself.
+  Stage 0b missed it in `doc/plan/BACKLOG.md`, not just the fix itself.
 
 ### Foundational Correctness Overrides Premature-Abstraction Caution
 

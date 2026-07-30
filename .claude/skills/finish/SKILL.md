@@ -64,7 +64,11 @@ omitting it silently — the user has been burned by silent omission before.
    No commit needed — this session only edited gitignored plan/BACKLOG files.
    ```
 
-2. **Recommended next-session seed prompt** — self-contained: charter, which
-   plan file to read, key counts/baselines, prerequisite check.
+2. **Recommended next-session seed prompt** — forward-looking only: charter,
+   which plan file to read, and any hard prerequisite. Do not restate what
+   happened this session — that belongs in the plan file's Status section.
+   Name a concrete next task and first file to open if one exists; if not,
+   say so in one line rather than listing speculative options. See root
+   `AGENTS.md`'s Commit Discipline section for the full rule and example.
 
 Do not run `git add` or `git commit` yourself — these are proposals only.
