@@ -37,6 +37,8 @@ module PB.Analysis.Taint
   , classifyOperation
   , hasIntoClause
   , sinkCategory
+  , writeOps
+  , execOps
   ) where
 
 import PB.Prelude
@@ -317,11 +319,16 @@ sinkCategory st = Map.findWithDefault "general" st sinkCategoryMap
 -- AST extraction
 -- ---------------------------------------------------------------------------
 
--- | Determine the SQL operation type from raw SQL text.
+-- | Determine the SQL operation type from raw SQL text. Strips a trailing
+-- @;@ from the leading word before matching -- real corpus statement
+-- keywords with no other tokens (bare @commit;@\/@rollback;@\/@disconnect;@)
+-- are written with no space before the terminator, so the un-stripped word
+-- (@"commit;"@) never matched 'sqlKeywords' (only multi-word statements,
+-- where the keyword is never the token touching @;@, happened to work).
 classifyOperation :: Text -> Text
 classifyOperation txt =
   let first = case T.words (T.strip txt) of
-        (w:_) -> T.toUpper w
+        (w:_) -> T.toUpper (T.dropWhileEnd (== ';') w)
         []    -> ""
   in if first `Set.member` sqlKeywords then first else ""
 

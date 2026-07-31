@@ -217,7 +217,7 @@ tests = testGroup "SchFootprint"
 
     , testCase "branch: EBranch / ESplitValue / ECall / ESuspend" $
         foldSchFootprintEff ctx0
-          (extractEffTable (branchEff (ExBool True) (ECall "f" [] 1) (ESuspend "retrieve:dw" [] 1) 1 :: Eff () ()))
+          (extractEffTable (branchEff (ExBool True) (ECall "f" [] 1 Set.empty) (ESuspend "retrieve:dw" [] 1 Set.empty) 1 :: Eff () ()))
           @?= Set.empty
 
     , testCase "J PInl / J PInr" $ do
@@ -240,7 +240,7 @@ tests = testGroup "SchFootprint"
   , testGroup "foldSchFootprintEff: callProc SetItem detection"
     [ testCase "SetItem with literal column resolves to LegWrites when control/dw/column all bound" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] 1 :: Eff () ()))
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] 1 Set.empty :: Eff () ()))
           @?= Set.singleton
                 (SchMorphism (StmtObj (fcStmtObj ctx1))
                              (ColumnObj (TableRef Nothing "sales_order_items") "id")
@@ -248,21 +248,21 @@ tests = testGroup "SchFootprint"
 
     , testCase "unbound control yields empty footprint" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_other.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] 1 :: Eff () ()))
+          (extractEffTable (ECall "dw_other.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] 1 Set.empty :: Eff () ()))
           @?= Set.empty
 
     , testCase "dynamic (non-literal) column argument yields empty footprint" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", lvExpr "ls_col", lvExpr "li_Data"] 1 :: Eff () ()))
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", lvExpr "ls_col", lvExpr "li_Data"] 1 Set.empty :: Eff () ()))
           @?= Set.empty
 
     , testCase "unknown column name in the bound dw yields empty footprint" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "nonexistent_col", lvExpr "li_Data"] 1 :: Eff () ()))
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "nonexistent_col", lvExpr "li_Data"] 1 Set.empty :: Eff () ()))
           @?= Set.empty
 
     , testCase "non-SetItem calls remain empty" $
-        foldSchFootprintEff ctx1 (extractEffTable (ECall "dw_dest.Retrieve" [] 1 :: Eff () ())) @?= Set.empty
+        foldSchFootprintEff ctx1 (extractEffTable (ECall "dw_dest.Retrieve" [] 1 Set.empty :: Eff () ())) @?= Set.empty
 
     , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup" $ do
         let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []

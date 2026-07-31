@@ -98,11 +98,11 @@ instance Effectful Interp where
 
   lookup var = Interp (\_env -> gets (Map.findWithDefault VNull var P.. isEnv))
 
-  suspend effect args = Interp (\_env -> do
+  suspend effect args _tags = Interp (\_env -> do
     vals <- gets (\st -> map (evalExprMocked (isMocks st) (isEnv st)) args)
     modify' (\st -> st { isTrace = TeSuspend effect vals : isTrace st }))
 
-  callProc name args = Interp (\_env -> do
+  callProc name args _tags = Interp (\_env -> do
     vals <- gets (\st -> map (evalExprMocked (isMocks st) (isEnv st)) args)
     modify' (\st -> st { isTrace = TeCall name vals : isTrace st }))
 

@@ -104,13 +104,13 @@ tests = testGroup "PB.Explain.Pseudocode"
   , testCase "a resolved call's PCall carries its callee FnSig/SubSig from buildCallableSigMap" $
       let env = emptyEnv { steObject = ident "myobj" }
           sigMap = identMapInsertWith Map.union (ident "myobj") (Map.singleton (ident "helper") (Right helperSig)) identMapEmpty
-          term = ECall "helper" [] 1 :: Eff () ()
+          term = ECall "helper" [] 1 Set.empty :: Eff () ()
           pc = buildPseudocode defaultComplexityThreshold env sigMap Nothing noSig (extractEffTable term)
       in rootStmts pc @?= [PCall "helper" (Just (Right helperSig)) [] 1]
 
   , testCase "an unresolved call's PCall carries Nothing, not an error" $
       let env = emptyEnv { steObject = ident "myobj" }
-          term = ECall "unknownproc" [] 1 :: Eff () ()
+          term = ECall "unknownproc" [] 1 Set.empty :: Eff () ()
           pc = buildPseudocode defaultComplexityThreshold env emptySigMap Nothing noSig (extractEffTable term)
       in rootStmts pc @?= [PCall "unknownproc" Nothing [] 1]
 

@@ -68,8 +68,8 @@ instance Effectful TaintEdges where
   eval _      = TaintEdges Set.empty Set.empty
   assign _    = TaintEdges Set.empty Set.empty
   lookup _    = TaintEdges Set.empty Set.empty
-  suspend _ _ = TaintEdges Set.empty Set.empty
-  callProc _ _ = TaintEdges Set.empty Set.empty
+  suspend _ _ _ = TaintEdges Set.empty Set.empty
+  callProc _ _ _ = TaintEdges Set.empty Set.empty
   splitValue  = TaintEdges Set.empty Set.empty
   -- The one instance that CONSUMES the 'ret' payload: every free
   -- identifier of the returned expression is a var this procedure's

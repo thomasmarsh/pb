@@ -153,8 +153,8 @@ instance Effectful SchFootprint where
   eval _      = SchFootprint (const Set.empty)
   assign _    = SchFootprint (const Set.empty)
   lookup _    = SchFootprint (const Set.empty)
-  suspend _ _ = SchFootprint (const Set.empty)
-  callProc name args = SchFootprint $ \ctx ->
+  suspend _ _ _ = SchFootprint (const Set.empty)
+  callProc name args _tags = SchFootprint $ \ctx ->
     case resolveSetItem ctx name args of
       Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites SrcCatFootprint)
       Nothing         -> Set.empty
@@ -189,8 +189,8 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
     go (EComp g f)          m = let (rg, m1) = go g m in let (rf, m2) = go f m1 in (rg <> rf, m2)
     go (EAssign _ _ _)      m = (Set.empty, m)
     go (EAssignWithRhs _ _ _ _ _) m = (Set.empty, m)
-    go (ECall name args _)  m = (callFootprint name args, m)
-    go (ESuspend _ _ _)     m = (Set.empty, m)
+    go (ECall name args _ _)  m = (callFootprint name args, m)
+    go (ESuspend _ _ _ _)     m = (Set.empty, m)
     go ESplitValue          m = (Set.empty, m)
     go (EFanIn t f)         m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
     go (EBranch _ t f _)    m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)

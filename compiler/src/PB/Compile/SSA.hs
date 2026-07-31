@@ -66,6 +66,12 @@ data SsaVal
   | SsaBinOp BinOp SsaVal SsaVal
   | SsaNot SsaVal
   | SsaNull
+  -- | Unparsed raw source text (embedded SQL, an unclassified 'BsRaw'
+  -- statement) -- distinct from 'SsaConst', which always wraps a real
+  -- parsed 'Expr'. 'PB.Compile.FromSSA.sqlStmtEffectTags' is the only
+  -- consumer that inspects the text; 'classifyExpr'\/'classifyEffects'
+  -- never see it (both only dispatch on 'ExCall'\/'ExMethodCall').
+  | SsaRaw Text
   deriving (Eq, Show, Generic)
 
 -- ============================================================================
@@ -330,9 +336,12 @@ stmtToAssigns (Located _ BsContinue)    = []
 -- of its own.
 stmtToAssigns (Located _ (BsTry {}))  = []
 stmtToAssigns (Located _ (BsThrow _)) = []
--- BsRaw: unparsed source text (embedded SQL, unclassified statements) — no
--- structured assignment to extract.
-stmtToAssigns (Located _ (BsRaw _))   = []
+-- BsRaw: unparsed source text (embedded SQL, unclassified statements).
+-- Compiles to a discard-target assign carrying the raw text, so
+-- 'PB.Compile.FromSSA' can attach 'sqlStmtEffectTags' and give it a real
+-- 'Eff' node (previously silently dropped -- see doc/plan/220-effect-capability-system.md).
+stmtToAssigns (Located ln (BsRaw txt)) =
+  [SsaAssign (SsaVar discardSlotIdent) (SsaRaw txt) (noSubscriptLhs discardSlotIdent) ln]
 
 exprToSsaVal :: Expr -> SsaVal
 exprToSsaVal ExNull            = SsaNull

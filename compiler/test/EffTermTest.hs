@@ -18,7 +18,7 @@ import PB.Analysis.SchFootprint (FunctorCtx (..), SchFootprint (..))
 import PB.Analysis.SchemaCategory (StmtId (..), SchMorphism (..), SchObject (..), LegKind (..), LegSource (..))
 import PB.Pipeline.SqlParse (TableRef (..))
 import PB.Compile.InstrTypes (ShapeNode (..), canonicalize, normalizeCallTag, linearize)
-import PB.Analysis.CallClassify (collectBodyLocals)
+import PB.Analysis.CallClassify (collectBodyLocals, EffectTag (..))
 import PB.Compile.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
 import PB.Compile.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), buildSsa)
@@ -118,7 +118,7 @@ hasAnyEffSuspend :: EffTerm a b -> Bool
 hasAnyEffSuspend (EffTerm spine table) = go spine
   where
     go :: Eff x y -> Bool
-    go (ESuspend _ _ _) = True
+    go (ESuspend _ _ _ _) = True
     go (EComp f g) = go f P.|| go g
     go (EFanIn f g) = go f P.|| go g
     go (EBranch _ f g _) = go f P.|| go g
@@ -131,7 +131,7 @@ hasEffSuspendEffect :: Text -> EffTerm a b -> Bool
 hasEffSuspendEffect eff (EffTerm spine table) = go spine
   where
     go :: Eff x y -> Bool
-    go (ESuspend e _ _) = eff == e
+    go (ESuspend e _ _ _) = eff == e
     go (EComp f g) = go f P.|| go g
     go (EFanIn f g) = go f P.|| go g
     go (EBranch _ f g _) = go f P.|| go g
@@ -144,13 +144,29 @@ hasAnyEffCall :: EffTerm a b -> Bool
 hasAnyEffCall (EffTerm spine table) = go spine
   where
     go :: Eff x y -> Bool
-    go (ECall _ _ _) = True
+    go (ECall _ _ _ _) = True
     go (EComp f g) = go f P.|| go g
     go (EFanIn f g) = go f P.|| go g
     go (EBranch _ f g _) = go f P.|| go g
     go (ELoop f _) = go f
     go (ELetRef bid) = maybe False go (Map.lookup bid table)
     go _ = False
+
+-- | The 'EffectTag' set of the first 'ECall'\/'ESuspend' node found in an
+-- 'EffTerm' (depth-first), or 'Nothing' if it has none — every test using
+-- this builds a term with exactly one call node, so "first" is unambiguous.
+firstEffTags :: EffTerm a b -> Maybe (Set.Set EffectTag)
+firstEffTags (EffTerm spine table) = go spine
+  where
+    go :: Eff x y -> Maybe (Set.Set EffectTag)
+    go (ECall _ _ _ tags) = Just tags
+    go (ESuspend _ _ _ tags) = Just tags
+    go (EComp f g) = go f <|> go g
+    go (EFanIn f g) = go f <|> go g
+    go (EBranch _ f g _) = go f <|> go g
+    go (ELoop f _) = go f
+    go (ELetRef bid) = Map.lookup bid table >>= go
+    go _ = Nothing
 
 -- | ShapeNode predicates for the for/do-loop tests. SCall/SCProc are
 -- treated as equivalent (pure tag-naming divergence).
@@ -268,6 +284,30 @@ tests = testGroup "EffTerm"
             result = compileSsaToEff emptyEnv Set.empty sa
         in assertBool "pure call should produce no ESuspend" (not (hasAnyEffSuspend result))
 
+    , testCase "dw_foo.retrieve()'s ESuspend carries the full classifyEffects tag set, not just the Suspends bit" $
+        -- runtime/datawindow.sru annotates retrieve as "@effects Suspends, ReadsDb".
+        let callExpr = ExCall
+              { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
+              , callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff dwEnv Set.empty sa
+        in firstEffTags result @?= Just (Set.fromList [Suspends, ReadsDb])
+
+    , testCase "sqlca.triggerevent()'s ESuspend carries exactly {Suspends}" $
+        let callExpr = ExMethodCall
+              { receiver   = ExLvalue (Lvalue [LvSegment "sqlca" Nothing])
+              , method     = "triggerevent"
+              , methodArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff dwEnv Set.empty sa
+        in firstEffTags result @?= Just (Set.singleton Suspends)
+
+    , testCase "a pure user-function ECall carries an empty tag set" $
+        let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffTags result @?= Just Set.empty
+
     , testCase "end-to-end: BsCall dw_foo.retrieve() → InstrSuspend node in InstrGraph" $
         -- buildSsa from a standalone BsCall; InstrSuspend must appear in the graph
         let callExpr = ExCall
@@ -316,6 +356,48 @@ tests = testGroup "EffTerm"
             body     = [Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) callExpr)]
             graph    = compileProcedureViaEffTerm emptyEnv Set.empty body
         in canonicalize graph @?= [SAsgn 1, SRet]
+    ]
+
+  , testGroup "BsRaw SQL statement effect classification (Plan 220 Phase 2)"
+    -- Previously a BsRaw statement compiled to zero Eff nodes (stmtToAssigns
+    -- returned []) -- every one of these now produces exactly one ECall or
+    -- ESuspend node carrying sqlStmtEffectTags's classification.
+    [ testCase "SELECT classifies as {ReadsDb}, compiles to ECall (not ESuspend)" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "select * from foo") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in do firstEffTags result @?= Just (Set.singleton ReadsDb)
+              assertBool "ECall, not ESuspend" (hasAnyEffCall result P.&& not (hasAnyEffSuspend result))
+
+    , testCase "INSERT classifies as {WritesDb}" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "insert into foo values (1)") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffTags result @?= Just (Set.singleton WritesDb)
+
+    , testCase "EXECUTE classifies as {WritesDb, Suspends}, compiles to ESuspend" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "execute dynstmt") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in do firstEffTags result @?= Just (Set.fromList [WritesDb, Suspends])
+              assertBool "ESuspend, not ECall" (hasAnyEffSuspend result P.&& not (hasAnyEffCall result))
+
+    , testCase "COMMIT classifies as {WritesDb, Suspends}" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "commit;") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffTags result @?= Just (Set.fromList [WritesDb, Suspends])
+
+    , testCase "CONNECT classifies as {Suspends}" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "connect using sqlca;") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffTags result @?= Just (Set.singleton Suspends)
+
+    , testCase "DECLARE (cursor lifecycle) classifies as {Suspends}" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "declare c1 cursor for sql1;") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffTags result @?= Just (Set.singleton Suspends)
+
+    , testCase "unrecognized raw text classifies as empty, not an error" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "some unclassified statement") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffTags result @?= Just Set.empty
     ]
 
   , testGroup "Interp"
@@ -380,14 +462,21 @@ tests = testGroup "EffTerm"
         P.reverse (isTrace st) @?= [TeBranch False, TeAssign "else_taken" (VInt 2)]
 
     , testCase "runEff ESuspend records TeSuspend with evaluated args" $ do
-        let term = ESuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] 1 :: Eff () ()
+        let term = ESuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] 1 Set.empty :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeSuspend "retrieve:dw_foo" [VInt 1, VStr "bar"]]
 
     , testCase "runEff ECall records TeCall with evaluated args" $ do
-        let term = ECall "my_func" [ExInt "5"] 1 :: Eff () ()
+        let term = ECall "my_func" [ExInt "5"] 1 Set.empty :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeCall "my_func" [VInt 5]]
+
+    , testCase "Interp's Effectful instance ignores the tag set — a non-empty tag set produces the same trace as Set.empty (regression)" $ do
+        let withTags = ESuspend "retrieve:dw_foo" [ExInt "1"] 1 (Set.fromList [Suspends, ReadsDb]) :: Eff () ()
+            withoutTags = ESuspend "retrieve:dw_foo" [ExInt "1"] 1 Set.empty :: Eff () ()
+        (_, st1) <- runStateT (runInterp (runEff (extractEffTable withTags)) ()) (InterpState Map.empty [] Map.empty)
+        (_, st2) <- runStateT (runInterp (runEff (extractEffTable withoutTags)) ()) (InterpState Map.empty [] Map.empty)
+        isTrace st1 @?= isTrace st2
     ]
 
   , testGroup "compileProcedureViaEffTerm"
@@ -742,14 +831,14 @@ tests = testGroup "EffTerm"
         ienv @?= genv
 
     , testCase "ESuspend: same effect name and evaluated args" $ do
-        let term = extractEffTable (ESuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] 1 :: Eff () ())
+        let term = extractEffTable (ESuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] 1 Set.empty :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "ECall: same callee and evaluated args" $ do
-        let term = extractEffTable (ECall "my_func" [ExInt "5"] 1 :: Eff () ())
+        let term = extractEffTable (ECall "my_func" [ExInt "5"] 1 Set.empty :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
@@ -1209,7 +1298,7 @@ tests = testGroup "EffTerm"
     -- every term these tests construct by hand. 'Eff' has no 'Eq' instance,
     -- so equivalence here is checked observationally, via trace comparison.
     [ testCase "extractEffTable wraps a sharing-free term with an empty table" $ do
-        let eff = ECall "shared_proc" [] 1 :: Eff () ()
+        let eff = ECall "shared_proc" [] 1 Set.empty :: Eff () ()
             EffTerm spine table = extractEffTable eff
         Map.null table @?= True
         (_, spineTrace) <- runEffTrace spine () Map.empty
@@ -1217,7 +1306,7 @@ tests = testGroup "EffTerm"
         spineTrace @?= effTrace
 
     , testCase "inlineEffTable rehydrates ELetRef back to the table's body" $ do
-        let body       = ECall "shared_proc" [] 1 :: Eff () ()
+        let body       = ECall "shared_proc" [] 1 Set.empty :: Eff () ()
             effTerm     = EffTerm (ELetRef "blk") (Map.fromList [("blk", body)])
             rehydrated = inlineEffTable effTerm
         (_, rehydratedTrace) <- runEffTrace rehydrated () Map.empty
@@ -1225,7 +1314,7 @@ tests = testGroup "EffTerm"
         rehydratedTrace @?= bodyTrace
 
     , testCase "inlineEffTable . extractEffTable == id on a sharing-free term (observational)" $ do
-        let eff = EComp (ECall "b" [] 1) (ECall "a" [] 1) :: Eff () ()
+        let eff = EComp (ECall "b" [] 1 Set.empty) (ECall "a" [] 1 Set.empty) :: Eff () ()
         (_, roundTripTrace) <- runEffTrace (inlineEffTable (extractEffTable eff)) () Map.empty
         (_, origTrace)      <- runEffTrace eff () Map.empty
         roundTripTrace @?= origTrace
@@ -1241,7 +1330,7 @@ tests = testGroup "EffTerm"
         -- a re-traversal of the body term. Because '(|||)' is CHOICE
         -- (Interp dispatches exactly one arm at runtime), the shared body
         -- executes exactly once regardless of which arm is taken.
-        let body    = ECall "shared_proc" [] 1 :: Eff () ()
+        let body    = ECall "shared_proc" [] 1 Set.empty :: Eff () ()
             spine   = EFanIn (ELetRef "shared") (ELetRef "shared") :: Eff (Either () ()) ()
             effTerm = EffTerm spine (Map.fromList [("shared", body)])
             callCount tr = length [() | TeCall "shared_proc" _ <- tr]
@@ -1253,8 +1342,8 @@ tests = testGroup "EffTerm"
     , testCase "ELetRef composed with unrelated effects: only the named block is shared" $ do
         -- 'ELetRef "x"' appears once, sequenced after an unrelated call —
         -- the table lookup must not disturb ordinary composition.
-        let body    = ECall "setup" [] 1 :: Eff () ()
-            spine   = EComp (ECall "teardown" [] 1) (ELetRef "x") :: Eff () ()
+        let body    = ECall "setup" [] 1 Set.empty :: Eff () ()
+            spine   = EComp (ECall "teardown" [] 1 Set.empty) (ELetRef "x") :: Eff () ()
             effTerm = EffTerm spine (Map.fromList [("x", body)])
         (_effEnv, effTrace) <- runEffTermTrace effTerm () Map.empty
         let setupCount = length [() | TeCall "setup" _ <- effTrace]

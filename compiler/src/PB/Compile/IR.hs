@@ -44,9 +44,11 @@ module PB.Compile.IR
 import PB.Prelude hiding (id, (.), lookup)
 import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import GHC.Exts (Any)
 import PB.AST.Expr (Expr (..))
 import PB.AST.Type (PbType)
+import PB.Analysis.CallClassify (EffectTag)
 import PB.Compile.ValueModel (Value (..))
 
 -- ============================================================================
@@ -77,8 +79,8 @@ class Category k => Effectful k where
   eval       :: Expr -> k env Value
   assign     :: Text -> k (env, Value) env
   lookup     :: Text -> k env Value
-  suspend    :: Text -> [Expr] -> k args ()
-  callProc   :: Text -> [Expr] -> k args ()
+  suspend    :: Text -> [Expr] -> Set.Set EffectTag -> k args ()
+  callProc   :: Text -> [Expr] -> Set.Set EffectTag -> k args ()
   splitValue :: k (env, Value) (Either env env)
   -- | Procedure-terminal escape. Every target category must
   -- say what "abort past every enclosing construct" means for it — 'Interp'
@@ -222,8 +224,13 @@ data Eff a b where
   -- when the SSA temp has no scope entry (never an error).
   EAssign       :: Text -> Int -> Maybe PbType -> Eff (env, Value) env
   EAssignWithRhs :: Text -> Expr -> Expr -> Int -> Maybe PbType -> Eff env env
-  ECall         :: Text -> [Expr] -> Int -> Eff args ()
-  ESuspend      :: Text -> [Expr] -> Int -> Eff args ()
+  -- | Trailing 'Set.Set' 'EffectTag': the full effect classification
+  -- ('PB.Analysis.CallClassify.classifyEffects') for this call, threaded
+  -- alongside the pre-existing 'Suspends'\/'PureCall' verdict
+  -- ('PB.Analysis.CallClassify.classifyExpr') that already decides which of
+  -- 'ECall'\/'ESuspend' gets built -- see 'PB.Compile.FromSSA'.
+  ECall         :: Text -> [Expr] -> Int -> Set.Set EffectTag -> Eff args ()
+  ESuspend      :: Text -> [Expr] -> Int -> Set.Set EffectTag -> Eff args ()
   ESplitValue   :: Eff (env, Value) (Either env env)
   -- Sum-elimination (branch fan-in). The arms are effectful
   -- ('PB.Compile.FromSSA.compileSsaToEff's branch targets contain
@@ -272,8 +279,8 @@ instance Effectful Eff where
   eval e          = J (PEval e)
   assign var      = EAssign var 0 Nothing
   lookup _        = error "Eff.lookup: dead (compileSsa never emits lookup)"
-  suspend n as    = ESuspend n as 0
-  callProc n as   = ECall n as 0
+  suspend n as tags   = ESuspend n as 0 tags
+  callProc n as tags  = ECall n as 0 tags
   splitValue      = ESplitValue
   ret e           = EReturn e 0
   loopK body      = ELoop body 0
@@ -353,8 +360,8 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
     -- 'Eff'\/'EffTerm' directly instead of going through this fold.
     go (EAssign var _ln _ty)      m = (assign var, m)
     go (EAssignWithRhs v lhs e' _ln _ty) m = (assignWithRhs v lhs e', m)
-    go (ECall n as _ln)   m = (callProc n as, m)
-    go (ESuspend n as _ln) m = (suspend n as, m)
+    go (ECall n as _ln tags)   m = (callProc n as tags, m)
+    go (ESuspend n as _ln tags) m = (suspend n as tags, m)
     go ESplitValue        m = (splitValue, m)
     go (EBranch cond t f _ln) m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (branchK cond tK fK, m2)
     go (EFanIn t f)       m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (tK ||| fK, m2)

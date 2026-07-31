@@ -298,6 +298,7 @@ ssaValToExpr (SsaVarRef sv)     = ExLvalue (Lvalue [LvSegment (svName sv) Nothin
 ssaValToExpr (SsaBinOp op l r)  = ExBinOp (ssaValToExpr l) op (ssaValToExpr r)
 ssaValToExpr (SsaNot v)         = ExNot (ssaValToExpr v)
 ssaValToExpr SsaNull            = ExNull
+ssaValToExpr (SsaRaw txt)       = ExRaw [txt]
 
 -- | Is @targetId@ an exit out of the loop headed by @headerId@ (or not
 -- inside a loop at all)? A return-terminated target is never a loop exit

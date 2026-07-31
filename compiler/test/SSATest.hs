@@ -368,6 +368,14 @@ tests = testGroup "SSA"
           [SsaAssign _ (SsaConst e) _ _] -> e @?= callExpr
           other -> assertBool ("expected one SsaConst assign, got: " <> show other) False
 
+    , testCase "BsRaw → assign with SsaRaw (Plan 220 Phase 2: no longer silently dropped)" $ do
+        let sa = buildSsa emptyEnv "proc" [at 1 (BsRaw "select * from foo")]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign sv (SsaRaw txt) _ _] -> do
+            identCanon (svName sv) @?= "_"
+            txt @?= "select * from foo"
+          other -> assertBool ("expected one SsaRaw assign, got: " <> show other) False
+
     , testCase "BsDo (while) creates multiple blocks (entry/header/body/exit)" $ do
         let sa = buildSsa emptyEnv "proc"
                   [at 1 (BsDo (DoStmt (Just (DoWhile (ExBool True)))

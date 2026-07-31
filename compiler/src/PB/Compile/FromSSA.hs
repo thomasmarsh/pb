@@ -12,9 +12,10 @@ import PB.AST.Ident (identCanon, identOrig)
 import PB.Compile.IR (Category (..), Eff (..), EffTerm (..), Pure (..), branchEff)
 import PB.Compile.LoopAnalysis (CompileCtx (..), computeMergePoints, ssaValToExpr,
                               computeLoopHeaders, computeAllLoopExits, isLoopExit)
-import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName,
-                                 calleeName, isTriggerEvent, segName)
+import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), classifyExpr, classifyEffects,
+                                 effectName, calleeName, isTriggerEvent, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
+import PB.Analysis.Taint (classifyOperation, writeOps, execOps)
 import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaProc (..))
 import qualified Data.Map.Strict as Map
@@ -219,16 +220,21 @@ compileAssignToEff ctx (SsaAssign sv rhs lhs ln)
         compileCallExprToEff ctx sv expr lv parsedArgs ln
       SsaConst expr@(ExMethodCall _recv _meth parsedArgs) ->
         case classifyExpr (ccEnv ctx) expr of
-             SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln
-             PureCall    -> ECall (calleeName expr) parsedArgs ln
+             SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
+             PureCall    -> ECall (calleeName expr) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
       SsaConst expr ->
         case classifyExpr (ccEnv ctx) expr of
-          SuspendCall -> ESuspend (effectName expr []) [] ln
-          PureCall    -> ECall (calleeName expr) [] ln
+          SuspendCall -> ESuspend (effectName expr []) [] ln (classifyEffects (ccEnv ctx) expr)
+          PureCall    -> ECall (calleeName expr) [] ln (classifyEffects (ccEnv ctx) expr)
       SsaVarRef _ -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
       SsaBinOp {} -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
       SsaNot _    -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
       SsaNull     -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
+      SsaRaw txt  ->
+        let tags = sqlStmtEffectTags txt
+        in if Set.member Suspends tags
+           then ESuspend txt [] ln tags
+           else ECall txt [] ln tags
   | otherwise = EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
   where
     declaredType = lookupScopedVarOrSelf (svName sv) (ccEnv ctx)
@@ -238,16 +244,36 @@ compileAssignToEff ctx (SsaAssign sv rhs lhs ln)
 compileCallExprToEff :: CompileCtx -> SsaVar -> Expr -> Lvalue -> [Expr] -> Int -> Eff () ()
 compileCallExprToEff ctx _sv expr lv parsedArgs ln
   | isTriggerEvent lv =
-      ECall "triggerevent" [evArg] ln
+      ECall "triggerevent" [evArg] ln (classifyEffects (ccEnv ctx) expr)
   | [seg] <- segments lv
   , identCanon (segName seg) == "fn_retrievechild" =
-      ESuspend (effectName expr parsedArgs) paramArg ln
+      ESuspend (effectName expr parsedArgs) paramArg ln (classifyEffects (ccEnv ctx) expr)
   | [seg] <- segments lv
   , identCanon (segName seg) `Set.member` ccUserFns ctx =
-      ECall (identOrig (segName seg)) parsedArgs ln
+      ECall (identOrig (segName seg)) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
   | otherwise = case classifyExpr (ccEnv ctx) expr of
-      SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln
-      PureCall -> ECall (calleeName expr) parsedArgs ln
+      SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
+      PureCall -> ECall (calleeName expr) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
   where
     evArg = case parsedArgs of { (a:_) -> a; [] -> ExRaw [] }
     paramArg = case parsedArgs of { (_:_:p:_) -> [p]; _ -> [] }
+
+-- | Effect tags for a bare SQL\/transaction-control keyword statement
+-- ('BsRaw', compiled via 'PB.Compile.SSA.SsaRaw') -- these were previously
+-- invisible to effect classification, compiling to no 'Eff' node at all.
+-- Keyed off 'PB.Analysis.Taint.classifyOperation', reusing its
+-- 'writeOps'\/'execOps' vocabulary rather than re-deriving it. An
+-- unrecognized or empty 'classifyOperation' result (a non-SQL 'BsRaw', or a
+-- SQL keyword 'PB.Analysis.Taint.sqlKeywords' doesn't yet list) is
+-- 'Set.empty', not an error.
+sqlStmtEffectTags :: Text -> Set.Set EffectTag
+sqlStmtEffectTags txt = case classifyOperation txt of
+  ""       -> Set.empty
+  "SELECT" -> Set.singleton ReadsDb
+  op
+    | op `Set.member` writeOps                      -> Set.singleton WritesDb
+    | op `Set.member` execOps                        -> Set.fromList [WritesDb, Suspends]
+    | op `elem` ["COMMIT", "ROLLBACK"]                -> Set.fromList [WritesDb, Suspends]
+    | op `elem` ["CONNECT", "DISCONNECT"]             -> Set.singleton Suspends
+    | op `elem` ["DECLARE", "OPEN", "FETCH", "CLOSE"] -> Set.singleton Suspends
+    | otherwise                                       -> Set.empty

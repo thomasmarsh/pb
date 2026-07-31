@@ -155,11 +155,11 @@ instance Effectful NGB where
   eval _   = NGB (\next _loopCont -> return next)
   assign _ = NGB (\next _loopCont -> return next)
   lookup _ = NGB (\next _loopCont -> return next)
-  suspend eff args = NGB (\next _loopCont -> do
+  suspend eff args _tags = NGB (\next _loopCont -> do
     n <- freshName
     defineNode n (InstrSuspend' { suEffect' = eff, suArgs' = args, suVar' = Nothing, suContinuation' = next })
     return n)
-  callProc name args = NGB (\next _loopCont -> do
+  callProc name args _tags = NGB (\next _loopCont -> do
     n <- freshName
     defineNode n (InstrCallProc' { cpCallee' = name, cpArgs' = args, cpNext' = next })
     return n)
@@ -356,11 +356,11 @@ instance Effectful WB where
     return n)
   assign _ = WB (\next _loopCont -> return next)
   lookup _ = WB (\next _loopCont -> return next)
-  suspend eff args = WB (\next _loopCont -> do
+  suspend eff args _tags = WB (\next _loopCont -> do
     n <- freshWireName
     defineWireNode n (WireSuspend { wsEffect = eff, wsArgs = args, wsNext = next })
     return n)
-  callProc name args = WB (\next _loopCont -> do
+  callProc name args _tags = WB (\next _loopCont -> do
     n <- freshWireName
     defineWireNode n (WireCall { wclCallee = name, wclArgs = args, wclNext = next })
     return n)

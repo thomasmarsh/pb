@@ -205,9 +205,9 @@ walk ops threshold table st eff = case eff of
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssign var ln ty)) Map.empty st
   EAssignWithRhs var lhsE rhsE ln ty ->
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssignWithRhs var lhsE rhsE ln ty)) Map.empty st
-  ECall n as ln ->
+  ECall n as ln _tags ->
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LCall n as ln)) Map.empty st
-  ESuspend n as ln ->
+  ESuspend n as ln _tags ->
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LSuspend n as ln)) Map.empty st
   EReturn e ln ->
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LReturn e ln)) Map.empty st
