@@ -55,6 +55,7 @@ import qualified DwParamBindingTest
 import qualified DwBuiltinsTest
 import qualified CallClassifyTest
 import qualified CloneDetectTest
+import qualified RegionsTest
 
 
 import Prelude
@@ -120,4 +121,5 @@ tests = testGroup "pb-compiler"
   , DwBuiltinsTest.tests
   , CallClassifyTest.tests
   , CloneDetectTest.tests
+  , RegionsTest.tests
   ]

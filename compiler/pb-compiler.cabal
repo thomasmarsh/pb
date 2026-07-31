@@ -97,6 +97,7 @@ library
     PB.Analysis.TaintClosure
     PB.Analysis.DeadCodeReachability
     PB.Analysis.SchemaClosure
+    PB.Explain.Regions
   build-depends:
     , base ^>=4.20.1.0
     , text
@@ -246,6 +247,7 @@ test-suite pb-compiler-test
     , TaintClosureTest
     , DeadCodeReachabilityTest
     , SchemaClosureTest
+    , RegionsTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler
