@@ -99,6 +99,7 @@ library
     PB.Analysis.SchemaClosure
     PB.Explain.Regions
     PB.Explain.Signatures
+    PB.Explain.Pseudocode
   build-depends:
     , base ^>=4.20.1.0
     , text
@@ -250,6 +251,7 @@ test-suite pb-compiler-test
     , SchemaClosureTest
     , RegionsTest
     , SignaturesTest
+    , PseudocodeTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler

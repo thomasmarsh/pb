@@ -123,10 +123,18 @@ sigAccChoice a b = SigAcc
   , saAllUses        = saAllUses a <> saAllUses b
   }
 
+-- | 'opRef' contributes nothing: an 'PB.Explain.Regions.ELetRef' occurrence
+-- (or a threshold-cut point) has no free reads/defs of its own for
+-- free/live-variable purposes -- the referenced region's own reads/defs are
+-- already captured under its own 'RegionId' in the accumulator map, read
+-- back out by 'computeSignatures' via 'allUsesElsewhere'.
 sigOps :: RegionOps SigAcc
 sigOps = RegionOps
   { opLeaf   = sigAccLeaf
-  , opChoice = sigAccChoice
+  , opFanIn  = sigAccChoice
+  , opBranch = \cond ln t f -> sigAccSeq (sigAccLeaf (LBranchCond cond ln)) (sigAccChoice t f)
+  , opLoop   = \_ln body -> sigAccChoice body sigAccEmpty
+  , opRef    = \_ _ -> sigAccEmpty
   , opSeq    = sigAccSeq
   , opEmpty  = sigAccEmpty
   }

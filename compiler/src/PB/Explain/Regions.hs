@@ -79,13 +79,26 @@ data EffLeaf
 -- leaf's own contribution in isolation (relative to a fresh/empty
 -- context); 'opSeq' threads that isolated contribution (or a structural
 -- sub-term's own combined result) after whatever has already accumulated
--- in the same straight-line run; 'opChoice' combines two alternative
--- paths ('EBranch'\/'EFanIn' arms, or an 'ELoop' body versus its own
--- zero-iteration skip). 'computeRegions' instantiates this with @acc = ()@
--- and every operation a no-op.
+-- in the same straight-line run. 'opFanIn'\/'opBranch'\/'opLoop' each
+-- combine two alternative paths, kept as three separate fields (not one
+-- generic two-argument combinator) because a caller reconstructing real
+-- surface syntax (a rendered @if@\/@else@, a rendered loop) needs to know
+-- *which* 'Eff' construct produced the two arms it's combining -- a
+-- generic combinator can't recover that once each arm has already been
+-- folded into the same @acc@ shape. 'opRef' produces the acc contribution
+-- for referencing an already-closed region from its own enclosing region
+-- (an 'ELetRef' occurrence, or the point in a straight-line run where a
+-- threshold cut moved everything before it into a sibling 'Region') --
+-- needed so a caller reconstructing a statement sequence can mark exactly
+-- where a child region was cut out, not just that it exists in the tree.
+-- 'computeRegions' instantiates this with @acc = ()@ and every operation a
+-- no-op.
 data RegionOps acc = RegionOps
   { opLeaf   :: EffLeaf -> acc
-  , opChoice :: acc -> acc -> acc
+  , opFanIn  :: acc -> acc -> acc
+  , opBranch :: Expr -> Int -> acc -> acc -> acc
+  , opLoop   :: Int -> acc -> acc
+  , opRef    :: RegionId -> (Int, Int) -> acc
   , opSeq    :: acc -> acc -> acc
   , opEmpty  :: acc
   }
@@ -137,7 +150,11 @@ addContribution ops threshold deltaComplexity lns extraKids subAcc subDoneMap (W
       doneMap0 = Map.union doneMap subDoneMap
   in if cplx' > threshold
        then let (closed, _closedAcc, doneMap1) = closeState (WalkState cplx' lines' ownKids' [] acc' doneMap0)
-            in WalkState 1 Nothing [] (cutKids <> [closed]) (opEmpty ops) doneMap1
+                -- Seed the next run with a reference to the sibling just cut
+                -- out, so a caller reconstructing a statement sequence can
+                -- mark where it was -- not just that it exists in the tree.
+                freshAcc = opRef ops (regionId closed) (regionLines closed)
+            in WalkState 1 Nothing [] (cutKids <> [closed]) freshAcc doneMap1
        else WalkState cplx' lines' ownKids' cutKids acc' doneMap0
 
 -- | Compute a whole 'Region' (plus its own final accumulator and every
@@ -157,7 +174,8 @@ walk ops threshold table st eff = case eff of
           Nothing -> error ("PB.Explain.Regions.computeRegions: unbound ELetRef " <> show bid)
         (childRegion, _childAcc, childMap) = regionOf ops threshold table body
         WalkState cplx lns0 ownKids cutKids acc doneMap = st
-    in WalkState cplx lns0 (ownKids <> [childRegion]) cutKids acc (Map.union doneMap childMap)
+        acc' = opSeq ops acc (opRef ops (regionId childRegion) (regionLines childRegion))
+    in WalkState cplx lns0 (ownKids <> [childRegion]) cutKids acc' (Map.union doneMap childMap)
   EComp g f -> walk ops threshold table (walk ops threshold table st f) g
   EAssign var ln ty ->
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssign var ln ty)) Map.empty st
@@ -176,7 +194,7 @@ walk ops threshold table st eff = case eff of
         delta   = regionComplexity aRegion + regionComplexity bRegion - 1
         lns     = mergeLines (Just (regionLines aRegion)) (Just (regionLines bRegion))
         kids    = regionChildren aRegion <> regionChildren bRegion
-        subAcc  = opChoice ops aAcc bAcc
+        subAcc  = opFanIn ops aAcc bAcc
         -- aRegion/bRegion themselves are discarded (only their own
         -- children survive into 'kids'), so their own map entries --
         -- inserted by 'closeState' -- must be dropped too, not unioned in.
@@ -188,7 +206,7 @@ walk ops threshold table st eff = case eff of
         delta   = regionComplexity tRegion + regionComplexity fRegion - 1
         lns     = mergeLines (Just (ln, ln)) (mergeLines (Just (regionLines tRegion)) (Just (regionLines fRegion)))
         kids    = regionChildren tRegion <> regionChildren fRegion
-        subAcc  = opSeq ops (opLeaf ops (LBranchCond cond ln)) (opChoice ops tAcc fAcc)
+        subAcc  = opBranch ops cond ln tAcc fAcc
         -- see EFanIn's own note: tRegion/fRegion are discarded, keep only
         -- their children's already-closed map entries.
         subDoneMap = Map.union (Map.delete (regionId tRegion) tMap) (Map.delete (regionId fRegion) fMap)
@@ -198,7 +216,7 @@ walk ops threshold table st eff = case eff of
         delta   = regionComplexity bodyRegion
         lns     = mergeLines (Just (ln, ln)) (Just (regionLines bodyRegion))
         kids    = regionChildren bodyRegion
-        subAcc  = opChoice ops bodyAcc (opEmpty ops)
+        subAcc  = opLoop ops ln bodyAcc
         -- see EFanIn's own note: bodyRegion is discarded, keep only its
         -- children's already-closed map entries.
         subDoneMap = Map.delete (regionId bodyRegion) bodyMap
@@ -218,7 +236,10 @@ computeRegions threshold term = fst (computeRegionsWith threshold trivialOps ter
   where
     trivialOps = RegionOps
       { opLeaf   = const ()
-      , opChoice = \_ _ -> ()
+      , opFanIn  = \_ _ -> ()
+      , opBranch = \_ _ _ _ -> ()
+      , opLoop   = \_ _ -> ()
+      , opRef    = \_ _ -> ()
       , opSeq    = \_ _ -> ()
       , opEmpty  = ()
       }

@@ -57,6 +57,7 @@ import qualified CallClassifyTest
 import qualified CloneDetectTest
 import qualified RegionsTest
 import qualified SignaturesTest
+import qualified PseudocodeTest
 
 
 import Prelude
@@ -124,4 +125,5 @@ tests = testGroup "pb-compiler"
   , CloneDetectTest.tests
   , RegionsTest.tests
   , SignaturesTest.tests
+  , PseudocodeTest.tests
   ]
