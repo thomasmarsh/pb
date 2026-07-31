@@ -18,6 +18,8 @@ module PB.Analysis.Dataflow
   , extractDefsUses
   , extractSqlHostVars
   , walkExprIdents
+  , lvRoot
+  , lvalueSubscriptIdents
   , isIdent
   , reachingDefinitions
   , liveVariables
