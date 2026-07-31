@@ -477,6 +477,11 @@ taint_annotations    (file TEXT, object TEXT, proc_name TEXT, block_id TEXT,
 taint_intra_edges    (object TEXT, proc_name TEXT, use_var TEXT, def_var TEXT)
 taint_return_rows    (object TEXT, proc_name TEXT, var_name TEXT)
 
+-- Transitive per-procedure effect closure (Plan 221 Phase 1): one row per
+-- (object, proc_name) resolved EffectTag, over the same 'calls' edges the
+-- dead-code/taint closures already consume.
+proc_effects         (object TEXT, proc_name TEXT, effect_tag TEXT)
+
 dead_code (object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT, confidence TEXT,
            caller_count_naive INT, caller_count_scoped INT)
 dead_vars (object TEXT, proc_name TEXT, var_name TEXT, line INT, kind TEXT)

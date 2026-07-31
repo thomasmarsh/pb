@@ -271,6 +271,12 @@ data DeadCodeInputRows = DeadCodeInputRows
   , dcrCalls     :: [Taint.ResolvedCallRow]
   , dcrAncestors :: [(Text, Text)]
   , dcrDwObjects :: [Text]
+  , dcrCallEdges :: [CallEdge]
+    -- ^ The same @callEdges@ 'initDeadCodeRelations' already derives for the
+    -- @calls@ table, exposed for reuse by
+    -- 'PB.Analysis.EffectClosure.computeProcEffectClosure''s edge input
+    -- instead of re-deriving 'callRefRows'\/'resolvedCallEdgeRows'\/
+    -- 'callsRows' a second time (Plan 221 Phase 1).
   }
 
 initDeadCodeRelations :: Handle -> [Taint.ResolvedCallRow] -> IO DeadCodeInputRows
@@ -294,7 +300,9 @@ initDeadCodeRelations conn calls0 = do
   materialize "proc_meta" ["object", "proc", "proc_type", "cyclomatic", "proc_lower"]
     (procMetaRows procs)
   pure DeadCodeInputRows
-    { dcrProcs = procs, dcrCalls = calls0, dcrAncestors = ancestors, dcrDwObjects = dwObjs }
+    { dcrProcs = procs, dcrCalls = calls0, dcrAncestors = ancestors, dcrDwObjects = dwObjs
+    , dcrCallEdges = callEdges
+    }
   where
     materialize name cols rows = do
       recreateTextTable conn name cols

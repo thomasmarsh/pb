@@ -36,7 +36,8 @@ import PB.Compile.Flatten
   ( compileProcedureToEff
   , buildEffGraphNamed, buildEffGraphWiring )
 import PB.Compile.InstrTypes (linearize)
-import PB.Analysis.CallClassify (ProcUnit (..), forProcedures)
+import PB.Analysis.CallClassify (ProcUnit (..), forProcedures, EffectTag)
+import PB.Analysis.EffectClosure (foldEffectClosureEff)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, withDwTables,
@@ -182,6 +183,7 @@ data CompiledPs = CompiledPs
   , cpsCatFootprintColumns :: [SqlStmtColumnRow]
   , cpsTaintIntraEdges :: [TaintIntraEdgeRow]
   , cpsTaintReturnRows :: [TaintReturnRow]
+  , cpsEffectSeedRows :: [(Text, Text, Set.Set EffectTag)]
   , cpsSourceContent :: Maybe SourceFileRow
   , cpsIdentifierTokens :: [IdentifierTokenRow]
   , cpsWindowOpens       :: [WindowOpenRef]
@@ -420,7 +422,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                , deadVars
                , typeMismatches
                , taintEdgeRows
-               , taintReturnRows )
+               , taintReturnRows
+               , (obj, pName, foldEffectClosureEff effTerm) )
           | ((sLine, eLine), pu) <- procSpecs
           , let pName = puName pu; pType = puKind pu; params = puParams pu
                 retType = puRetType pu; retTypeSpan = puRetTypeSpan pu; body = puBody pu
@@ -457,22 +460,23 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                              (renderObjectCategory (objectCategoryForFile (T.unpack fp)))
                              (provenanceSpan (identSpan objIdent))
       , cpsStructureRows = structureRows
-      , cpsProcRows      = [ r | (r, _, _, _, _, _, _) <- procs ]
+      , cpsProcRows      = [ r | (r, _, _, _, _, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
-      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _) <- procs ]
-      , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms, _, _) <- procs ]
+      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _, _) <- procs ]
+      , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms, _, _, _) <- procs ]
       , cpsCallSites     = css
       , cpsVarRefs       = vrs
       , cpsGlobalVars    = gvs
-      , cpsProcFlows     = [ f | (_, f, _, _, _, _, _) <- procs ]
+      , cpsProcFlows     = [ f | (_, f, _, _, _, _, _, _) <- procs ]
       , cpsSqlStmts      = sqlRows
       , cpsSqlStmtColumns = sqlColRows
       , cpsSqlStmtFilters = sqlFilterRows
       , cpsSqlStmtTables = sqlTableRows
       , cpsSqlLintIssues = lintIssueRows
-      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _, _, _) <- procs ]
-      , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes, _) <- procs ]
-      , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs) <- procs ]
+      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _, _, _, _) <- procs ]
+      , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes, _, _) <- procs ]
+      , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs, _) <- procs ]
+      , cpsEffectSeedRows = [ esr | (_, _, _, _, _, _, _, esr) <- procs ]
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       , cpsIdentifierTokens = identifierTokenRows fp (pfTokens pf)
       , cpsWindowOpens       = windowOpens
@@ -771,6 +775,7 @@ accumulatePhaseAData pad (CFPs r) = pad
   , padCallSites        = cpsCallSites r ++ padCallSites pad
   , padObjectRows       = cpsObjectRow r : padObjectRows pad
   , padStructureRows    = cpsStructureRows r ++ padStructureRows pad
+  , padEffectSeedRows   = cpsEffectSeedRows r ++ padEffectSeedRows pad
   }
 accumulatePhaseAData pad (CFDw r) = pad
   { padDwWriteColumns    = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWriteColumns r) ++ padDwWriteColumns pad

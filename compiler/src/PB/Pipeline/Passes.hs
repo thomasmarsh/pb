@@ -26,6 +26,8 @@ import PB.Pipeline.DuckDb.Relations (LegSourceFanout (..), SchemaInputRows (..))
 import PB.Analysis.DeadCodeReachability qualified as DeadCodeReachability
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Analysis.TaintClosure qualified as TaintClosure
+import PB.Analysis.EffectClosure qualified as EffectClosure
+import PB.Analysis.CallClassify (EffectTag)
 import Control.DeepSeq       (force)
 import Control.Exception    (evaluate)
 import PB.Pipeline.Progress qualified as Progress
@@ -80,11 +82,15 @@ data PhaseAData = PhaseAData
   , padDwJoinLegs        :: ![DwJoinLegRow]
   , padObjectRows        :: ![ObjectRow]
   , padStructureRows     :: ![StructureRow]
+  , padEffectSeedRows    :: ![(Text, Text, Set.Set EffectTag)]
+    -- ^ Each procedure's own direct effect tags (from
+    -- 'PB.Analysis.EffectClosure.foldEffectClosureEff'), seeding the
+    -- corpus-wide closure in 'runPhaseB' (Plan 221 Phase 1).
   } deriving (Eq, Show)
 
 -- | Empty initial 'PhaseAData'.
 emptyPhaseAData :: PhaseAData
-emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] []
+emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] [] []
 
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
@@ -277,6 +283,7 @@ runPhaseB conn mDefaultNamespace hierarchy procMap callableProcMap pad =
     (fetchSchemaCategoryInputs conn padDwRetrieveColumns padDwJoinLegs padDwWriteColumns padDwWhereColumns padCatFootprintCols)
     (sinkSchemaCategoryOutput conn)
   dcRows  <- initDeadCodeInput conn resolvedCallRows
+  _procEffects <- computeProcEffects conn padEffectSeedRows (Relations.dcrCallEdges dcRows)
   dcReady <- computeDeadCodeClosure conn dcRows
   schRows <- initSchemaInput conn schGraph catFks
   scReady <- computeSchemaClosure conn schRows
@@ -424,6 +431,20 @@ computeDeadCodeClosure :: Handle -> Relations.DeadCodeInputRows -> IO DeadCodeCl
 computeDeadCodeClosure conn dcRows =
   Progress.timedStep "Dead-code closure" (DeadCodeReachability.materializeDeadCodeClosure dcRows conn)
     >> pure (DeadCodeClosureReady ())
+
+-- | Transitive per-procedure effect closure (@proc_effects@), over the same
+-- @calls@ edges 'initDeadCodeInput' already derived -- no re-derivation, no
+-- extra DB round-trip (Plan 221 Phase 1).
+computeProcEffects
+  :: Handle -> [(Text, Text, Set.Set EffectTag)] -> [Relations.CallEdge]
+  -> IO (Map.Map (Text, Text) (Set.Set EffectTag))
+computeProcEffects conn seedRows callEdges =
+  Progress.timedStep "Effect closure" $
+    EffectClosure.materializeProcEffects seedRows
+      [ (Relations.ceCallerObj e, Relations.ceCallerProc e, Relations.ceCalleeObj e, Relations.ceCalleeProc e)
+      | e <- callEdges
+      ]
+      conn
 
 -- | Materialize the schema input relations view (@leg_source@\/@stmt@\/
 -- @seed@\/@join_leg@\/@fk@). Idempotent (@CREATE OR REPLACE VIEW@). Must run

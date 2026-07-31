@@ -17,6 +17,7 @@ module PB.Analysis.EffectClosure
   ( EffectSetLabel (..)
   , foldEffectClosureEff
   , computeProcEffectClosure
+  , materializeProcEffects
   ) where
 
 import PB.Prelude
@@ -31,12 +32,14 @@ import PB.Algebra.Closure
   )
 import PB.Analysis.CallClassify (EffectTag)
 import PB.Compile.IR (Eff (..), EffTerm (..))
+import PB.Pipeline.DuckDb (Handle, recreateTextTable, appendTextRows)
 
 import qualified Data.HashMap.Strict as HM
 import qualified Data.IntMap.Strict as IM
 import qualified Data.List as L
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text as T
 
 -- | Semiring label carrying the union of effect tags accumulated along a
 -- call-graph path. Payload is 'Maybe'-wrapped (mirroring
@@ -138,3 +141,26 @@ computeProcEffectClosure seedRows edges =
        , let row = IM.findWithDefault IM.empty nid reachAll
              unionOfReached = Set.unions (map effectTagsOf (IM.elems row))
        ]
+
+-- | Materialize 'computeProcEffectClosure''s result as @proc_effects@: one
+-- row per @(object, proc_name, effect_tag)@ -- the normalized shape
+-- 'PB.Analysis.TaintEdges''s @taint_intra_edges@\/@taint_return_rows@
+-- already use for a set-valued fact, not a comma-joined 'Text' column. A
+-- procedure whose closure is genuinely empty gets zero rows (absence is
+-- purity, per Plan 220's own framing). Returns the computed 'Map' so a
+-- caller doesn't need a second closure computation to use it in-memory.
+materializeProcEffects
+  :: [(Text, Text, Set.Set EffectTag)]
+  -> [(Text, Text, Text, Text)]
+  -> Handle
+  -> IO (Map.Map (Text, Text) (Set.Set EffectTag))
+materializeProcEffects seedRows edges conn = do
+  let closure = computeProcEffectClosure seedRows edges
+      rows =
+        [ [o, p, T.pack (show tag)]
+        | ((o, p), tags) <- Map.toList closure
+        , tag <- Set.toList tags
+        ]
+  recreateTextTable conn "proc_effects" ["object", "proc_name", "effect_tag"]
+  appendTextRows conn "proc_effects" rows
+  pure closure

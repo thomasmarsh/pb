@@ -10,6 +10,8 @@ import PB.Analysis.SchemaCategory
   , SchGraph (..), schObjectKey
   )
 import PB.Analysis.Taint (TaintSource (..), TaintSink (..))
+import PB.Analysis.CallClassify (EffectTag (..))
+import PB.Analysis.EffectClosure (materializeProcEffects, computeProcEffectClosure)
 import PB.Pipeline.SqlParse (TableRef (..))
 import Database.DuckDB.Simple           (Query (..))
 import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
@@ -51,6 +53,10 @@ tests = testGroup "Materialize"
   , testCase "materializeImpliedFk decodes ColKey pairs to namespace/table/column" testMaterializeImpliedFk
   , testCase "materializeColumnRisk decodes ColKeys, excluding non-column (stmt) nodes" testMaterializeColumnRisk
   , testCase "materializeTaintPaths emits one row per confirmed pair, not one per duplicate-key source/sink occurrence" testMaterializeTaintPaths
+  , testCase "materializeProcEffects writes one proc_effects row per tag for a procedure with only direct effects" testMaterializeProcEffectsDirect
+  , testCase "materializeProcEffects's proc_effects rows reflect tags transitively closed through a 2-hop call chain" testMaterializeProcEffectsTransitive
+  , testCase "materializeProcEffects writes zero proc_effects rows for a procedure whose closure is genuinely empty" testMaterializeProcEffectsPure
+  , testCase "materializeProcEffects's returned Map matches computeProcEffectClosure called directly" testMaterializeProcEffectsReturnValue
   ]
 
 testMaterializeDecompositionCoslice :: IO ()
@@ -191,3 +197,46 @@ testMaterializeTaintPaths = withHandle inMemory $ \conn -> do
   assertEqual "one row per confirmed pair, driven by cgtrConfirmed not the raw duplicate-key source list"
     [ TaintPathRow "f.srf" "obj" "proc" "var" "f.srf" "obj" "proc" "var" "high" "sql_injection" "[]" ]
     rows
+
+-- | Local row shape for reading back a @proc_effects@ row.
+data ProcEffectRow = ProcEffectRow Text Text Text deriving (Eq, Ord, Show)
+
+instance FromRow ProcEffectRow where
+  fromRow = ProcEffectRow <$> field <*> field <*> field
+
+-- | Shared runner for the three assertion-shape-identical
+-- 'materializeProcEffects' cases below (direct-only, transitive, genuinely
+-- pure) -- table-driven via fixtures passed in, not repeated structure.
+runProcEffectsCase :: [(Text, Text, Set.Set EffectTag)] -> [(Text, Text, Text, Text)] -> [ProcEffectRow] -> IO ()
+runProcEffectsCase seeds edges expected = withHandle inMemory $ \conn -> do
+  initSchema conn
+  _ <- materializeProcEffects seeds edges conn
+  rows <- queryHandle conn "SELECT object, proc_name, effect_tag FROM proc_effects ORDER BY object, proc_name, effect_tag"
+  assertEqual "proc_effects rows" (Set.fromList expected) (Set.fromList rows)
+
+testMaterializeProcEffectsDirect :: IO ()
+testMaterializeProcEffectsDirect =
+  runProcEffectsCase [("o", "a", Set.singleton ReadsDb)] [] [ProcEffectRow "o" "a" "ReadsDb"]
+
+testMaterializeProcEffectsTransitive :: IO ()
+testMaterializeProcEffectsTransitive =
+  runProcEffectsCase
+    [("o", "a", Set.empty), ("o", "b", Set.empty), ("o", "c", Set.singleton Suspends)]
+    [("o", "a", "o", "b"), ("o", "b", "o", "c")]
+    [ ProcEffectRow "o" "a" "Suspends", ProcEffectRow "o" "b" "Suspends", ProcEffectRow "o" "c" "Suspends" ]
+
+testMaterializeProcEffectsPure :: IO ()
+testMaterializeProcEffectsPure =
+  runProcEffectsCase
+    [("o", "a", Set.empty), ("o", "b", Set.empty)]
+    [("o", "a", "o", "b")]
+    []
+
+testMaterializeProcEffectsReturnValue :: IO ()
+testMaterializeProcEffectsReturnValue = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let seeds = [("o", "a", Set.singleton ReadsDb), ("o", "b", Set.singleton WritesDb)]
+      edges = [("o", "a", "o", "b")]
+  result <- materializeProcEffects seeds edges conn
+  assertEqual "returned Map matches computeProcEffectClosure called directly"
+    (computeProcEffectClosure seeds edges) result
