@@ -3,12 +3,14 @@ module SSATest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt
-import PB.AST.Ident        (mkIdent)
+import PB.AST.Ident        (IdentProvenance (..), identCanon, identOrig, identSpan,
+                            mkIdentAt, mkIdentSynthetic)
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.Type          (PbType (..))
 import PB.Compile.SSA
+import PB.Compile.LoopAnalysis (ssaValToExpr)
 import PB.Analysis.TypeEnv  (ScopedTypeEnv (..))
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
 import PB.Lexing.Token      (Token (..), TokenKind (..), SourceSpan (..))
@@ -27,7 +29,7 @@ at :: Int -> a -> Located a
 at n = Located n
 
 lv1 :: Text -> Lvalue
-lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
+lv1 n = Lvalue [LvSegment (mkIdentSynthetic "SSA test fixture" n) Nothing]
 
 intTok :: Text -> Token
 intTok t = Token TkIntLiteral t (SourceSpan 1 1 1 1)
@@ -42,7 +44,7 @@ blockCount :: SsaProc -> Int
 blockCount = Map.size . spBlocks
 
 allVarNames :: SsaProc -> [Text]
-allVarNames = map svName . spVars
+allVarNames = map (identOrig . svName) . spVars
 
 getBlock :: SsaProc -> Text -> SsaBlock
 getBlock sa lbl = case Map.lookup lbl (spBlocks sa) of
@@ -126,7 +128,7 @@ tests = testGroup "SSA"
                   ]
         case sbAssigns (entryBlock sa) of
           [_, SsaAssign _ rhs _] -> case rhs of
-            SsaBinOp _ (SsaVarRef sv) _ -> svName sv @?= "x"
+            SsaBinOp _ (SsaVarRef sv) _ -> identOrig (svName sv) @?= "x"
             _ -> assertBool "expected SsaBinOp with SsaVarRef" False
           other -> assertBool ("expected two assigns, got " <> show (length other)) (length other == 2)
 
@@ -184,7 +186,7 @@ tests = testGroup "SSA"
                   , at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "x")))
                   ]
         case sbAssigns (entryBlock sa) of
-          [_, SsaAssign _ (SsaVarRef sv) _] -> svName sv @?= "x"
+          [_, SsaAssign _ (SsaVarRef sv) _] -> identOrig (svName sv) @?= "x"
           other -> assertBool ("expected SsaVarRef, got " <> show other) False
 
     , testCase "BsAugAssign/BsInc/BsDec lower to SsaAssign using declared-casing var name" $ do
@@ -402,7 +404,7 @@ tests = testGroup "SSA"
             length pairs @?= 1
             case Map.lookup def (spBlocks sa) of
               Just defBlock -> case sbAssigns defBlock of
-                [SsaAssign sv (SsaConst (ExInt "99")) _] -> svName sv @?= "x"
+                [SsaAssign sv (SsaConst (ExInt "99")) _] -> identOrig (svName sv) @?= "x"
                 other -> assertBool ("expected one assign of 99 to x, got: " <> show other) False
               Nothing -> assertBool "default block must exist" False
           other -> assertBool ("expected SsaSwitch, got: " <> show other) False
@@ -420,7 +422,7 @@ tests = testGroup "SSA"
         let sa = buildSsa emptyEnv "proc" [at 1 (BsPbCall (PbCall "m_ole_frame" "destroy"))]
         case sbAssigns (entryBlock sa) of
           [SsaAssign sv (SsaConst (ExCall lv [])) _] -> do
-            svName sv @?= "_"
+            identCanon (svName sv) @?= "_"
             map (\(LvSegment n _) -> n) (segments lv) @?= ["m_ole_frame::destroy"]
           other -> assertBool ("expected one SsaConst ExCall assign, got: " <> show other) False
 
@@ -437,7 +439,7 @@ tests = testGroup "SSA"
             sa = buildSsa emptyEnv "proc" [at 1 (BsCall dispatchExpr)]
         case sbAssigns (entryBlock sa) of
           [SsaAssign sv (SsaConst e) _] -> do
-            svName sv @?= "_"
+            identCanon (svName sv) @?= "_"
             e @?= dispatchExpr
           other -> assertBool ("expected one SsaConst ExDispatch assign, got: " <> show other) False
     ]
@@ -467,5 +469,39 @@ tests = testGroup "SSA"
     , testCase "non-call expression → PureCall" $
         classifyExpr emptyEnv (ExInt "1")
           @?= PureCall
+    ]
+
+  , testGroup "PB.Compile.SSA / SsaVar Ident widening"
+    [ testCase "BsLocalVar init assign: SsaVar carries the declared Ident, not a re-minted one" $ do
+        let declIdent = mkIdentAt (SourceSpan 1 1 1 1) "x"
+            sa = buildSsa emptyEnv "proc"
+                  [at 1 (BsLocalVar [] (PtPrimitive "integer") declIdent (Just (ExInt "42")))]
+        case spVars sa of
+          [sv] -> case identSpan (svName sv) of
+            FromSource _    -> pure ()
+            Synthetic reason -> assertBool ("expected FromSource, got Synthetic " <> show reason) False
+          other -> assertBool ("expected exactly one SsaVar, got " <> show (length other)) False
+
+    , testCase "assign-target SsaVar carries the same Ident lvHead's segment holds" $ do
+        let targetIdent = mkIdentAt (SourceSpan 2 2 2 2) "y"
+            sa = buildSsa emptyEnv "proc"
+                  [at 1 (BsAssign (Lvalue [LvSegment targetIdent Nothing]) (ExInt "1"))]
+        case spVars sa of
+          [sv] -> identSpan (svName sv) @?= identSpan targetIdent
+          other -> assertBool ("expected exactly one SsaVar, got " <> show (length other)) False
+
+    , testCase "discard-slot SsaVar (standalone call) still round-trips through the \"_\" check" $ do
+        let callExpr = ExCall { callee = lv1 "messagebox", callArgs = [] }
+            sa = buildSsa emptyEnv "proc" [at 1 (BsCall callExpr)]
+        case spVars sa of
+          [sv] -> identCanon (svName sv) @?= "_"
+          other -> assertBool ("expected exactly one SsaVar, got " <> show (length other)) False
+
+    , testCase "LoopAnalysis.ssaValToExpr no longer mints -- reuses SsaVar's own Ident" $ do
+        let realIdent = mkIdentAt (SourceSpan 3 3 3 3) "z"
+            result = ssaValToExpr (SsaVarRef (SsaVar realIdent))
+        case result of
+          ExLvalue (Lvalue [LvSegment ident Nothing]) -> identSpan ident @?= identSpan realIdent
+          other -> assertBool ("expected ExLvalue with one segment, got " <> show other) False
     ]
   ]

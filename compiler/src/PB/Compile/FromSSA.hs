@@ -191,7 +191,7 @@ compileAssignsToEff ctx (a:as) = compileAssignsToEff ctx as . compileAssignToEff
 -- Mirrors 'compileAssign' exactly.
 compileAssignToEff :: CompileCtx -> SsaAssign -> Eff () ()
 compileAssignToEff ctx (SsaAssign sv rhs lhs)
-  | svName sv == "_" = case rhs of
+  | identCanon (svName sv) == "_" = case rhs of
       SsaConst expr@(ExCall lv parsedArgs) ->
         compileCallExprToEff ctx sv expr lv parsedArgs
       SsaConst expr@(ExMethodCall _recv _meth parsedArgs) ->
@@ -202,11 +202,11 @@ compileAssignToEff ctx (SsaAssign sv rhs lhs)
         case classifyExpr (ccEnv ctx) expr of
           SuspendCall -> ESuspend (effectName expr []) []
           PureCall    -> ECall (calleeName expr) []
-      SsaVarRef _ -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
-      SsaBinOp {} -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
-      SsaNot _    -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
-      SsaNull     -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
-  | otherwise = EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
+      SsaVarRef _ -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
+      SsaBinOp {} -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
+      SsaNot _    -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
+      SsaNull     -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
+  | otherwise = EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
 
 -- | Shared logic for compiling an ExCall expression.
 -- Mirrors 'compileCallExpr' exactly.

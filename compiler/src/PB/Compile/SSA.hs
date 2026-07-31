@@ -36,11 +36,10 @@ module PB.Compile.SSA
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident    (IdentProvenance (..), identOrig, identSpan, mkIdent, mkIdentDerived, mkIdentSynthetic)
+import PB.AST.Ident    (Ident, IdentProvenance (..), identOrig, identSpan, mkIdentDerived, mkIdentSynthetic)
 import PB.AST.Located  (Located (..))
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Analysis.TypeEnv (ScopedTypeEnv)
-import PB.Analysis.CallClassify (lvHead)
 import PB.Grammar.Body     (parseExpr)
 import PB.Lexing.Token     (Token (..))
 import GHC.Generics         (Generic)
@@ -54,7 +53,7 @@ import qualified Data.Text       as T
 -- | A PB variable, identified by its bare source name only. There is no
 -- version number — see the module-level history note.
 newtype SsaVar = SsaVar
-  { svName :: Text
+  { svName :: Ident
   } deriving (Eq, Ord, Show, Generic)
 
 -- ============================================================================
@@ -98,8 +97,22 @@ data SsaAssign = SsaAssign
 -- | A subscript-free placeholder 'saLhs' for an 'SsaAssign' clause whose
 -- target's subscript (if any) is not a genuine additional read — see
 -- 'SsaAssign''s own doc comment.
-noSubscriptLhs :: Text -> Expr
-noSubscriptLhs root = ExLvalue (Lvalue [LvSegment (mkIdent root) Nothing])
+noSubscriptLhs :: Ident -> Expr
+noSubscriptLhs root = ExLvalue (Lvalue [LvSegment root Nothing])
+
+-- | The synthetic sentinel 'SsaVar' name for a standalone call/'BsDestroy'
+-- result with no real assignment target to hold an 'Ident' — no source
+-- token exists to mint one from.
+discardSlotIdent :: Ident
+discardSlotIdent = mkIdentSynthetic "SSA discard slot" "_"
+
+-- | Like 'PB.Analysis.CallClassify.lvHead', but returns the head segment's
+-- real 'Ident' instead of flattening it to 'Text' — the whole point of
+-- 'SsaVar' carrying a real 'Ident' is to stop re-minting one downstream.
+lvHeadIdent :: Lvalue -> Ident
+lvHeadIdent lv = case segments lv of
+  (s:_) -> segName s
+  []    -> discardSlotIdent
 
 -- ============================================================================
 -- Basic Blocks
@@ -159,9 +172,9 @@ buildSsa _env procName stmts =
 
 
 
-assignTarget :: Expr -> Text
-assignTarget (ExLvalue lv) = lvHead lv
-assignTarget _             = "_"
+assignTarget :: Expr -> Ident
+assignTarget (ExLvalue lv) = lvHeadIdent lv
+assignTarget _             = discardSlotIdent
 
 -- | Wrap a raw token list as an unparsed 'ExRaw' expression. Not a real
 -- parse (unlike 'PB.Analysis.CallClassify.parseArgList', which calls
@@ -192,10 +205,10 @@ cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
   let ownAssigns  = concatMap (stmtToAssigns . locNode) (cbStmts blk)
       incrAssigns = case Map.lookup label backEdgeStmts of
         Just (BsFor (ForStmt var _ _ mStep _)) ->
-          [ SsaAssign (SsaVar (lvHead var))
-              (SsaBinOp BopAdd (SsaVarRef (SsaVar (lvHead var)))
+          [ SsaAssign (SsaVar (lvHeadIdent var))
+              (SsaBinOp BopAdd (SsaVarRef (SsaVar (lvHeadIdent var)))
                                 (exprToSsaVal (fromMaybe (ExInt "1") mStep)))
-              (noSubscriptLhs (lvHead var)) ]
+              (noSubscriptLhs (lvHeadIdent var)) ]
         _ -> []
       assigns  = ownAssigns ++ incrAssigns
       outEdges = Map.findWithDefault [] label edgeMap
@@ -242,7 +255,7 @@ findLoopHeaderStmts edgeMap blockMap = Map.fromList
 
 stmtToAssigns :: BodyStmt -> [SsaAssign]
 stmtToAssigns (BsAssign lv expr) =
-  [SsaAssign (SsaVar (lvHead lv)) (exprToSsaVal expr) (ExLvalue lv)]
+  [SsaAssign (SsaVar (lvHeadIdent lv)) (exprToSsaVal expr) (ExLvalue lv)]
 -- The old compiler synthesizes the loop variable's init assign by hand
 -- (InstrGraph.hs's BsFor case); the new pipeline needs the same thing here,
 -- since this is the one block that legitimately owns the raw BsFor node in
@@ -252,28 +265,28 @@ stmtToAssigns (BsFor (ForStmt var from to mStep _)) =
   -- loop-bound reads, not part of the value, so they ride in the 'saLhs'
   -- channel (same reasoning as a subscripted LHS: a read that must not
   -- corrupt 'saRhs''s real evaluation semantics) rather than 'saRhs'.
-  [SsaAssign (SsaVar (lvHead var)) (exprToSsaVal from) (ExArray (to : maybe [] (: []) mStep))]
+  [SsaAssign (SsaVar (lvHeadIdent var)) (exprToSsaVal from) (ExArray (to : maybe [] (: []) mStep))]
 stmtToAssigns (BsLocalVar _ _ varName (Just expr)) =
-  [SsaAssign (SsaVar (identOrig varName)) (exprToSsaVal expr) (noSubscriptLhs (identOrig varName))]
+  [SsaAssign (SsaVar varName) (exprToSsaVal expr) (noSubscriptLhs varName)]
 stmtToAssigns (BsLocalVar {}) = []
 stmtToAssigns (BsAugAssign lv op rhsToks) =
   let augOpToBinOp AugAdd = BopAdd
       augOpToBinOp AugSub = BopSub
       augOpToBinOp AugMul = BopMul
       augOpToBinOp AugDiv = BopDiv
-  in [SsaAssign (SsaVar (lvHead lv))
+  in [SsaAssign (SsaVar (lvHeadIdent lv))
         (SsaBinOp (augOpToBinOp op) (SsaConst (ExLvalue lv)) (exprToSsaVal (rawArgsToExpr rhsToks)))
-        (noSubscriptLhs (lvHead lv))]
+        (noSubscriptLhs (lvHeadIdent lv))]
 stmtToAssigns (BsInc lv) =
-  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopAdd (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHead lv))]
+  [SsaAssign (SsaVar (lvHeadIdent lv)) (SsaBinOp BopAdd (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHeadIdent lv))]
 stmtToAssigns (BsDec lv) =
-  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopSub (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHead lv))]
+  [SsaAssign (SsaVar (lvHeadIdent lv)) (SsaBinOp BopSub (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHeadIdent lv))]
 stmtToAssigns (BsAssignExpr lhsExpr rhsExpr) =
   [SsaAssign (SsaVar (assignTarget lhsExpr)) (exprToSsaVal rhsExpr) lhsExpr]
 stmtToAssigns (BsDestroy lv) =
-  [SsaAssign (SsaVar (lvHead lv)) SsaNull (noSubscriptLhs (lvHead lv))]
+  [SsaAssign (SsaVar (lvHeadIdent lv)) SsaNull (noSubscriptLhs (lvHeadIdent lv))]
 stmtToAssigns (BsCall expr) =
-  [SsaAssign (SsaVar "_") (SsaConst expr) (noSubscriptLhs "_")]
+  [SsaAssign (SsaVar discardSlotIdent) (SsaConst expr) (noSubscriptLhs discardSlotIdent)]
 -- BsPbCall: CALL ancestor::event super-dispatch. Encoded as a single-segment
 -- synthetic ExCall so it flows through the existing classifyExpr/compileCallExpr
 -- machinery in PB.Compile.FromSSA and lowers to a InstrCallProc, matching
@@ -282,9 +295,9 @@ stmtToAssigns (BsCall expr) =
 -- contain "::"), or isBuiltinSuspendFn's fixed list, so it always classifies
 -- PureCall.
 stmtToAssigns (BsPbCall (PbCall ancestor event)) =
-  [SsaAssign (SsaVar "_")
+  [SsaAssign (SsaVar discardSlotIdent)
              (SsaConst (ExCall (Lvalue [LvSegment dispatchIdent Nothing]) []))
-             (noSubscriptLhs "_")]
+             (noSubscriptLhs discardSlotIdent)]
   where
     dispatchIdent = case (identSpan ancestor, identSpan event) of
       (FromSource as, FromSource es) -> mkIdentDerived (as <> es) (identOrig ancestor <> "::" <> identOrig event)
@@ -316,7 +329,7 @@ exprToSsaVal :: Expr -> SsaVal
 exprToSsaVal ExNull            = SsaNull
 exprToSsaVal (ExBinOp l op r)  = SsaBinOp op (exprToSsaVal l) (exprToSsaVal r)
 exprToSsaVal (ExNot e)         = SsaNot (exprToSsaVal e)
-exprToSsaVal (ExLvalue lv@(Lvalue [LvSegment _ Nothing])) = SsaVarRef (SsaVar (lvHead lv))
+exprToSsaVal (ExLvalue lv@(Lvalue [LvSegment _ Nothing])) = SsaVarRef (SsaVar (lvHeadIdent lv))
 exprToSsaVal e                 = SsaConst e
 
 cfgTermToSsa :: Maybe BodyStmt -> [CfgEdge] -> [Located BodyStmt] -> SsaTerm
