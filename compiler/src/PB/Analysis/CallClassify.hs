@@ -39,6 +39,7 @@ import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainType)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), WorkspaceEnv, lookupScopedVar, lookupScopedVarOrSelf,
                              isDescendantOf, procEnv)
 import PB.Runtime.EffectAnnotations (realEffectAnnotations)
+import Control.DeepSeq (NFData (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -61,6 +62,13 @@ data CallKind = PureCall | SuspendCall deriving (Eq, Show)
 data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
                | ReadsControlState | WritesControlState
   deriving (Eq, Ord, Show)
+
+-- | A fixed-shape enum has no substructure left to force once the
+-- constructor itself is evaluated -- required so 'Data.Set.Set' 'EffectTag'
+-- (used as 'PB.Analysis.EffectClosure.EffectSetLabel''s payload) gets an
+-- 'NFData' instance via containers' @NFData a => NFData (Set a)@.
+instance NFData EffectTag where
+  rnf x = x `seq` ()
 
 -- ---------------------------------------------------------------------------
 -- Side-effect classification

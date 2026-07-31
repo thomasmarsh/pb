@@ -7,6 +7,7 @@ import qualified MaterializeTest
 import qualified RelationsTest
 import qualified DeadCodeReachabilityTest
 import qualified SchemaClosureTest
+import qualified EffectClosureTest
 import qualified StdLibTest
 import qualified BodyParserTest
 import qualified BodyStmtTest
@@ -78,6 +79,7 @@ tests = testGroup "pb-compiler"
   , RelationsTest.tests
   , DeadCodeReachabilityTest.tests
   , SchemaClosureTest.tests
+  , EffectClosureTest.tests
   , StdLibTest.tests
   , BodyParserTest.tests
   , BodyStmtTest.tests

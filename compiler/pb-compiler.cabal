@@ -99,6 +99,7 @@ library
     PB.Analysis.TaintClosure
     PB.Analysis.DeadCodeReachability
     PB.Analysis.SchemaClosure
+    PB.Analysis.EffectClosure
     PB.Explain.Regions
     PB.Explain.Signatures
     PB.Explain.Pseudocode
@@ -254,6 +255,7 @@ test-suite pb-compiler-test
     , TaintClosureTest
     , DeadCodeReachabilityTest
     , SchemaClosureTest
+    , EffectClosureTest
     , RegionsTest
     , SignaturesTest
     , PseudocodeTest
