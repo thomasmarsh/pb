@@ -127,4 +127,4 @@ renderStmt ind (PLoop body ln) =
 renderStmt ind (PReturn e ln) =
   [indent ind ("return " <> unparseExpr e <> backlink ln)]
 renderStmt ind (PRegionRef _rid lns _msig) =
-  [indent ind (regionLabel lns)]
+  [indent ind ("-> " <> regionLabel lns <> " (see below)")]

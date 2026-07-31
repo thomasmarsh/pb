@@ -71,7 +71,7 @@ tests = testGroup "PB.Explain.Render.Text"
           sigs = computeSignatures defaultComplexityThreshold env effTerm
           pc = buildPseudocode defaultComplexityThreshold env emptySigMap Nothing sigs effTerm
           expected = T.intercalate "\n"
-            [ "  region@5"
+            [ "  -> region@5 (see below)"
             , "  y = result  -- line 6"
             , ""
             , "region@5(gv: integer) -> (result: integer)"
@@ -86,7 +86,7 @@ tests = testGroup "PB.Explain.Render.Text"
           sigs = computeSignatures defaultComplexityThreshold emptyEnv effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
           expected = T.intercalate "\n"
-            [ "  region@5"
+            [ "  -> region@5 (see below)"
             , "  y = result  -- line 6"
             , ""
             , "region@5(gv) -> (result)"
