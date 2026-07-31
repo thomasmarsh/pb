@@ -105,6 +105,7 @@ library
     PB.Explain.Pseudocode
     PB.Explain.Render.Text
     PB.Explain.Simplify
+    PB.Explain.Materialize
   build-depends:
     , base ^>=4.20.1.0
     , text

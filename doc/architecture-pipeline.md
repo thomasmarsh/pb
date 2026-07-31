@@ -482,6 +482,11 @@ taint_return_rows    (object TEXT, proc_name TEXT, var_name TEXT)
 -- dead-code/taint closures already consume.
 proc_effects         (object TEXT, proc_name TEXT, effect_tag TEXT)
 
+-- PB.Explain's Regions/Signatures/Pseudocode tree, folded per procedure
+-- once the effect closure above exists and serialized to JSON (Plan 221
+-- Phase 2). No UI/CLI consumer yet.
+proc_pseudocode      (object TEXT, proc_name TEXT, pseudocode_json TEXT)
+
 dead_code (object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT, confidence TEXT,
            caller_count_naive INT, caller_count_scoped INT)
 dead_vars (object TEXT, proc_name TEXT, var_name TEXT, line INT, kind TEXT)

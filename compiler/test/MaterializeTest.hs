@@ -16,11 +16,23 @@ import PB.Pipeline.SqlParse (TableRef (..))
 import Database.DuckDB.Simple           (Query (..))
 import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
 import Test.Tasty             (TestTree, testGroup)
-import Test.Tasty.HUnit       (testCase, assertEqual)
+import Test.Tasty.HUnit       (testCase, assertEqual, assertBool)
 
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+
+import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Ident (Ident, IdentMap, identMapEmpty, identMapInsertWith, mkIdentSynthetic)
+import PB.AST.SourceFile (SubSig (..))
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
+import PB.Compile.IR (Eff (..), extractEffTable)
+import PB.Explain.Materialize (ExplainSeedRow (..), materializeProcPseudocode)
+import PB.Pipeline.Serialise ()
+import Data.Aeson (Value (..), decodeStrict)
+import qualified Data.Aeson.Key    as Key
+import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Text.Encoding as TE
 
 -- | Local row shape for reading back (leg_kind, leg_source) pairs raw.
 data KindSourceRow = KindSourceRow Text Text deriving (Eq, Show)
@@ -57,6 +69,12 @@ tests = testGroup "Materialize"
   , testCase "materializeProcEffects's proc_effects rows reflect tags transitively closed through a 2-hop call chain" testMaterializeProcEffectsTransitive
   , testCase "materializeProcEffects writes zero proc_effects rows for a procedure whose closure is genuinely empty" testMaterializeProcEffectsPure
   , testCase "materializeProcEffects's returned Map matches computeProcEffectClosure called directly" testMaterializeProcEffectsReturnValue
+  , testGroup "ProcPseudocode"
+    [ testCase "one proc_pseudocode row per retained procedure, keyed by (object, proc_name)" testMaterializeProcPseudocodeRowPerProc
+    , testCase "pseudocode_json decodes to a JSON object with a non-null rootRegion/regions shape" testMaterializeProcPseudocodeJsonShape
+    , testCase "a call resolved via the caller's ancestor chain surfaces its transitive effect tag in the materialized rootSig" testMaterializeProcPseudocodeEffectsReachJson
+    , testCase "two objects declaring the same bare proc name each materialize their own object's resolved effects, not a name-only union" testMaterializeProcPseudocodeNameCollision
+    ]
   ]
 
 testMaterializeDecompositionCoslice :: IO ()
@@ -240,3 +258,96 @@ testMaterializeProcEffectsReturnValue = withHandle inMemory $ \conn -> do
   result <- materializeProcEffects seeds edges conn
   assertEqual "returned Map matches computeProcEffectClosure called directly"
     (computeProcEffectClosure seeds edges) result
+
+-- ---------------------------------------------------------------------------
+-- materializeProcPseudocode (Plan 221 Phase 2)
+
+ident :: Text -> Ident
+ident = mkIdentSynthetic "MaterializeTest fixture"
+
+envFor :: Text -> ScopedTypeEnv
+envFor obj = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty Map.empty (ident obj) Map.empty
+
+-- | Local row shape for reading back a @proc_pseudocode@ row.
+data ProcPseudocodeRow = ProcPseudocodeRow Text Text Text deriving (Eq, Show)
+
+instance FromRow ProcPseudocodeRow where
+  fromRow = ProcPseudocodeRow <$> field <*> field <*> field
+
+-- | Declares @name@ as callable on @obj@, resolvable via the ancestor-chain
+-- walk 'PB.Explain.Signatures'/'PB.Explain.Pseudocode' both use.
+sigMapWith :: Text -> Text -> IdentMap (Map.Map Ident (Either a SubSig))
+sigMapWith obj name = identMapInsertWith Map.union (ident obj)
+  (Map.singleton (ident name) (Right (SubSig [] (ident name) [] Nothing Nothing Nothing)))
+  identMapEmpty
+
+-- | Decode a @pseudocode_json@ column value into a 'Value', navigating
+-- @stripCamelCasePrefix@'d keys ("pcRootSig" -> "rootSig", etc. -- see
+-- 'PB.Pipeline.Serialise').
+decodeJson :: Text -> Value
+decodeJson raw = fromMaybe (error "pseudocode_json did not decode") (decodeStrict (TE.encodeUtf8 raw))
+
+field' :: Text -> Value -> Value
+field' k (Object m) = fromMaybe Null (KM.lookup (Key.fromText k) m)
+field' _ _          = Null
+
+testMaterializeProcPseudocodeRowPerProc :: IO ()
+testMaterializeProcPseudocodeRowPerProc = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let term = extractEffTable (EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ())
+      seedRows =
+        [ ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")
+        , ExplainSeedRow "w_b" "ue_open"    term (envFor "w_b")
+        ]
+  materializeProcPseudocode identMapEmpty Map.empty seedRows conn
+  rows <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode ORDER BY object, proc_name"
+  assertEqual "one row per retained procedure"
+    [("w_a", "ue_clicked"), ("w_b", "ue_open")]
+    [ (o, p) | ProcPseudocodeRow o p _ <- rows ]
+
+testMaterializeProcPseudocodeJsonShape :: IO ()
+testMaterializeProcPseudocodeJsonShape = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let term = extractEffTable (EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ())
+  materializeProcPseudocode identMapEmpty Map.empty [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
+  [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
+  let v = decodeJson raw
+  assertBool "rootRegion present" (field' "rootRegion" v /= Null)
+  assertBool "regions present" (field' "regions" v /= Null)
+
+testMaterializeProcPseudocodeEffectsReachJson :: IO ()
+testMaterializeProcPseudocodeEffectsReachJson = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let term = extractEffTable (ECall "helper" [] 1 Set.empty :: Eff () ())
+      sigMap = sigMapWith "w_a" "helper"
+      procEffects = Map.singleton ("w_a", "helper") (Set.singleton ReadsDb)
+  materializeProcPseudocode sigMap procEffects [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
+  [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
+  let effects = field' "effects" (field' "rootSig" (decodeJson raw))
+  assertEqual "rootSig.effects carries the ancestor-chain-resolved ReadsDb tag" (Array (pure (String "ReadsDb"))) effects
+
+testMaterializeProcPseudocodeNameCollision :: IO ()
+testMaterializeProcPseudocodeNameCollision = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let term = extractEffTable (ECall "helper" [] 1 Set.empty :: Eff () ())
+      sigMap = identMapInsertWith Map.union (ident "w_b") (Map.singleton (ident "helper") (Right (SubSig [] (ident "helper") [] Nothing Nothing Nothing)))
+                 (sigMapWith "w_a" "helper")
+      procEffects = Map.fromList
+        [ (("w_a", "helper"), Set.singleton ReadsDb)
+        , (("w_b", "helper"), Set.singleton WritesDb)
+        ]
+      seedRows =
+        [ ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")
+        , ExplainSeedRow "w_b" "ue_open"    term (envFor "w_b")
+        ]
+  materializeProcPseudocode sigMap procEffects seedRows conn
+  rows <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode ORDER BY object, proc_name"
+  let effectsFor raw = field' "effects" (field' "rootSig" (decodeJson raw))
+  case rows of
+    [ProcPseudocodeRow "w_a" _ rawA, ProcPseudocodeRow "w_b" _ rawB] -> do
+      assertEqual "w_a's own resolved tag" (Array (pure (String "ReadsDb"))) (effectsFor rawA)
+      assertEqual "w_b's own resolved tag, not w_a's" (Array (pure (String "WritesDb"))) (effectsFor rawB)
+    other -> error ("expected exactly 2 rows, got " <> show other)
+
+var :: Text -> Expr
+var name = ExLvalue (Lvalue [LvSegment (ident name) Nothing])

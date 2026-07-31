@@ -113,7 +113,7 @@ tests = testGroup "PB.Explain.Simplify"
       let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           term = EAssignWithRhs "y" (var "y") (var "x") 2 Nothing . ELetRef "blk1" :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
           simplified = simplifyPseudocode (safeVars ["x"]) pc
           nonRootRegions = Map.delete (pcRootRegion pc) (pcRegions simplified)
@@ -129,7 +129,7 @@ tests = testGroup "PB.Explain.Simplify"
             }
           term = EAssignWithRhs "al_x" (var "al_x") (ExInt "1") 1 Nothing :: Eff () ()
           effTerm = extractEffTable term
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap (Just (Right refParam)) sigs effTerm
           -- deliberately careless caller: includes the ref param's own
           -- name in locals, relying on simplifyPseudocode to still

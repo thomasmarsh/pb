@@ -2,7 +2,8 @@
 module PB.Pipeline.Serialise () where
 
 import PB.Prelude
-import Data.Aeson              (Options (..), ToJSON (..), defaultOptions, genericToJSON, (.=))
+import Data.Aeson              (Options (..), ToJSON (..), ToJSONKey (..), defaultOptions, genericToJSON, (.=))
+import Data.Aeson.Types        (toJSONKeyText)
 import qualified Data.Aeson as J
 import Data.Char               (isLower, toLower)
 
@@ -13,10 +14,14 @@ import PB.AST.Located     (Located)
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
+import PB.Analysis.CallClassify (EffectTag)
 import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
 import PB.Compile.InstrTypes   (InstrNode, InstrGraph)
 import PB.Compile.Flatten (WiringNode (..), WiringGraph (..))
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
+import PB.Explain.Regions     (RegionId, regionIdLabel)
+import PB.Explain.Signatures  (VarBinding, InferredSignature)
+import PB.Explain.Pseudocode  (PStmt, Pseudocode)
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
 --   "fnsReturnType" → "returnType", "srForward" → "forward".
@@ -145,3 +150,17 @@ instance ToJSON ProcedureSummary where
     , "globals_written" .= psGlobalsWritten s
      , "return_flows_to" .= psReturnFlowsTo s
      ]
+
+-- PB.Explain layer (Plan 221 Phase 2) — proc_pseudocode's serialised shape.
+-- EffectTag is a fixed-shape nullary-constructor enum (see proc_effects'
+-- own T.pack . show convention); RegionId stays opaque (its constructor is
+-- not exported -- see PB.Explain.Regions's own doc comment) so both its
+-- ToJSON and ToJSONKey go through the already-exported 'regionIdLabel'
+-- rather than a generic derive.
+instance ToJSON EffectTag where toJSON = genericToJSON customOptions
+instance ToJSON RegionId where toJSON = toJSON . regionIdLabel
+instance ToJSONKey RegionId where toJSONKey = toJSONKeyText regionIdLabel
+instance ToJSON VarBinding where toJSON = genericToJSON customOptions
+instance ToJSON InferredSignature where toJSON = genericToJSON customOptions
+instance ToJSON PStmt where toJSON = genericToJSON customOptions
+instance ToJSON Pseudocode where toJSON = genericToJSON customOptions

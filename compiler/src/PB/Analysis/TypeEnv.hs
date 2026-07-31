@@ -16,6 +16,7 @@ module PB.Analysis.TypeEnv
   , lookupScopedVarOrSelf
   , lookupInstanceVarOwner
   , ancestorChain
+  , resolveCalleeTarget
   , extractNestedTypeDecls
   ) where
 
@@ -24,13 +25,14 @@ import PB.AST.BodyStmt (BodyStmt (..))
 import PB.AST.DataWindow (DwTable)
 import PB.AST.DwPropertySchema (DwControlKind)
 import PB.AST.Ident    (Ident, IdentMap, IdentSet, identCanon, identMapEmpty, identMapInsertWith,
-                         identSetFromList, identSetUnion, mkIdent)
+                         identMapLookup, identSetFromList, identSetUnion, mkIdent, mkIdentSynthetic)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
 import PB.Analysis.ControlHierarchy (ControlIndex)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+import qualified Data.Text       as T
 
 -- | Extract type declarations for inheritance resolution. A backtick-declared
 -- ancestor (e.g. @w_form_tab2`page1@) resolves to just the ancestor class
@@ -335,3 +337,26 @@ lookupInstanceVarOwner ws start name = go (ancestorChain start (weHierarchy ws))
     go (anc:rest) = case Map.lookup anc (weInstanceVars ws) >>= Map.lookup name of
       Just ty -> Just (anc, ty)
       Nothing -> go rest
+
+-- | Resolve a bare (dot-free) call name to the object (and its declaration
+-- payload) that actually owns it in @env@'s own ancestor chain -- the
+-- object a PB unqualified call site dispatches to. 'Nothing' for a dotted
+-- name (needs real receiver-type resolution, out of scope for this walk)
+-- or a name absent from every object in the chain (unresolved/external
+-- call). Mirrors 'lookupInstanceVarOwner''s "which ancestor actually
+-- declares this" shape, generalized over @sigMap@'s payload so
+-- 'PB.Explain.Pseudocode.resolveCallee' (declared 'FnSig'\/'SubSig') and
+-- 'PB.Explain.Signatures' (transitive effect-tag lookup) share one walk
+-- instead of each re-implementing it.
+resolveCalleeTarget :: ScopedTypeEnv -> IdentMap (Map.Map Ident v) -> Text -> Maybe (Ident, v)
+resolveCalleeTarget env sigMap name
+  | T.any (== '.') name = Nothing
+  | otherwise =
+      let nameIdent = mkIdentSynthetic
+            "PB.Analysis.TypeEnv.resolveCalleeTarget: bare call name has no in-memory Ident at this layer"
+            name
+          chain = ancestorChain (steObject env) (steHierarchy env)
+          lookupIn obj = case identMapLookup obj sigMap of
+            Just (realObj, procs) -> (,) realObj <$> Map.lookup nameIdent procs
+            Nothing                -> Nothing
+      in listToMaybe (mapMaybe lookupIn chain)

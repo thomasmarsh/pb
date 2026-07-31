@@ -40,6 +40,7 @@ import PB.Analysis.TypeEnv (ScopedTypeEnv (..), WorkspaceEnv, lookupScopedVar, l
                              isDescendantOf, procEnv)
 import PB.Runtime.EffectAnnotations (realEffectAnnotations)
 import Control.DeepSeq (NFData (..))
+import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -61,7 +62,7 @@ data CallKind = PureCall | SuspendCall deriving (Eq, Show)
 -- function of declared inputs.
 data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
                | ReadsControlState | WritesControlState
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
 
 -- | A fixed-shape enum has no substructure left to force once the
 -- constructor itself is evaluated -- required so 'Data.Set.Set' 'EffectTag'

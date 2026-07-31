@@ -16,25 +16,27 @@ module PB.Explain.Signatures
 import PB.Prelude hiding (id, (.))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import GHC.Generics (Generic)
 import PB.AST.Expr (Expr (..))
-import PB.AST.Ident (Ident, mkIdentSynthetic)
+import PB.AST.Ident (Ident, IdentMap, identOrig, mkIdentSynthetic)
+import PB.AST.SourceFile (FnSig, SubSig)
 import PB.AST.Type (PbType)
 import PB.Analysis.CallClassify (EffectTag)
 import PB.Analysis.Dataflow (lvRoot, lvalueSubscriptIdents, walkExprIdentsExcludingCallees)
-import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVarOrSelf)
+import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVarOrSelf, resolveCalleeTarget)
 import PB.Compile.IR (EffTerm)
 import PB.Explain.Regions (EffLeaf (..), Region, RegionId, RegionOps (..), computeRegionsWith)
 
 data VarBinding = VarBinding
   { vbName :: Ident
   , vbType :: Maybe PbType
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data InferredSignature = InferredSignature
   { sigInputs  :: [VarBinding]
   , sigOutputs :: [VarBinding]
   , sigEffects :: Set.Set EffectTag
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 -- | Per-region free\/live-variable accumulator threaded through
 -- 'computeRegionsWith'. 'saLocallyDefined' tracks definite assignment —
@@ -59,12 +61,17 @@ sigAccEmpty = SigAcc Set.empty Set.empty Set.empty Set.empty Set.empty
 -- | One atomic leaf's own contribution, relative to a fresh (empty) local-
 -- def context — 'sigAccSeq' reconciles that isolation against whatever is
 -- already locally defined when it threads this into a running
--- accumulator. @resolveEffects@ maps a resolved callee name to its
--- transitive effect tags ('PB.Analysis.EffectClosure'); a name absent from
--- it (unresolved, or resolved but genuinely effect-free) contributes
--- nothing beyond the leaf's own direct tags.
-sigAccLeaf :: Map.Map Text (Set.Set EffectTag) -> EffLeaf -> SigAcc
-sigAccLeaf resolveEffects leaf = case leaf of
+-- accumulator. A call leaf's transitive effect tags are resolved via
+-- 'resolveCalleeTarget' against @env@\/@sigMap@ (the same ancestor-chain
+-- walk 'PB.Explain.Pseudocode.resolveCallee' uses to resolve a callee's
+-- declared signature), then looked up in @procEffects@
+-- ('PB.Analysis.EffectClosure.computeProcEffects''s real @(object,
+-- proc_name)@-keyed closure) — an unresolved call (dotted name, or a bare
+-- name absent from every object in the chain) contributes nothing beyond
+-- the leaf's own direct tags, same as a resolved-but-genuinely-effect-free
+-- call.
+sigAccLeaf :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map (Text, Text) (Set.Set EffectTag) -> EffLeaf -> SigAcc
+sigAccLeaf env sigMap procEffects leaf = case leaf of
   LAssign var _ln _ty ->
     let d = defIdent var Nothing
     in sigAccEmpty { saLocallyDefined = Set.singleton d, saAllDefs = Set.singleton d }
@@ -86,7 +93,10 @@ sigAccLeaf resolveEffects leaf = case leaf of
     readsOnly rs = sigAccEmpty { saFreeReads = rs, saAllUses = rs }
     callLeaf name callArgs tags =
       let rs  = foldMap walkExprIdentsExcludingCallees callArgs
-          eff = tags <> Map.findWithDefault Set.empty name resolveEffects
+          resolvedEff = case resolveCalleeTarget env sigMap name of
+            Just (obj, _sig) -> Map.findWithDefault Set.empty (identOrig obj, name) procEffects
+            Nothing           -> Set.empty
+          eff = tags <> resolvedEff
       in sigAccEmpty { saFreeReads = rs, saAllUses = rs, saEffects = eff }
 
 -- | The assigned variable's real 'Ident'. Every real (FromSSA-compiled)
@@ -141,11 +151,11 @@ sigAccChoice a b = SigAcc
 -- free/live-variable purposes -- the referenced region's own reads/defs are
 -- already captured under its own 'RegionId' in the accumulator map, read
 -- back out by 'computeSignatures' via 'allUsesElsewhere'.
-sigOps :: Map.Map Text (Set.Set EffectTag) -> RegionOps SigAcc
-sigOps resolveEffects = RegionOps
-  { opLeaf   = sigAccLeaf resolveEffects
+sigOps :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map (Text, Text) (Set.Set EffectTag) -> RegionOps SigAcc
+sigOps env sigMap procEffects = RegionOps
+  { opLeaf   = sigAccLeaf env sigMap procEffects
   , opFanIn  = sigAccChoice
-  , opBranch = \cond ln t f -> sigAccSeq (sigAccLeaf resolveEffects (LBranchCond cond ln)) (sigAccChoice t f)
+  , opBranch = \cond ln t f -> sigAccSeq (sigAccLeaf env sigMap procEffects (LBranchCond cond ln)) (sigAccChoice t f)
   , opLoop   = \_ln body -> sigAccChoice body sigAccEmpty
   , opRef    = \_ _ -> sigAccEmpty
   , opSeq    = sigAccSeq
@@ -161,9 +171,9 @@ sigOps resolveEffects = RegionOps
 -- an 'PB.Explain.Regions.ELoop' body produces; this falls out of the
 -- general def\/use sets with no loop-specific case in the walk itself,
 -- only in this final per-region derivation.
-computeSignatures :: Int -> ScopedTypeEnv -> Map.Map Text (Set.Set EffectTag) -> EffTerm a b -> Map.Map RegionId InferredSignature
-computeSignatures threshold env resolveEffects term =
-  let (_root, accs) = computeRegionsWith threshold (sigOps resolveEffects) term :: (Region, Map.Map RegionId SigAcc)
+computeSignatures :: Int -> ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map (Text, Text) (Set.Set EffectTag) -> EffTerm a b -> Map.Map RegionId InferredSignature
+computeSignatures threshold env sigMap procEffects term =
+  let (_root, accs) = computeRegionsWith threshold (sigOps env sigMap procEffects) term :: (Region, Map.Map RegionId SigAcc)
       allUsesElsewhere rid = Map.foldrWithKey
         (\rid' a acc -> if rid' == rid then acc else acc <> saAllUses a)
         Set.empty accs

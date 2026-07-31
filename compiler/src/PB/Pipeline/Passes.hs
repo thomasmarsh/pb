@@ -28,6 +28,8 @@ import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Analysis.TaintClosure qualified as TaintClosure
 import PB.Analysis.EffectClosure qualified as EffectClosure
 import PB.Analysis.CallClassify (EffectTag)
+import PB.AST.SourceFile (FnSig, SubSig)
+import PB.Explain.Materialize (ExplainSeedRow, materializeProcPseudocode)
 import Control.DeepSeq       (force)
 import Control.Exception    (evaluate)
 import PB.Pipeline.Progress qualified as Progress
@@ -86,11 +88,15 @@ data PhaseAData = PhaseAData
     -- ^ Each procedure's own direct effect tags (from
     -- 'PB.Analysis.EffectClosure.foldEffectClosureEff'), seeding the
     -- corpus-wide closure in 'runPhaseB' (Plan 221 Phase 1).
+  , padExplainSeedRows   :: ![ExplainSeedRow]
+    -- ^ Each procedure's own retained 'PB.Explain.Materialize.ExplainSeedRow',
+    -- folded into @proc_pseudocode@ once the effect closure above exists
+    -- (Plan 221 Phase 2) -- see 'materializeProcPseudocode'.
   } deriving (Eq, Show)
 
 -- | Empty initial 'PhaseAData'.
 emptyPhaseAData :: PhaseAData
-emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] [] []
+emptyPhaseAData = PhaseAData [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] []
 
 -- | Proof-of-completion token for 'resolveTypesAndCalls': minted once
 -- @resolved_calls@ is populated, consumed by 'buildCallGraphAndTaint' and
@@ -257,8 +263,8 @@ timedQueryRows label action = Progress.timedStepRows label (do
 --   genuine data dependency. Finally the schema materializer projects its
 --   derived output table into its API-facing shape (@path_leg_fwd@\/
 --   @path_leg_back@->@decomposition_coslice@).
-runPhaseB :: Handle -> Maybe Text -> Map.Map Ident Ident -> IdentMap IdentSet -> IdentMap IdentSet -> PhaseAData -> IO ()
-runPhaseB conn mDefaultNamespace hierarchy procMap callableProcMap pad =
+runPhaseB :: Handle -> Maybe Text -> Map.Map Ident Ident -> IdentMap IdentSet -> IdentMap IdentSet -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> PhaseAData -> IO ()
+runPhaseB conn mDefaultNamespace hierarchy procMap callableProcMap callableSigMap pad =
   let PhaseAData{..} = pad
   in do
   Progress.emitEvent (Progress.EvPhase "B")
@@ -283,7 +289,8 @@ runPhaseB conn mDefaultNamespace hierarchy procMap callableProcMap pad =
     (fetchSchemaCategoryInputs conn padDwRetrieveColumns padDwJoinLegs padDwWriteColumns padDwWhereColumns padCatFootprintCols)
     (sinkSchemaCategoryOutput conn)
   dcRows  <- initDeadCodeInput conn resolvedCallRows
-  _procEffects <- computeProcEffects conn padEffectSeedRows (Relations.dcrCallEdges dcRows)
+  procEffects <- computeProcEffects conn padEffectSeedRows (Relations.dcrCallEdges dcRows)
+  computeProcPseudocode conn callableSigMap procEffects padExplainSeedRows
   dcReady <- computeDeadCodeClosure conn dcRows
   schRows <- initSchemaInput conn schGraph catFks
   scReady <- computeSchemaClosure conn schRows
@@ -445,6 +452,18 @@ computeProcEffects conn seedRows callEdges =
       | e <- callEdges
       ]
       conn
+
+-- | Fold 'PB.Explain.Regions'\/'PB.Explain.Signatures'\/
+-- 'PB.Explain.Pseudocode' over every retained procedure and materialize
+-- @proc_pseudocode@, over the same 'computeProcEffects' closure -- no
+-- second corpus-wide parse+compile pass (Plan 221 Phase 2 Decision: the
+-- 'EffTerm's are already retained in-memory from Phase A).
+computeProcPseudocode
+  :: Handle -> IdentMap (Map.Map Ident (Either FnSig SubSig))
+  -> Map.Map (Text, Text) (Set.Set EffectTag) -> [ExplainSeedRow] -> IO ()
+computeProcPseudocode conn callableSigMap procEffects seedRows =
+  Progress.timedStep "Explain pseudocode" $
+    materializeProcPseudocode callableSigMap procEffects seedRows conn
 
 -- | Materialize the schema input relations view (@leg_source@\/@stmt@\/
 -- @seed@\/@join_leg@\/@fk@). Idempotent (@CREATE OR REPLACE VIEW@). Must run

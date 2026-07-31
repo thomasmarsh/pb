@@ -18,17 +18,18 @@
 module PB.Explain.Pseudocode
   ( PStmt (..)
   , Pseudocode (..)
+  , resolveCallee
   , buildPseudocode
   ) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Data.Map.Strict as Map
-import qualified Data.Text as T
+import GHC.Generics (Generic)
 import PB.AST.Expr (Expr (..))
-import PB.AST.Ident (Ident, IdentMap, identMapLookup, mkIdentSynthetic)
+import PB.AST.Ident (Ident, IdentMap)
 import PB.AST.SourceFile (FnSig, SubSig)
 import PB.AST.Type (PbType)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..), ancestorChain)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), resolveCalleeTarget)
 import PB.Compile.IR (EffTerm)
 import PB.Explain.Regions (EffLeaf (..), RegionId, Region (..), RegionOps (..), computeRegionsWith)
 import PB.Explain.Signatures (InferredSignature)
@@ -40,42 +41,32 @@ data PStmt
   | PLoop [PStmt] Int
   | PReturn Expr Int
   | PRegionRef RegionId (Maybe (Int, Int)) (Maybe InferredSignature)
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data Pseudocode = Pseudocode
   { pcDeclaredSig :: Maybe (Either FnSig SubSig)
   , pcRootRegion  :: RegionId
   , pcRootSig     :: Maybe InferredSignature
   , pcRegions     :: Map.Map RegionId [PStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 -- | Resolve a bare (dot-free) call name to its declaring object's own
--- ancestor chain in @sigMap@ ('PB.Analysis.TypeEnv.buildCallableSigMap').
--- Any dotted name (@this.foo@, @recv.method@) renders name-only: real
+-- ancestor chain in @sigMap@ ('PB.Analysis.TypeEnv.buildCallableSigMap'),
+-- via the shared 'PB.Analysis.TypeEnv.resolveCalleeTarget' walk (also used
+-- by 'PB.Explain.Signatures' for transitive effect-tag lookup -- both need
+-- the identical "which ancestor owns this bare name" resolution). Any
+-- dotted name (@this.foo@, @recv.method@) renders name-only: real
 -- receiver-type resolution needs 'PB.Analysis.TypeResolve''s heavier
 -- 'CallSite'\/'ResolvedCall' machinery, sourced from token-level extraction
 -- this pure 'EffTerm'-only walk has no access to -- matches the plan's own
 -- Non-Goal that an unresolved call degrades to name-only rather than
--- blocking. 'mkIdentSynthetic': 'Eff'\'s 'ECall'\/'ESuspend' carry only a
--- flattened 'Text' callee name (ident-minting skill verdict, Plan 218 Phase
--- 4 Stage 0b: the real per-segment 'Ident's are discarded by
--- 'PB.Analysis.CallClassify.calleeName' before 'Eff' construction, and
--- widening 'ECall'\/'ESuspend' to carry one is blocked by the shared
--- 'PB.Compile.IR.Effectful' 'callProc' method signature across 4+ other
--- instances -- logged to 'BACKLOG.md' as its own follow-on gap, not fixed
--- here).
+-- blocking ('Eff'\'s 'ECall'\/'ESuspend' carry only a flattened 'Text'
+-- callee name; widening them to carry a resolved 'Ident' is blocked by the
+-- shared 'PB.Compile.IR.Effectful' 'callProc' method signature across 4+
+-- other instances -- logged to 'BACKLOG.md' as its own follow-on gap, not
+-- fixed here).
 resolveCallee :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Text -> Maybe (Either FnSig SubSig)
-resolveCallee env sigMap name
-  | T.any (== '.') name = Nothing
-  | otherwise =
-      let nameIdent = mkIdentSynthetic
-            "PB.Explain.Pseudocode: PCall callee name has no in-memory Ident at this layer (see resolveCallee's own doc comment)"
-            name
-          chain = ancestorChain (steObject env) (steHierarchy env)
-          lookupIn obj = case identMapLookup obj sigMap of
-            Just (_, procs) -> Map.lookup nameIdent procs
-            Nothing         -> Nothing
-      in listToMaybe (mapMaybe lookupIn chain)
+resolveCallee env sigMap name = snd <$> resolveCalleeTarget env sigMap name
 
 -- | One atomic 'EffLeaf' contribution's own 'PStmt' (a singleton list).
 -- 'LBranchCond' is unreachable through this module's own 'opBranch' (which

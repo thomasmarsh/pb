@@ -38,11 +38,12 @@ import PB.Compile.Flatten
 import PB.Compile.InstrTypes (linearize)
 import PB.Analysis.CallClassify (ProcUnit (..), forProcedures, EffectTag)
 import PB.Analysis.EffectClosure (foldEffectClosureEff)
+import PB.Explain.Materialize (ExplainSeedRow (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, withDwTables,
                                  withDwControls, withDwParamBindings, procEnv,
-                                 extractNestedTypeDecls, buildCallableProcMap)
+                                 extractNestedTypeDecls, buildCallableProcMap, buildCallableSigMap)
 import PB.Analysis.DwBuiltins  (classifyDwControlKind)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
@@ -184,6 +185,10 @@ data CompiledPs = CompiledPs
   , cpsTaintIntraEdges :: [TaintIntraEdgeRow]
   , cpsTaintReturnRows :: [TaintReturnRow]
   , cpsEffectSeedRows :: [(Text, Text, Set.Set EffectTag)]
+  , cpsExplainSeedRows :: [ExplainSeedRow]
+    -- ^ Each procedure's own retained 'EffTerm'\/'ScopedTypeEnv' (Plan 221
+    -- Phase 2), folded into @proc_pseudocode@ once 'runPhaseB''s effect
+    -- closure exists -- see 'PB.Explain.Materialize.materializeProcPseudocode'.
   , cpsSourceContent :: Maybe SourceFileRow
   , cpsIdentifierTokens :: [IdentifierTokenRow]
   , cpsWindowOpens       :: [WindowOpenRef]
@@ -423,7 +428,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                , typeMismatches
                , taintEdgeRows
                , taintReturnRows
-               , (obj, pName, foldEffectClosureEff effTerm) )
+               , (obj, pName, foldEffectClosureEff effTerm)
+               , ExplainSeedRow obj pName effTerm typeCheckEnv )
           | ((sLine, eLine), pu) <- procSpecs
           , let pName = puName pu; pType = puKind pu; params = puParams pu
                 retType = puRetType pu; retTypeSpan = puRetTypeSpan pu; body = puBody pu
@@ -460,23 +466,24 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                              (renderObjectCategory (objectCategoryForFile (T.unpack fp)))
                              (provenanceSpan (identSpan objIdent))
       , cpsStructureRows = structureRows
-      , cpsProcRows      = [ r | (r, _, _, _, _, _, _, _) <- procs ]
+      , cpsProcRows      = [ r | (r, _, _, _, _, _, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
-      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _, _) <- procs ]
-      , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms, _, _, _) <- procs ]
+      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _, _, _) <- procs ]
+      , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms, _, _, _, _) <- procs ]
       , cpsCallSites     = css
       , cpsVarRefs       = vrs
       , cpsGlobalVars    = gvs
-      , cpsProcFlows     = [ f | (_, f, _, _, _, _, _, _) <- procs ]
+      , cpsProcFlows     = [ f | (_, f, _, _, _, _, _, _, _) <- procs ]
       , cpsSqlStmts      = sqlRows
       , cpsSqlStmtColumns = sqlColRows
       , cpsSqlStmtFilters = sqlFilterRows
       , cpsSqlStmtTables = sqlTableRows
       , cpsSqlLintIssues = lintIssueRows
-      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _, _, _, _) <- procs ]
-      , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes, _, _) <- procs ]
-      , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs, _) <- procs ]
-      , cpsEffectSeedRows = [ esr | (_, _, _, _, _, _, _, esr) <- procs ]
+      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _, _, _, _, _) <- procs ]
+      , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes, _, _, _) <- procs ]
+      , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs, _, _) <- procs ]
+      , cpsEffectSeedRows = [ esr | (_, _, _, _, _, _, _, esr, _) <- procs ]
+      , cpsExplainSeedRows = [ ex | (_, _, _, _, _, _, _, _, ex) <- procs ]
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       , cpsIdentifierTokens = identifierTokenRows fp (pfTokens pf)
       , cpsWindowOpens       = windowOpens
@@ -776,6 +783,7 @@ accumulatePhaseAData pad (CFPs r) = pad
   , padObjectRows       = cpsObjectRow r : padObjectRows pad
   , padStructureRows    = cpsStructureRows r ++ padStructureRows pad
   , padEffectSeedRows   = cpsEffectSeedRows r ++ padEffectSeedRows pad
+  , padExplainSeedRows  = cpsExplainSeedRows r ++ padExplainSeedRows pad
   }
 accumulatePhaseAData pad (CFDw r) = pad
   { padDwWriteColumns    = map dwRetrieveColumnRowToDwRetrieveColRow (cdDwWriteColumns r) ++ padDwWriteColumns pad
@@ -1160,6 +1168,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- Phase B SQL queries now see the complete data.
     let phaseAData = foldl' accumulatePhaseAData emptyPhaseAData allCfs
     runPhaseB conn mDefaultNamespace (weHierarchy wsEnv) (weProcMap wsEnv) (buildCallableProcMap allParsedSrFiles)
+      (buildCallableSigMap allParsedSrFiles)
       phaseAData  -- Phase B: link analysis (passes 5–8)
 
   errors <- readIORef errCount
