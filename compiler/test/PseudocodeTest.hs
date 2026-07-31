@@ -118,4 +118,13 @@ tests = testGroup "PB.Explain.Pseudocode"
       let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap (Just (Right helperSig)) noSig (extractEffTable term)
       in pcDeclaredSig pc @?= Just (Right helperSig)
+
+  , testCase "the root Pseudocode's pcRootSig is Just its own InferredSignature from the sigs map" $
+      let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
+          effTerm = extractEffTable term
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
+      in do
+           assertBool "expected the sigs map to carry an entry for the root region" (isJust (Map.lookup (pcRootRegion pc) sigs))
+           pcRootSig pc @?= Map.lookup (pcRootRegion pc) sigs
   ]

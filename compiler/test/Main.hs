@@ -58,6 +58,7 @@ import qualified CloneDetectTest
 import qualified RegionsTest
 import qualified SignaturesTest
 import qualified PseudocodeTest
+import qualified RenderTextTest
 
 
 import Prelude
@@ -126,4 +127,5 @@ tests = testGroup "pb-compiler"
   , RegionsTest.tests
   , SignaturesTest.tests
   , PseudocodeTest.tests
+  , RenderTextTest.tests
   ]

@@ -45,6 +45,7 @@ data PStmt
 data Pseudocode = Pseudocode
   { pcDeclaredSig :: Maybe (Either FnSig SubSig)
   , pcRootRegion  :: RegionId
+  , pcRootSig     :: Maybe InferredSignature
   , pcRegions     :: Map.Map RegionId [PStmt]
   } deriving (Eq, Show)
 
@@ -114,5 +115,6 @@ buildPseudocode threshold env sigMap declaredSig sigs term =
   in Pseudocode
        { pcDeclaredSig = declaredSig
        , pcRootRegion  = regionId root
+       , pcRootSig     = Map.lookup (regionId root) sigs
        , pcRegions     = regionsMap
        }
