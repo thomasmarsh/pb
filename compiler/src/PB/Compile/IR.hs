@@ -46,6 +46,7 @@ import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Map.Strict as Map
 import GHC.Exts (Any)
 import PB.AST.Expr (Expr (..))
+import PB.AST.Type (PbType)
 import PB.Compile.ValueModel (Value (..))
 
 -- ============================================================================
@@ -155,7 +156,7 @@ branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
 -- 'SsaBranch'/'SsaSwitch' site: the arms are effectful 'Eff' blocks, the
 -- test is a pure 'Expr', and 'EFanIn' (not 'PFork') is the join — choice,
 -- not duplication (see 'EFanIn').
-branchEff :: Expr -> Eff env b -> Eff env b -> Eff env b
+branchEff :: Expr -> Eff env b -> Eff env b -> Int -> Eff env b
 branchEff = EBranch
 
 -- ============================================================================
@@ -214,10 +215,15 @@ data Eff a b where
   -- the body it names lives once, in the enclosing 'EffTerm''s table.
   ELetRef :: Text -> Eff a b
   EComp   :: Eff b c -> Eff a b -> Eff a c
-  EAssign       :: Text -> Eff (env, Value) env
-  EAssignWithRhs :: Text -> Expr -> Expr -> Eff env env
-  ECall         :: Text -> [Expr] -> Eff args ()
-  ESuspend      :: Text -> [Expr] -> Eff args ()
+  -- | Trailing 'Int': the originating source line (0 for a placeholder built
+  -- via the 'Effectful' instance below, which carries no provenance — see
+  -- its own note). Trailing 'Maybe' 'PbType': the assigned variable's
+  -- declared type from 'PB.Analysis.TypeEnv.ScopedTypeEnv', or 'Nothing'
+  -- when the SSA temp has no scope entry (never an error).
+  EAssign       :: Text -> Int -> Maybe PbType -> Eff (env, Value) env
+  EAssignWithRhs :: Text -> Expr -> Expr -> Int -> Maybe PbType -> Eff env env
+  ECall         :: Text -> [Expr] -> Int -> Eff args ()
+  ESuspend      :: Text -> [Expr] -> Int -> Eff args ()
   ESplitValue   :: Eff (env, Value) (Either env env)
   -- Sum-elimination (branch fan-in). The arms are effectful
   -- ('PB.Compile.FromSSA.compileSsaToEff's branch targets contain
@@ -236,9 +242,13 @@ data Eff a b where
   -- composition). 'branchEff' is now just @EBranch@; the structural
   -- expansion this replaces is still what every existing instance's
   -- 'branchK' body computes — behaviour-preserving.
-  EBranch  :: Expr -> Eff a c -> Eff a c -> Eff a c
-  ELoop    :: Eff a (Either a b) -> Eff a b
-  EReturn  :: Expr -> Eff a b
+  -- | Trailing 'Int': the condition's own source line.
+  EBranch  :: Expr -> Eff a c -> Eff a c -> Int -> Eff a c
+  -- | Trailing 'Int': the loop header's own source line (the originating
+  -- @BsFor@\/@BsDo@).
+  ELoop    :: Eff a (Either a b) -> Int -> Eff a b
+  -- | Trailing 'Int': the @return@ statement's own source line.
+  EReturn  :: Expr -> Int -> Eff a b
 
 instance Category Eff where
   id  = J PId
@@ -249,17 +259,26 @@ instance Cocartesian Eff where
   inr   = J PInr
   (|||) = EFanIn
 
+-- | This instance's own 'assign'\/'callProc'\/'suspend'\/'ret'\/'loopK'\/
+-- 'assignWithRhs' carry no source line or type -- the 'Effectful' typeclass
+-- method signatures deliberately don't change (see 'PB.Compile.IR.Eff''s
+-- Layer 0a\/0b doc note), so there is nothing to plumb through here. This
+-- path is confirmed dead in production: 'PB.Compile.FromSSA' builds every
+-- real 'Eff' term via direct GADT construction (never imports 'Effectful'
+-- at all), so every 0\/'Nothing' below is a placeholder for hand-built test
+-- terms only, never a real compiled value. 'branchK' is unaffected — its
+-- derivation never touches 'EBranch'.
 instance Effectful Eff where
   eval e          = J (PEval e)
-  assign var      = EAssign var
+  assign var      = EAssign var 0 Nothing
   lookup _        = error "Eff.lookup: dead (compileSsa never emits lookup)"
-  suspend n as    = ESuspend n as
-  callProc n as   = ECall n as
+  suspend n as    = ESuspend n as 0
+  callProc n as   = ECall n as 0
   splitValue      = ESplitValue
-  ret e           = EReturn e
-  loopK body      = ELoop body
+  ret e           = EReturn e 0
+  loopK body      = ELoop body 0
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
-  assignWithRhs var lhs e = EAssignWithRhs var lhs e
+  assignWithRhs var lhs e = EAssignWithRhs var lhs e 0 Nothing
 
 -- ============================================================================
 -- 4. The Eff shared-term table
@@ -299,8 +318,8 @@ inlineEffTable (EffTerm spine table) = go spine
       Nothing   -> error ("inlineEffTable: unbound ELetRef " <> show bid)
     go (EComp g f)    = EComp (go g) (go f)
     go (EFanIn a b)   = EFanIn (go a) (go b)
-    go (EBranch cond t f) = EBranch cond (go t) (go f)
-    go (ELoop body)   = ELoop (go body)
+    go (EBranch cond t f ln) = EBranch cond (go t) (go f) ln
+    go (ELoop body ln) = ELoop (go body) ln
     go other          = other
 
 -- | The Freyd fold: interpret an 'EffTerm' into any target category that
@@ -326,15 +345,21 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
     go :: forall x y. Eff x y -> Map.Map Text Any -> (k x y, Map.Map Text Any)
     go (J p)              m = (foldPure p, m)
     go (EComp g f)        m = case go g m of (gK, m1) -> case go f m1 of (fK, m2) -> (gK . fK, m2)
-    go (EAssign var)      m = (assign var, m)
-    go (EAssignWithRhs v lhs e') m = (assignWithRhs v lhs e', m)
-    go (ECall n as)       m = (callProc n as, m)
-    go (ESuspend n as)    m = (suspend n as, m)
+    -- The trailing line\/type fields are read-and-dropped here: 'Effectful
+    -- k''s methods carry no such parameter (their signatures don't change
+    -- — see 'PB.Compile.IR.Eff''s Layer 0a\/0b doc note), so a generic fold
+    -- into an arbitrary target category has nothing to forward them to.
+    -- Direct consumers of provenance (a future 'PB.Explain.*') walk
+    -- 'Eff'\/'EffTerm' directly instead of going through this fold.
+    go (EAssign var _ln _ty)      m = (assign var, m)
+    go (EAssignWithRhs v lhs e' _ln _ty) m = (assignWithRhs v lhs e', m)
+    go (ECall n as _ln)   m = (callProc n as, m)
+    go (ESuspend n as _ln) m = (suspend n as, m)
     go ESplitValue        m = (splitValue, m)
-    go (EBranch cond t f) m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (branchK cond tK fK, m2)
+    go (EBranch cond t f _ln) m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (branchK cond tK fK, m2)
     go (EFanIn t f)       m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (tK ||| fK, m2)
-    go (ELoop body)       m = case go body m of (bK, m1) -> (loopK bK, m1)
-    go (EReturn e)        m = (ret e, m)
+    go (ELoop body _ln)   m = case go body m of (bK, m1) -> (loopK bK, m1)
+    go (EReturn e _ln)    m = (ret e, m)
     go (ELetRef bid)      m = case Map.lookup bid m of
       Just cached -> (unsafeCoerce cached, m)
       Nothing     -> case Map.lookup bid table of

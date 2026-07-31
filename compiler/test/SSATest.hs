@@ -11,6 +11,8 @@ import PB.AST.Located      (Located (..))
 import PB.AST.Type          (PbType (..))
 import PB.Compile.SSA
 import PB.Compile.LoopAnalysis (ssaValToExpr)
+import PB.Compile.IR       (Eff (..), EffTerm (..))
+import PB.Compile.FromSSA  (compileSsaToEff)
 import PB.Analysis.TypeEnv  (ScopedTypeEnv (..))
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
 import PB.Lexing.Token      (Token (..), TokenKind (..), SourceSpan (..))
@@ -70,20 +72,20 @@ entryBlock :: SsaProc -> SsaBlock
 entryBlock sa = getBlock sa (spEntry sa)
 
 termSuccessors :: SsaTerm -> [Text]
-termSuccessors (SsaGoto dst)          = [dst]
-termSuccessors (SsaBranch _ t f)      = [t, f]
-termSuccessors (SsaSwitch _ pairs d)  = d : map snd pairs
-termSuccessors (SsaReturn _)          = []
-termSuccessors SsaBreak               = []
-termSuccessors SsaContinue            = []
+termSuccessors (SsaGoto _ dst)          = [dst]
+termSuccessors (SsaBranch _ _ t f)      = [t, f]
+termSuccessors (SsaSwitch _ _ pairs d)  = d : map snd pairs
+termSuccessors (SsaReturn _ _)          = []
+termSuccessors (SsaBreak _)             = []
+termSuccessors (SsaContinue _)          = []
 
 isBranchTerm :: SsaTerm -> Bool
 isBranchTerm (SsaBranch {}) = True
 isBranchTerm _              = False
 
 isBareReturnTerm :: SsaTerm -> Bool
-isBareReturnTerm (SsaReturn Nothing) = True
-isBareReturnTerm _                   = False
+isBareReturnTerm (SsaReturn _ Nothing) = True
+isBareReturnTerm _                     = False
 
 totalAssigns :: SsaProc -> Int
 totalAssigns sa = sum [ length (sbAssigns b) | b <- Map.elems (spBlocks sa) ]
@@ -97,7 +99,7 @@ tests = testGroup "SSA"
     [ testCase "empty body produces one block with return" $ do
         let sa = buildSsa emptyEnv "proc" []
         blockCount sa @?= 1
-        sbTerm (entryBlock sa) @?= SsaReturn Nothing
+        sbTerm (entryBlock sa) @?= SsaReturn 0 Nothing
 
     , testCase "single assign produces one block, one var" $ do
         let sa = buildSsa emptyEnv "proc"
@@ -127,7 +129,7 @@ tests = testGroup "SSA"
                   , at 2 (BsAssign (lv1 "y") (ExBinOp (ExLvalue (lv1 "x")) BopAdd (ExInt "1")))
                   ]
         case sbAssigns (entryBlock sa) of
-          [_, SsaAssign _ rhs _] -> case rhs of
+          [_, SsaAssign _ rhs _ _] -> case rhs of
             SsaBinOp _ (SsaVarRef sv) _ -> identOrig (svName sv) @?= "x"
             _ -> assertBool "expected SsaBinOp with SsaVarRef" False
           other -> assertBool ("expected two assigns, got " <> show (length other)) (length other == 2)
@@ -169,7 +171,7 @@ tests = testGroup "SSA"
             sa = buildSsa emptyEnv "proc"
                   [at 1 (BsAssign (lv1 "li_level") (ExLvalue rhsLv))]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign _ (SsaConst (ExLvalue lv)) _] -> lv @?= rhsLv
+          [SsaAssign _ (SsaConst (ExLvalue lv)) _ _] -> lv @?= rhsLv
           other -> assertBool ("expected one SsaConst-wrapped assign, got " <> show other) False
 
     , testCase "subscripted single-segment lvalue RHS is not collapsed either" $ do
@@ -177,7 +179,7 @@ tests = testGroup "SSA"
             sa = buildSsa emptyEnv "proc"
                   [at 1 (BsAssign (lv1 "x") (ExLvalue rhsLv))]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign _ (SsaConst (ExLvalue lv)) _] -> lv @?= rhsLv
+          [SsaAssign _ (SsaConst (ExLvalue lv)) _ _] -> lv @?= rhsLv
           other -> assertBool ("expected one SsaConst-wrapped assign, got " <> show other) False
 
     , testCase "plain single-segment lvalue RHS still becomes SsaVarRef" $ do
@@ -186,7 +188,7 @@ tests = testGroup "SSA"
                   , at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "x")))
                   ]
         case sbAssigns (entryBlock sa) of
-          [_, SsaAssign _ (SsaVarRef sv) _] -> identOrig (svName sv) @?= "x"
+          [_, SsaAssign _ (SsaVarRef sv) _ _] -> identOrig (svName sv) @?= "x"
           other -> assertBool ("expected SsaVarRef, got " <> show other) False
 
     , testCase "BsAugAssign/BsInc/BsDec lower to SsaAssign using declared-casing var name" $ do
@@ -202,7 +204,7 @@ tests = testGroup "SSA"
             sa = buildSsa emptyEnv "proc"
                   [at 1 (BsAugAssign memberLv AugAdd [intTok "1"])]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign _ (SsaBinOp _ (SsaConst (ExLvalue lv)) _) _] -> lv @?= memberLv
+          [SsaAssign _ (SsaBinOp _ (SsaConst (ExLvalue lv)) _) _ _] -> lv @?= memberLv
           other -> assertBool ("expected SsaBinOp with SsaConst-wrapped ExLvalue, got " <> show other) False
     ]
 
@@ -284,7 +286,7 @@ tests = testGroup "SSA"
                   [ at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExLvalue (lv1 "n")) (Just (ExLvalue (lv1 "step_var")))
                       [at 2 (BsAssign (lv1 "x") (ExInt "0"))]))]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign _ _ lhs] -> lhs @?= ExArray [ExLvalue (lv1 "n"), ExLvalue (lv1 "step_var")]
+          [SsaAssign _ _ lhs _] -> lhs @?= ExArray [ExLvalue (lv1 "n"), ExLvalue (lv1 "step_var")]
           other -> assertBool ("expected one SsaAssign with an ExArray saLhs, got " <> show other) False
 
     , testCase "for loop's init assign with no step: saLhs carries just to" $ do
@@ -292,7 +294,7 @@ tests = testGroup "SSA"
                   [ at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExLvalue (lv1 "n")) Nothing
                       [at 2 (BsAssign (lv1 "x") (ExInt "0"))]))]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign _ _ lhs] -> lhs @?= ExArray [ExLvalue (lv1 "n")]
+          [SsaAssign _ _ lhs _] -> lhs @?= ExArray [ExLvalue (lv1 "n")]
           other -> assertBool ("expected one SsaAssign with an ExArray saLhs, got " <> show other) False
     ]
 
@@ -357,13 +359,13 @@ tests = testGroup "SSA"
     -- BACKLOG.md and doc/plan/145-dual-cps-debug.md rather than fixed here.
     [ testCase "BsReturn (Just expr) → SsaReturn (Just ...) terminator" $ do
         let sa = buildSsa emptyEnv "proc" [at 1 (BsReturn (Just (ExInt "1")))]
-        sbTerm (entryBlock sa) @?= SsaReturn (Just (SsaConst (ExInt "1")))
+        sbTerm (entryBlock sa) @?= SsaReturn 1 (Just (SsaConst (ExInt "1")))
 
     , testCase "BsCall (ExCall) → assign with SsaConst (ExCall ...)" $ do
         let callExpr = ExCall { callee = lv1 "messagebox", callArgs = [] }
             sa       = buildSsa emptyEnv "proc" [at 1 (BsCall callExpr)]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign _ (SsaConst e) _] -> e @?= callExpr
+          [SsaAssign _ (SsaConst e) _ _] -> e @?= callExpr
           other -> assertBool ("expected one SsaConst assign, got: " <> show other) False
 
     , testCase "BsDo (while) creates multiple blocks (entry/header/body/exit)" $ do
@@ -386,7 +388,7 @@ tests = testGroup "SSA"
                       ]
             sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))]
         case sbTerm (entryBlock sa) of
-          SsaSwitch scrutinee pairs def -> do
+          SsaSwitch _ln scrutinee pairs def -> do
             scrutinee @?= SsaVarRef (SsaVar "y")
             map fst pairs @?= [SsaConst (ExInt "1"), SsaConst (ExInt "2"), SsaConst (ExInt "3")]
             assertBool "default target is not one of the clause targets"
@@ -400,11 +402,11 @@ tests = testGroup "SSA"
                       ]
             sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))]
         case sbTerm (entryBlock sa) of
-          SsaSwitch _ pairs def -> do
+          SsaSwitch _ _ pairs def -> do
             length pairs @?= 1
             case Map.lookup def (spBlocks sa) of
               Just defBlock -> case sbAssigns defBlock of
-                [SsaAssign sv (SsaConst (ExInt "99")) _] -> identOrig (svName sv) @?= "x"
+                [SsaAssign sv (SsaConst (ExInt "99")) _ _] -> identOrig (svName sv) @?= "x"
                 other -> assertBool ("expected one assign of 99 to x, got: " <> show other) False
               Nothing -> assertBool "default block must exist" False
           other -> assertBool ("expected SsaSwitch, got: " <> show other) False
@@ -415,13 +417,13 @@ tests = testGroup "SSA"
                       ]
             sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))]
         case sbTerm (entryBlock sa) of
-          SsaSwitch _ [(val, _)] _ -> val @?= SsaConst (ExStr "a")
+          SsaSwitch _ _ [(val, _)] _ -> val @?= SsaConst (ExStr "a")
           other -> assertBool ("expected SsaSwitch with one pair, got: " <> show other) False
 
     , testCase "BsPbCall (call ancestor::event) → assign with synthetic ExCall (Plan 145 Phase 1C fix)" $ do
         let sa = buildSsa emptyEnv "proc" [at 1 (BsPbCall (PbCall "m_ole_frame" "destroy"))]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign sv (SsaConst (ExCall lv [])) _] -> do
+          [SsaAssign sv (SsaConst (ExCall lv [])) _ _] -> do
             identCanon (svName sv) @?= "_"
             map (\(LvSegment n _) -> n) (segments lv) @?= ["m_ole_frame::destroy"]
           other -> assertBool ("expected one SsaConst ExCall assign, got: " <> show other) False
@@ -438,7 +440,7 @@ tests = testGroup "SSA"
               , event = False, name = "of_run_report", args = [] })
             sa = buildSsa emptyEnv "proc" [at 1 (BsCall dispatchExpr)]
         case sbAssigns (entryBlock sa) of
-          [SsaAssign sv (SsaConst e) _] -> do
+          [SsaAssign sv (SsaConst e) _ _] -> do
             identCanon (svName sv) @?= "_"
             e @?= dispatchExpr
           other -> assertBool ("expected one SsaConst ExDispatch assign, got: " <> show other) False
@@ -503,5 +505,26 @@ tests = testGroup "SSA"
         case result of
           ExLvalue (Lvalue [LvSegment ident Nothing]) -> identSpan ident @?= identSpan realIdent
           other -> assertBool ("expected ExLvalue with one segment, got " <> show other) False
+    ]
+
+  , testGroup "PB.Compile.SSA / line threading"
+    [ testCase "assign statement on line N -> SsaAssign.saLine == N" $ do
+        let sa = buildSsa emptyEnv "proc" [at 7 (BsAssign (lv1 "x") (ExInt "1"))]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign _ _ _ ln] -> ln @?= 7
+          other -> assertBool ("expected one SsaAssign, got: " <> show other) False
+
+    , testCase "EAssign compiled from that SSA carries the same line" $ do
+        -- A real assignment always compiles to 'EAssignWithRhs', never the
+        -- bare 'EAssign' (which no production call site emits -- see
+        -- PB.Compile.IR's own doc note); this checks the line survives
+        -- through whichever fused assign constructor SSA compilation
+        -- actually produces.
+        let body    = [at 7 (BsAssign (lv1 "x") (ExInt "1"))]
+            ssaProc = buildSsa emptyEnv "proc" body
+            EffTerm spine _ = compileSsaToEff emptyEnv Set.empty ssaProc
+        case spine of
+          EAssignWithRhs _ _ _ ln _ -> ln @?= 7
+          _ -> assertBool "expected EAssignWithRhs" False
     ]
   ]

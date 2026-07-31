@@ -7,6 +7,7 @@ module PB.Analysis.TypeEnv
   , buildWorkspaceEnv
   , buildProcMap
   , buildCallableProcMap
+  , buildCallableSigMap
   , withDwTables
   , withDwControls
   , withDwParamBindings
@@ -163,6 +164,24 @@ buildCallableProcMap = foldl' addFile identMapEmpty
             map (fnsName . fbSig) (srFunctions sf)
             <> map (ssName . sbSig) (srSubroutines sf)
       in identMapInsertWith identSetUnion objIdent names acc
+
+-- | Sibling to 'buildCallableProcMap', keyed the same way (object → callable
+-- proc name, excluding events\/on-blocks for the same reason
+-- 'buildCallableProcMap' does), but carrying each proc's own full
+-- declaration (its 'FnSig'\/'SubSig') instead of just its name -- so a
+-- resolved call site can display the callee's real parameter\/return types,
+-- not just confirm the name exists. Where a call target isn't statically
+-- resolved, the lookup simply has nothing to find; this map does not itself
+-- attempt any resolution.
+buildCallableSigMap :: [SrFile] -> IdentMap (Map.Map Ident (Either FnSig SubSig))
+buildCallableSigMap = foldl' addFile identMapEmpty
+  where
+    addFile acc sf =
+      let objIdent = fst (srPrimaryObject sf)
+          sigs = Map.fromList $
+            [ (fnsName (fbSig fb), Left (fbSig fb)) | fb <- srFunctions sf ]
+            <> [ (ssName (sbSig sb), Right (sbSig sb)) | sb <- srSubroutines sf ]
+      in identMapInsertWith Map.union objIdent sigs acc
 
 -- | Attach the workspace's inferred @ref datawindow@ parameter bindings
 -- (Plan 196 Phase 4 item 1), mirroring 'withDwTables''s additive shape.

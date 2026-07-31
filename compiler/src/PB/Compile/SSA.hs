@@ -76,7 +76,10 @@ data SsaAssign = SsaAssign
   { saVar  :: SsaVar
   , saRhs  :: SsaVal
   , saLhs  :: Expr
-    -- ^ A side channel of identifiers a consumer like
+  , saLine :: Int
+    -- ^ The source line of the originating 'Located BodyStmt' (or, for the
+    -- synthesized loop-increment assign, the loop header's own line).
+    -- A side channel of identifiers a consumer like
     -- 'PB.Analysis.TaintEdges' must be able to read as uses without their
     -- being part of 'saRhs''s real assigned value ('PB.Compile.Interp' and
     -- every other real-evaluation 'PB.Compile.IR.Effectful' instance
@@ -123,13 +126,18 @@ data SsaBlock = SsaBlock
   , sbTerm    :: SsaTerm
   } deriving (Eq, Show, Generic)
 
+-- | Every constructor carries its own source line (leading field, matching
+-- 'Located''s convention) — the originating control statement's line, or
+-- @0@ for the one synthetic case with no originating statement at all (the
+-- structural fallback goto in 'cfgTermToSsa' between blocks with no control
+-- statement of their own).
 data SsaTerm
-  = SsaGoto Text
-  | SsaBranch SsaVal Text Text
-  | SsaSwitch SsaVal [(SsaVal, Text)] Text  -- ^ scrutinee, ordered (clauseValue, target) pairs, default target
-  | SsaReturn (Maybe SsaVal)
-  | SsaBreak
-  | SsaContinue
+  = SsaGoto Int Text
+  | SsaBranch Int SsaVal Text Text
+  | SsaSwitch Int SsaVal [(SsaVal, Text)] Text  -- ^ scrutinee, ordered (clauseValue, target) pairs, default target
+  | SsaReturn Int (Maybe SsaVal)
+  | SsaBreak Int
+  | SsaContinue Int
   deriving (Eq, Show, Generic)
 
 -- ============================================================================
@@ -199,16 +207,16 @@ buildEdgeMap = foldl' (\m e -> Map.insertWith (++) (ceSrc e) [e] m) Map.empty
 -- Step 2: Convert CFG blocks to SSA blocks
 -- ============================================================================
 
-cfgBlockToSsa :: Map.Map Text [CfgEdge] -> Map.Map Text BodyStmt -> Map.Map Text BodyStmt
+cfgBlockToSsa :: Map.Map Text [CfgEdge] -> Map.Map Text (Located BodyStmt) -> Map.Map Text (Located BodyStmt)
               -> Text -> CfgBlock -> SsaBlock
 cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
-  let ownAssigns  = concatMap (stmtToAssigns . locNode) (cbStmts blk)
+  let ownAssigns  = concatMap stmtToAssigns (cbStmts blk)
       incrAssigns = case Map.lookup label backEdgeStmts of
-        Just (BsFor (ForStmt var _ _ mStep _)) ->
+        Just (Located ln (BsFor (ForStmt var _ _ mStep _))) ->
           [ SsaAssign (SsaVar (lvHeadIdent var))
               (SsaBinOp BopAdd (SsaVarRef (SsaVar (lvHeadIdent var)))
                                 (exprToSsaVal (fromMaybe (ExInt "1") mStep)))
-              (noSubscriptLhs (lvHeadIdent var)) ]
+              (noSubscriptLhs (lvHeadIdent var)) ln ]
         _ -> []
       assigns  = ownAssigns ++ incrAssigns
       outEdges = Map.findWithDefault [] label edgeMap
@@ -222,7 +230,7 @@ cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
 -- 'cfgBlockToSsa' can append the missing @i = i + step@ assign to that
 -- block — the same synthesis the old compiler performs explicitly.
 -- @BsDo@ has no implicit increment, so it never matches in 'cfgBlockToSsa'.
-findLoopBackEdgeStmts :: [CfgEdge] -> Map.Map Text BodyStmt -> Map.Map Text BodyStmt
+findLoopBackEdgeStmts :: [CfgEdge] -> Map.Map Text (Located BodyStmt) -> Map.Map Text (Located BodyStmt)
 findLoopBackEdgeStmts edges headerStmts = Map.fromList
   [ (ceSrc e, stmt)
   | e <- edges
@@ -235,10 +243,11 @@ findLoopBackEdgeStmts edges headerStmts = Map.fromList
 -- allocate a fresh, empty header block that carries the real T/F branch
 -- edges. A block's own statements are therefore not enough to tell
 -- 'cfgTermToSsa' that a given block is a loop header — this precomputes,
--- for each such header block id, the originating loop statement so the
--- condition can be reconstructed for it specifically (see the header-only
--- fallback in 'cfgTermToSsa').
-findLoopHeaderStmts :: Map.Map Text [CfgEdge] -> Map.Map Text CfgBlock -> Map.Map Text BodyStmt
+-- for each such header block id, the originating loop statement (with its
+-- real line, needed by 'PB.Compile.FromSSA' to give the resulting 'ELoop'
+-- its own line) so the condition can be reconstructed for it specifically
+-- (see the header-only fallback in 'cfgTermToSsa').
+findLoopHeaderStmts :: Map.Map Text [CfgEdge] -> Map.Map Text CfgBlock -> Map.Map Text (Located BodyStmt)
 findLoopHeaderStmts edgeMap blockMap = Map.fromList
   [ (headerId, loopStmt)
   | blk <- Map.elems blockMap
@@ -247,46 +256,46 @@ findLoopHeaderStmts edgeMap blockMap = Map.fromList
   , let headerId = ceDst e
   ]
   where
-    trailingLoopStmt stmts = case map locNode (reverse stmts) of
-      (s@(BsFor {}) : _)                            -> Just s
-      (s@(BsDo (DoStmt (Just _) _ _)) : _)          -> Just s
-      (s@(BsDo (DoStmt Nothing _ (Just _))) : _)    -> Just s
-      _                                              -> Nothing
+    trailingLoopStmt stmts = case reverse stmts of
+      (s@(Located _ (BsFor {})) : _)                            -> Just s
+      (s@(Located _ (BsDo (DoStmt (Just _) _ _))) : _)          -> Just s
+      (s@(Located _ (BsDo (DoStmt Nothing _ (Just _)))) : _)    -> Just s
+      _                                                          -> Nothing
 
-stmtToAssigns :: BodyStmt -> [SsaAssign]
-stmtToAssigns (BsAssign lv expr) =
-  [SsaAssign (SsaVar (lvHeadIdent lv)) (exprToSsaVal expr) (ExLvalue lv)]
+stmtToAssigns :: Located BodyStmt -> [SsaAssign]
+stmtToAssigns (Located ln (BsAssign lv expr)) =
+  [SsaAssign (SsaVar (lvHeadIdent lv)) (exprToSsaVal expr) (ExLvalue lv) ln]
 -- The old compiler synthesizes the loop variable's init assign by hand
 -- (InstrGraph.hs's BsFor case); the new pipeline needs the same thing here,
 -- since this is the one block that legitimately owns the raw BsFor node in
 -- its own cbStmts (CfgBuild.lowerFor flushes it onto the pre-loop block).
-stmtToAssigns (BsFor (ForStmt var from to mStep _)) =
+stmtToAssigns (Located ln (BsFor (ForStmt var from to mStep _))) =
   -- The loop var's real assigned value is 'from' alone -- 'to'/'step' are
   -- loop-bound reads, not part of the value, so they ride in the 'saLhs'
   -- channel (same reasoning as a subscripted LHS: a read that must not
   -- corrupt 'saRhs''s real evaluation semantics) rather than 'saRhs'.
-  [SsaAssign (SsaVar (lvHeadIdent var)) (exprToSsaVal from) (ExArray (to : maybe [] (: []) mStep))]
-stmtToAssigns (BsLocalVar _ _ varName (Just expr)) =
-  [SsaAssign (SsaVar varName) (exprToSsaVal expr) (noSubscriptLhs varName)]
-stmtToAssigns (BsLocalVar {}) = []
-stmtToAssigns (BsAugAssign lv op rhsToks) =
+  [SsaAssign (SsaVar (lvHeadIdent var)) (exprToSsaVal from) (ExArray (to : maybe [] (: []) mStep)) ln]
+stmtToAssigns (Located ln (BsLocalVar _ _ varName (Just expr))) =
+  [SsaAssign (SsaVar varName) (exprToSsaVal expr) (noSubscriptLhs varName) ln]
+stmtToAssigns (Located _ (BsLocalVar {})) = []
+stmtToAssigns (Located ln (BsAugAssign lv op rhsToks)) =
   let augOpToBinOp AugAdd = BopAdd
       augOpToBinOp AugSub = BopSub
       augOpToBinOp AugMul = BopMul
       augOpToBinOp AugDiv = BopDiv
   in [SsaAssign (SsaVar (lvHeadIdent lv))
         (SsaBinOp (augOpToBinOp op) (SsaConst (ExLvalue lv)) (exprToSsaVal (rawArgsToExpr rhsToks)))
-        (noSubscriptLhs (lvHeadIdent lv))]
-stmtToAssigns (BsInc lv) =
-  [SsaAssign (SsaVar (lvHeadIdent lv)) (SsaBinOp BopAdd (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHeadIdent lv))]
-stmtToAssigns (BsDec lv) =
-  [SsaAssign (SsaVar (lvHeadIdent lv)) (SsaBinOp BopSub (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHeadIdent lv))]
-stmtToAssigns (BsAssignExpr lhsExpr rhsExpr) =
-  [SsaAssign (SsaVar (assignTarget lhsExpr)) (exprToSsaVal rhsExpr) lhsExpr]
-stmtToAssigns (BsDestroy lv) =
-  [SsaAssign (SsaVar (lvHeadIdent lv)) SsaNull (noSubscriptLhs (lvHeadIdent lv))]
-stmtToAssigns (BsCall expr) =
-  [SsaAssign (SsaVar discardSlotIdent) (SsaConst expr) (noSubscriptLhs discardSlotIdent)]
+        (noSubscriptLhs (lvHeadIdent lv)) ln]
+stmtToAssigns (Located ln (BsInc lv)) =
+  [SsaAssign (SsaVar (lvHeadIdent lv)) (SsaBinOp BopAdd (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHeadIdent lv)) ln]
+stmtToAssigns (Located ln (BsDec lv)) =
+  [SsaAssign (SsaVar (lvHeadIdent lv)) (SsaBinOp BopSub (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHeadIdent lv)) ln]
+stmtToAssigns (Located ln (BsAssignExpr lhsExpr rhsExpr)) =
+  [SsaAssign (SsaVar (assignTarget lhsExpr)) (exprToSsaVal rhsExpr) lhsExpr ln]
+stmtToAssigns (Located ln (BsDestroy lv)) =
+  [SsaAssign (SsaVar (lvHeadIdent lv)) SsaNull (noSubscriptLhs (lvHeadIdent lv)) ln]
+stmtToAssigns (Located ln (BsCall expr)) =
+  [SsaAssign (SsaVar discardSlotIdent) (SsaConst expr) (noSubscriptLhs discardSlotIdent) ln]
 -- BsPbCall: CALL ancestor::event super-dispatch. Encoded as a single-segment
 -- synthetic ExCall so it flows through the existing classifyExpr/compileCallExpr
 -- machinery in PB.Compile.FromSSA and lowers to a InstrCallProc, matching
@@ -294,10 +303,10 @@ stmtToAssigns (BsCall expr) =
 -- can never collide with isTriggerEvent, a user-fn name (PB identifiers can't
 -- contain "::"), or isBuiltinSuspendFn's fixed list, so it always classifies
 -- PureCall.
-stmtToAssigns (BsPbCall (PbCall ancestor event)) =
+stmtToAssigns (Located ln (BsPbCall (PbCall ancestor event))) =
   [SsaAssign (SsaVar discardSlotIdent)
              (SsaConst (ExCall (Lvalue [LvSegment dispatchIdent Nothing]) []))
-             (noSubscriptLhs discardSlotIdent)]
+             (noSubscriptLhs discardSlotIdent) ln]
   where
     dispatchIdent = case (identSpan ancestor, identSpan event) of
       (FromSource as, FromSource es) -> mkIdentDerived (as <> es) (identOrig ancestor <> "::" <> identOrig event)
@@ -306,24 +315,24 @@ stmtToAssigns (BsPbCall (PbCall ancestor event)) =
 -- keeps the trailing control stmt as the last element of a block's cbStmts
 -- (so cfgTermToSsa's findControlStmt can find it), but its "value" is the
 -- block terminator, not an assignment — cfgTermToSsa handles all of these.
-stmtToAssigns (BsIf {})     = []
-stmtToAssigns (BsDo {})     = []
-stmtToAssigns (BsChoose {}) = []
-stmtToAssigns (BsReturn _)  = []
-stmtToAssigns BsExit        = []
-stmtToAssigns (BsHalt _)    = []
-stmtToAssigns BsContinue    = []
+stmtToAssigns (Located _ (BsIf {}))     = []
+stmtToAssigns (Located _ (BsDo {}))     = []
+stmtToAssigns (Located _ (BsChoose {})) = []
+stmtToAssigns (Located _ (BsReturn _))  = []
+stmtToAssigns (Located _ BsExit)        = []
+stmtToAssigns (Located _ (BsHalt _))    = []
+stmtToAssigns (Located _ BsContinue)    = []
 -- BsTry/BsThrow: this per-statement SSA pass does not recurse into
 -- try/catch/finally's nested body statements (unlike 'PB.Analysis.Cfg's
 -- 'lowerTry', which does lower them into real CFG blocks), so any assigns
 -- nested inside tryBody/catchBody/tryFinally are invisible here by design,
 -- not a gap in this function specifically. BsThrow has no assignable value
 -- of its own.
-stmtToAssigns (BsTry {})   = []
-stmtToAssigns (BsThrow _)  = []
+stmtToAssigns (Located _ (BsTry {}))  = []
+stmtToAssigns (Located _ (BsThrow _)) = []
 -- BsRaw: unparsed source text (embedded SQL, unclassified statements) — no
 -- structured assignment to extract.
-stmtToAssigns (BsRaw _)    = []
+stmtToAssigns (Located _ (BsRaw _))   = []
 
 exprToSsaVal :: Expr -> SsaVal
 exprToSsaVal ExNull            = SsaNull
@@ -332,17 +341,17 @@ exprToSsaVal (ExNot e)         = SsaNot (exprToSsaVal e)
 exprToSsaVal (ExLvalue lv@(Lvalue [LvSegment _ Nothing])) = SsaVarRef (SsaVar (lvHeadIdent lv))
 exprToSsaVal e                 = SsaConst e
 
-cfgTermToSsa :: Maybe BodyStmt -> [CfgEdge] -> [Located BodyStmt] -> SsaTerm
+cfgTermToSsa :: Maybe (Located BodyStmt) -> [CfgEdge] -> [Located BodyStmt] -> SsaTerm
 cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
-    Just (BsIf (IfStmt cond _ _ _)) ->
-      SsaBranch (exprToSsaVal cond) (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
-    Just (BsFor _) ->
-      SsaGoto (headDef "" (map ceDst edges))
-    Just (BsDo _) ->
+    Just (Located ln (BsIf (IfStmt cond _ _ _))) ->
+      SsaBranch ln (exprToSsaVal cond) (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
+    Just (Located ln (BsFor _)) ->
+      SsaGoto ln (headDef "" (map ceDst edges))
+    Just (Located ln (BsDo _)) ->
       let loopLbl = findEdgeLabel "loop" edges
-      in if T.null loopLbl then SsaGoto (headDef "" (map ceDst edges)) else SsaGoto loopLbl
-    Just (BsChoose (ChooseStmt scrutinee clauses)) -> case clauses of
-      [] -> SsaGoto (headDef "" (map ceDst edges))
+      in if T.null loopLbl then SsaGoto ln (headDef "" (map ceDst edges)) else SsaGoto ln loopLbl
+    Just (Located ln (BsChoose (ChooseStmt scrutinee clauses))) -> case clauses of
+      [] -> SsaGoto ln (headDef "" (map ceDst edges))
       _  ->
         let indexed  = zip [(0::Int)..] clauses
             edgeFor i = findEdgeLabel ("case:" <> T.pack (show i)) edges
@@ -351,35 +360,35 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
             defaultTarget = case [ edgeFor i | (i, c) <- indexed, isNothing (ccExpr c) ] of
               (t:_) -> t
               []    -> findEdgeLabel "default" edges
-        in SsaSwitch (exprToSsaVal scrutinee) normalPairs defaultTarget
-    Just (BsReturn mExpr) ->
-      SsaReturn (fmap exprToSsaVal mExpr)
-    Just BsExit     -> SsaBreak
-    Just (BsHalt _) -> SsaReturn Nothing  -- HALT never resumes; same terminator as a void return
-    Just BsContinue -> SsaContinue
+        in SsaSwitch ln (exprToSsaVal scrutinee) normalPairs defaultTarget
+    Just (Located ln (BsReturn mExpr)) ->
+      SsaReturn ln (fmap exprToSsaVal mExpr)
+    Just (Located ln BsExit)     -> SsaBreak ln
+    Just (Located ln (BsHalt _)) -> SsaReturn ln Nothing  -- HALT never resumes; same terminator as a void return
+    Just (Located ln BsContinue) -> SsaContinue ln
     -- This block has no control statement of its own, but it may still be a
     -- loop *header* whose condition-check lives one block back (see
     -- 'findLoopHeaderStmts') — reconstruct the branch from there rather than
     -- falling through to the generic (and here, wrong) `SsaReturn Nothing`.
     --
-    -- This outer `_` is typed as `Maybe BodyStmt`, so GHC sees it as covering
-    -- `Nothing` *and* `Just` of any of the 12 non-control BodyStmt constructors
-    -- — but `isCtrl` (above) guarantees `findControlStmt` only ever returns
-    -- `Just` for the 7 constructors already matched, so the `Just`-of-a-non-
-    -- control-stmt half of this wildcard is unreachable by construction, not an
-    -- audit gap. Left as a wildcard rather than enumerated with dead
-    -- `error "impossible"` arms, which would add real risk (a typo there is
-    -- worse than the status quo)
-    -- for no practical safety gain.
+    -- This outer `_` is typed as `Maybe (Located BodyStmt)`, so GHC sees it as
+    -- covering `Nothing` *and* `Just` of any of the 12 non-control BodyStmt
+    -- constructors — but `isCtrl` (above) guarantees `findControlStmt` only
+    -- ever returns `Just` for the 7 constructors already matched, so the
+    -- `Just`-of-a-non-control-stmt half of this wildcard is unreachable by
+    -- construction, not an audit gap. Left as a wildcard rather than
+    -- enumerated with dead `error "impossible"` arms, which would add real
+    -- risk (a typo there is worse than the status quo) for no practical
+    -- safety gain.
     _ -> case mHeaderStmt of
-      Just (BsFor (ForStmt var _ to _ _)) ->
-        SsaBranch (exprToSsaVal (ExBinOp (ExLvalue var) BopLe to))
+      Just (Located ln (BsFor (ForStmt var _ to _ _))) ->
+        SsaBranch ln (exprToSsaVal (ExBinOp (ExLvalue var) BopLe to))
                   (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
-      Just (BsDo (DoStmt (Just cond) _ _)) ->
-        SsaBranch (exprToSsaVal (doCondExpr cond))
+      Just (Located ln (BsDo (DoStmt (Just cond) _ _))) ->
+        SsaBranch ln (exprToSsaVal (doCondExpr cond))
                   (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
-      Just (BsDo (DoStmt Nothing _ (Just cond))) ->
-        SsaBranch (exprToSsaVal (doCondExpr cond))
+      Just (Located ln (BsDo (DoStmt Nothing _ (Just cond)))) ->
+        SsaBranch ln (exprToSsaVal (doCondExpr cond))
                   (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
       -- Covers `Nothing` (block is not a recognized loop header — the common
       -- case) plus, type-wise, `Just` of any BodyStmt/DoCondition combination
@@ -388,8 +397,11 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
       -- condition, which the parser never builds) — type-possible but
       -- unreachable by construction.
       _ -> case edges of
-        [e] -> SsaGoto (ceDst e)
-        _   -> SsaReturn Nothing
+        -- No originating source statement at all (pure CFG plumbing between
+        -- blocks, not derived from any 'Located BodyStmt') -- 0 is a
+        -- structural sentinel, not a real line.
+        [e] -> SsaGoto 0 (ceDst e)
+        _   -> SsaReturn 0 Nothing
 
 -- | @DoWhile@'s condition is used as-is (loop while true); @DoUntil@'s is
 -- negated (loop while /not/ true) so both compile through the same "T = keep
@@ -398,10 +410,10 @@ doCondExpr :: DoCondition -> Expr
 doCondExpr (DoWhile e) = e
 doCondExpr (DoUntil e) = ExNot e
 
-findControlStmt :: [Located BodyStmt] -> Maybe BodyStmt
+findControlStmt :: [Located BodyStmt] -> Maybe (Located BodyStmt)
 findControlStmt [] = Nothing
-findControlStmt (Located _ s : rest)
-  | isCtrl s   = Just s
+findControlStmt (loc@(Located _ s) : rest)
+  | isCtrl s   = Just loc
   | otherwise  = findControlStmt rest
   where
     isCtrl BsIf {}     = True

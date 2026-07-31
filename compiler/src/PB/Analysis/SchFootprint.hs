@@ -187,15 +187,15 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
        -> (Set.Set SchMorphism, Map.Map Text (Set.Set SchMorphism))
     go (J _)                m = (Set.empty, m)
     go (EComp g f)          m = let (rg, m1) = go g m in let (rf, m2) = go f m1 in (rg <> rf, m2)
-    go (EAssign _)          m = (Set.empty, m)
-    go (EAssignWithRhs _ _ _) m = (Set.empty, m)
-    go (ECall name args)    m = (callFootprint name args, m)
-    go (ESuspend _ _)       m = (Set.empty, m)
+    go (EAssign _ _ _)      m = (Set.empty, m)
+    go (EAssignWithRhs _ _ _ _ _) m = (Set.empty, m)
+    go (ECall name args _)  m = (callFootprint name args, m)
+    go (ESuspend _ _ _)     m = (Set.empty, m)
     go ESplitValue          m = (Set.empty, m)
     go (EFanIn t f)         m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
-    go (EBranch _ t f)      m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
-    go (ELoop body)         m = go body m
-    go (EReturn _e)         m = (Set.empty, m)
+    go (EBranch _ t f _)    m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
+    go (ELoop body _)       m = go body m
+    go (EReturn _e _)       m = (Set.empty, m)
     go (ELetRef bid)        m = case Map.lookup bid m of
         Just cached -> (cached, m)
         Nothing     -> case Map.lookup bid table of

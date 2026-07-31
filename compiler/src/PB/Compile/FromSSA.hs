@@ -14,7 +14,7 @@ import PB.Compile.LoopAnalysis (CompileCtx (..), computeMergePoints, ssaValToExp
                               computeLoopHeaders, computeAllLoopExits, isLoopExit)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName,
                                  calleeName, isTriggerEvent, segName)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
 import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaProc (..))
 import qualified Data.Map.Strict as Map
@@ -61,7 +61,7 @@ compileBlockToEff ctx proc blockId memo table headers exits activeLoop
             blockId exits
           (postLoopOp, finalMemo, table2) =
             compileBlockToEff ctx proc exitBlockId memoFromLoop table1 headers exits activeLoop
-      in (postLoopOp . ELoop loopBodyOp, finalMemo, table2)
+      in (postLoopOp . ELoop loopBodyOp (loopHeaderLine proc blockId), finalMemo, table2)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
       Nothing    -> (J PId, memo, table)
       Just block ->
@@ -92,7 +92,7 @@ compileLoopBodyToEff ctx proc blockId visited table headers exits activeLoop
             blockId exits
           (innerBody, v1, table1) = compileLoopBodyToEff ctx proc blockId visited table headers exits (Just blockId)
           (afterOp, v2, table2) = compileLoopBodyToEff ctx proc nestedExit v1 table1 headers exits activeLoop
-      in (afterOp . ELoop innerBody, v2, table2)
+      in (afterOp . ELoop innerBody (loopHeaderLine proc blockId), v2, table2)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
       Nothing    -> (J PInr, visited, table)
       Just block ->
@@ -110,6 +110,26 @@ compileLoopBodyToEff ctx proc blockId visited table headers exits activeLoop
             table2  = if isMerge then Map.insert blockId (unsafeCoerce rawResult) table1 else table1
         in (result, Map.insert blockId result v1, table2)
 
+-- | A loop header block's own terminator is usually reconstructed by
+-- 'PB.Compile.SSA.cfgTermToSsa''s header-only fallback as an 'SsaBranch'
+-- carrying the originating @BsFor@\/@BsDo@'s line (see
+-- 'PB.Compile.SSA.findLoopHeaderStmts') -- this is the one place that line
+-- is available to give the 'Eff' 'ELoop' node built around it its own line.
+-- Confirmed against the real corpus (BACKLOG.md): a header
+-- 'PB.Compile.LoopAnalysis.computeLoopHeaders' identifies structurally
+-- sometimes compiles to a plain 'SsaGoto' instead, when
+-- 'PB.Compile.SSA.findLoopHeaderStmts''s single-predecessor-edge heuristic
+-- doesn't recognize the preceding block as the loop's sole entry -- a
+-- pre-existing SSA-lowering gap, not introduced here. 0 is the same "no
+-- source line available" sentinel 'PB.Compile.SSA.cfgTermToSsa' itself uses
+-- for its own no-originating-statement case, not a crash.
+loopHeaderLine :: SsaProc -> Text -> Int
+loopHeaderLine proc blockId = case Map.lookup blockId (spBlocks proc) of
+  Just block -> case sbTerm block of
+    SsaBranch ln _ _ _ -> ln
+    _ -> 0
+  Nothing -> 0
+
 -- | Standard terminators (outside loops).
 -- Mirrors 'compileTerm' exactly.
 compileTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () ()) -> Map.Map Text (Eff () ())
@@ -120,23 +140,23 @@ compileTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () ()) -> Map.Map
 -- value must become a real 'EReturn' terminal so
 -- 'PB.Analysis.TaintEdges.ret' can see it -- see
 -- doc/plan/182b-move2-intra.md Section 1 point 2.
-compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn Nothing) = (J PId, memo, table)
-compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn (Just v)) = (EReturn (ssaValToExpr v), memo, table)
-compileTermToEff ctx proc memo table headers exits activeLoop (SsaGoto target) =
+compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn _ln Nothing) = (J PId, memo, table)
+compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn ln (Just v)) = (EReturn (ssaValToExpr v) ln, memo, table)
+compileTermToEff ctx proc memo table headers exits activeLoop (SsaGoto _ln target) =
   compileBlockToEff ctx proc target memo table headers exits activeLoop
-compileTermToEff ctx proc memo table headers exits activeLoop (SsaBranch cond t f) =
+compileTermToEff ctx proc memo table headers exits activeLoop (SsaBranch ln cond t f) =
   let (tOp, m1, table1) = compileBlockToEff ctx proc t memo table headers exits activeLoop
       (fOp, m2, table2) = compileBlockToEff ctx proc f m1 table1 headers exits activeLoop
-      combined  = branchEff (ssaValToExpr cond) tOp fOp
+      combined  = branchEff (ssaValToExpr cond) tOp fOp ln
   in (combined, m2, table2)
-compileTermToEff _ctx _proc memo table _ _ _ SsaBreak    = (J PId, memo, table)
-compileTermToEff _ctx _proc memo table _ _ _ SsaContinue = (J PId, memo, table)
-compileTermToEff ctx proc memo table headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+compileTermToEff _ctx _proc memo table _ _ _ (SsaBreak _ln)    = (J PId, memo, table)
+compileTermToEff _ctx _proc memo table _ _ _ (SsaContinue _ln) = (J PId, memo, table)
+compileTermToEff ctx proc memo table headers exits activeLoop (SsaSwitch ln scrutinee pairs defaultTarget) =
   let seed = compileBlockToEff ctx proc defaultTarget memo table headers exits activeLoop
       step (val, target) (accOp, m, t) =
         let (targetOp, m', t') = compileBlockToEff ctx proc target m t headers exits activeLoop
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
-        in (branchEff cond targetOp accOp, m', t')
+        in (branchEff cond targetOp accOp ln, m', t')
   in foldr step seed pairs
 
 -- | Loop terminators. Returns @(Eff () (Either () ()), visited, table)@.
@@ -144,30 +164,30 @@ compileTermToEff ctx proc memo table headers exits activeLoop (SsaSwitch scrutin
 compileLoopTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () (Either () ())) -> Map.Map Text (Eff () ())
                      -> Set.Set Text -> Map.Map Text Text
                      -> Maybe Text -> SsaTerm -> (Eff () (Either () ()), Map.Map Text (Eff () (Either () ())), Map.Map Text (Eff () ()))
-compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaGoto target)
+compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaGoto _ln target)
   | Just target == activeLoop = (J PInl, visited, table)
   | isLoopExit headers exits proc activeLoop target = (J PInr, visited, table)
   | otherwise = compileLoopBodyToEff ctx proc target visited table headers exits activeLoop
-compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaBranch cond t f) =
+compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaBranch ln cond t f) =
   let (tOp, v1, table1) = compileLoopBranchPathToEff ctx proc t visited table headers exits activeLoop
       (fOp, v2, table2) = compileLoopBranchPathToEff ctx proc f v1 table1 headers exits activeLoop
-      combined  = branchEff (ssaValToExpr cond) tOp fOp
+      combined  = branchEff (ssaValToExpr cond) tOp fOp ln
   in (combined, v2, table2)
 -- A return inside a loop must fully escape the loop (unlike the non-loop
 -- case above, 'J PId' can't express that here), so both shapes compile to
 -- a real 'EReturn'; 'ExNull' is the "no value" sentinel for the valueless
 -- case ('walkExprIdents ExNull' is empty, so it contributes no spurious
 -- returned var to 'PB.Analysis.TaintEdges.ret').
-compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn Nothing)  = (EReturn ExNull, visited, table)
-compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn (Just v)) = (EReturn (ssaValToExpr v), visited, table)
-compileLoopTermToEff _ctx _proc visited table _ _ _ SsaBreak      = (J PInr, visited, table)
-compileLoopTermToEff _ctx _proc visited table _ _ _ SsaContinue   = (J PInl, visited, table)
-compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn ln Nothing)  = (EReturn ExNull ln, visited, table)
+compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn ln (Just v)) = (EReturn (ssaValToExpr v) ln, visited, table)
+compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaBreak _ln)      = (J PInr, visited, table)
+compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaContinue _ln)   = (J PInl, visited, table)
+compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaSwitch ln scrutinee pairs defaultTarget) =
   let seed = compileLoopBranchPathToEff ctx proc defaultTarget visited table headers exits activeLoop
       step (val, target) (accOp, v, t) =
         let (targetOp, v', t') = compileLoopBranchPathToEff ctx proc target v t headers exits activeLoop
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
-        in (branchEff cond targetOp accOp, v', t')
+        in (branchEff cond targetOp accOp ln, v', t')
   in foldr step seed pairs
 
 -- | Compile a branch target inside a loop.
@@ -188,41 +208,46 @@ compileAssignsToEff ctx [a] = compileAssignToEff ctx a
 compileAssignsToEff ctx (a:as) = compileAssignsToEff ctx as . compileAssignToEff ctx a
 
 -- | Compile a single SSA assignment.
--- Mirrors 'compileAssign' exactly.
+-- Mirrors 'compileAssign' exactly. The declared-type lookup
+-- ('lookupScopedVarOrSelf') resolves @this@\/@super@ too, matching every
+-- other single-segment type lookup in the codebase; 'Nothing' (an SSA temp
+-- with no scope entry) is not an error, just an untyped assign.
 compileAssignToEff :: CompileCtx -> SsaAssign -> Eff () ()
-compileAssignToEff ctx (SsaAssign sv rhs lhs)
+compileAssignToEff ctx (SsaAssign sv rhs lhs ln)
   | identCanon (svName sv) == "_" = case rhs of
       SsaConst expr@(ExCall lv parsedArgs) ->
-        compileCallExprToEff ctx sv expr lv parsedArgs
+        compileCallExprToEff ctx sv expr lv parsedArgs ln
       SsaConst expr@(ExMethodCall _recv _meth parsedArgs) ->
         case classifyExpr (ccEnv ctx) expr of
-             SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs
-             PureCall    -> ECall (calleeName expr) parsedArgs
+             SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln
+             PureCall    -> ECall (calleeName expr) parsedArgs ln
       SsaConst expr ->
         case classifyExpr (ccEnv ctx) expr of
-          SuspendCall -> ESuspend (effectName expr []) []
-          PureCall    -> ECall (calleeName expr) []
-      SsaVarRef _ -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
-      SsaBinOp {} -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
-      SsaNot _    -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
-      SsaNull     -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
-  | otherwise = EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs)
+          SuspendCall -> ESuspend (effectName expr []) [] ln
+          PureCall    -> ECall (calleeName expr) [] ln
+      SsaVarRef _ -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
+      SsaBinOp {} -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
+      SsaNot _    -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
+      SsaNull     -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
+  | otherwise = EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
+  where
+    declaredType = lookupScopedVarOrSelf (svName sv) (ccEnv ctx)
 
 -- | Shared logic for compiling an ExCall expression.
 -- Mirrors 'compileCallExpr' exactly.
-compileCallExprToEff :: CompileCtx -> SsaVar -> Expr -> Lvalue -> [Expr] -> Eff () ()
-compileCallExprToEff ctx _sv expr lv parsedArgs
+compileCallExprToEff :: CompileCtx -> SsaVar -> Expr -> Lvalue -> [Expr] -> Int -> Eff () ()
+compileCallExprToEff ctx _sv expr lv parsedArgs ln
   | isTriggerEvent lv =
-      ECall "triggerevent" [evArg]
+      ECall "triggerevent" [evArg] ln
   | [seg] <- segments lv
   , identCanon (segName seg) == "fn_retrievechild" =
-      ESuspend (effectName expr parsedArgs) paramArg
+      ESuspend (effectName expr parsedArgs) paramArg ln
   | [seg] <- segments lv
   , identCanon (segName seg) `Set.member` ccUserFns ctx =
-      ECall (identOrig (segName seg)) parsedArgs
+      ECall (identOrig (segName seg)) parsedArgs ln
   | otherwise = case classifyExpr (ccEnv ctx) expr of
-      SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs
-      PureCall -> ECall (calleeName expr) parsedArgs
+      SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln
+      PureCall -> ECall (calleeName expr) parsedArgs ln
   where
     evArg = case parsedArgs of { (a:_) -> a; [] -> ExRaw [] }
     paramArg = case parsedArgs of { (_:_:p:_) -> [p]; _ -> [] }

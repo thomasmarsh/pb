@@ -24,7 +24,8 @@ import PB.Lexing.Splitter  (Statement (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (mkLogicalLine)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
-import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv, withDwTables, withDwControls, withDwParamBindings)
+import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv, withDwTables, withDwControls, withDwParamBindings,
+                             buildCallableSigMap)
 import PB.Analysis.TypeResolve
 
 -- ---------------------------------------------------------------------------
@@ -109,6 +110,19 @@ mkEv nm params body = EventBlock
   { evSig   = EventSig { esName = mkIdent nm, esParams = mkParams params }
   , evOwner = Nothing
   , evBody  = body
+  }
+
+mkSub :: T.Text -> T.Text -> [Located BodyStmt] -> SubroutineBlock
+mkSub nm params body = SubroutineBlock
+  { sbSig = SubSig
+      { ssMods     = []
+      , ssName     = mkIdent nm
+      , ssParams   = mkParams params
+      , ssThrows   = Nothing
+      , ssLibrary  = Nothing
+      , ssAliasFor = Nothing
+      }
+  , sbBody = body
   }
 
 localVarStmt :: T.Text -> PbType -> Int -> Located BodyStmt
@@ -1442,6 +1456,36 @@ tests = testGroup "TypeResolve"
                 }
               pm = buildCallableProcMap [sf]
           identSetMember "open" (maybe identSetEmpty snd (identMapLookup "w_test" pm)) @?= False
+      ]
+
+  , testGroup "buildCallableSigMap"
+      [ testCase "a function's own FnSig is found by (object, name)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" [] ]
+                }
+              sigs = buildCallableSigMap [sf]
+          case identMapLookup "w_test" sigs >>= Map.lookup (mkIdent "f_go") . snd of
+            Just (Left fnSig) -> fnsName fnSig @?= mkIdent "f_go"
+            other              -> assertFailure ("expected Just (Left FnSig), got " <> show (fmap (either (const ("Left" :: T.Text)) (const "Right")) other))
+
+      , testCase "a subroutine's own SubSig is found by (object, name)" $ do
+          let sf = emptySrFile
+                { srTypeBlocks  = [ mkTB "w_test" "window" ]
+                , srSubroutines = [ mkSub "of_go" "" [] ]
+                }
+              sigs = buildCallableSigMap [sf]
+          case identMapLookup "w_test" sigs >>= Map.lookup (mkIdent "of_go") . snd of
+            Just (Right subSig) -> ssName subSig @?= mkIdent "of_go"
+            other                -> assertFailure ("expected Just (Right SubSig), got " <> show (fmap (either (const ("Left" :: T.Text)) (const "Right")) other))
+
+      , testCase "a name with no declaration in any file is absent from the map, not an error" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" [] ]
+                }
+              sigs = buildCallableSigMap [sf]
+          (identMapLookup "w_test" sigs >>= Map.lookup (mkIdent "f_nonexistent") . snd) @?= Nothing
       ]
 
   , testGroup "resolveVirtual"

@@ -213,11 +213,11 @@ tests = testGroup "SchFootprint"
     -- one of 'Eff'\'s constructors folds without falling over, not a check
     -- of any real morphism detection.
     [ testCase "J PId / EComp / EAssignWithRhs" $
-        foldSchFootprintEff ctx0 (extractEffTable (EAssignWithRhs "x" (ExInt "0") (ExInt "1") `EComp` J PId :: Eff () ())) @?= Set.empty
+        foldSchFootprintEff ctx0 (extractEffTable (EAssignWithRhs "x" (ExInt "0") (ExInt "1") 1 Nothing `EComp` J PId :: Eff () ())) @?= Set.empty
 
     , testCase "branch: EBranch / ESplitValue / ECall / ESuspend" $
         foldSchFootprintEff ctx0
-          (extractEffTable (branchEff (ExBool True) (ECall "f" []) (ESuspend "retrieve:dw" []) :: Eff () ()))
+          (extractEffTable (branchEff (ExBool True) (ECall "f" [] 1) (ESuspend "retrieve:dw" [] 1) 1 :: Eff () ()))
           @?= Set.empty
 
     , testCase "J PInl / J PInr" $ do
@@ -225,13 +225,13 @@ tests = testGroup "SchFootprint"
         foldSchFootprintEff ctx0 (extractEffTable (J PInr :: Eff () (Either () ()))) @?= Set.empty
 
     , testCase "EAssign" $
-        foldSchFootprintEff ctx0 (extractEffTable (EAssign "x" :: Eff ((), Value) ())) @?= Set.empty
+        foldSchFootprintEff ctx0 (extractEffTable (EAssign "x" 1 Nothing :: Eff ((), Value) ())) @?= Set.empty
 
     , testCase "EReturn" $
-        foldSchFootprintEff ctx0 (extractEffTable (EReturn (ExInt "0") :: Eff () ())) @?= Set.empty
+        foldSchFootprintEff ctx0 (extractEffTable (EReturn (ExInt "0") 1 :: Eff () ())) @?= Set.empty
 
     , testCase "ELoop (immediate break)" $
-        foldSchFootprintEff ctx0 (extractEffTable (ELoop (J PInr :: Eff () (Either () ())) :: Eff () ())) @?= Set.empty
+        foldSchFootprintEff ctx0 (extractEffTable (ELoop (J PInr :: Eff () (Either () ())) 1 :: Eff () ())) @?= Set.empty
 
     , testCase "ELetRef (shared block reference resolves via the table)" $
         foldSchFootprintEff ctx0 (EffTerm (ELetRef "blk") (Map.singleton "blk" (J PId))) @?= Set.empty
@@ -240,7 +240,7 @@ tests = testGroup "SchFootprint"
   , testGroup "foldSchFootprintEff: callProc SetItem detection"
     [ testCase "SetItem with literal column resolves to LegWrites when control/dw/column all bound" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: Eff () ()))
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] 1 :: Eff () ()))
           @?= Set.singleton
                 (SchMorphism (StmtObj (fcStmtObj ctx1))
                              (ColumnObj (TableRef Nothing "sales_order_items") "id")
@@ -248,21 +248,21 @@ tests = testGroup "SchFootprint"
 
     , testCase "unbound control yields empty footprint" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_other.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: Eff () ()))
+          (extractEffTable (ECall "dw_other.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] 1 :: Eff () ()))
           @?= Set.empty
 
     , testCase "dynamic (non-literal) column argument yields empty footprint" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", lvExpr "ls_col", lvExpr "li_Data"] :: Eff () ()))
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", lvExpr "ls_col", lvExpr "li_Data"] 1 :: Eff () ()))
           @?= Set.empty
 
     , testCase "unknown column name in the bound dw yields empty footprint" $
         foldSchFootprintEff ctx1
-          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "nonexistent_col", lvExpr "li_Data"] :: Eff () ()))
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "nonexistent_col", lvExpr "li_Data"] 1 :: Eff () ()))
           @?= Set.empty
 
     , testCase "non-SetItem calls remain empty" $
-        foldSchFootprintEff ctx1 (extractEffTable (ECall "dw_dest.Retrieve" [] :: Eff () ())) @?= Set.empty
+        foldSchFootprintEff ctx1 (extractEffTable (ECall "dw_dest.Retrieve" [] 1 :: Eff () ())) @?= Set.empty
 
     , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup" $ do
         let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []

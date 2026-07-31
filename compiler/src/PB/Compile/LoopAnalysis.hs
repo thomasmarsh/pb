@@ -67,9 +67,9 @@ computeMergePoints proc =
 
 -- | Extract all destination blocks from an SSA terminator.
 termSuccessors :: SsaTerm -> [Text]
-termSuccessors (SsaGoto t)              = [t]
-termSuccessors (SsaBranch _ t f)        = [t, f]
-termSuccessors (SsaSwitch _ pairs def)  = def : map snd pairs
+termSuccessors (SsaGoto _ t)              = [t]
+termSuccessors (SsaBranch _ _ t f)        = [t, f]
+termSuccessors (SsaSwitch _ _ pairs def)  = def : map snd pairs
 termSuccessors _                        = []
 
 -- | Detect loop headers by DFS with onStack tracking.
@@ -241,8 +241,8 @@ canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go s
       | otherwise = case Map.lookup current (spBlocks proc) of
           Nothing -> (False, visited)
           Just block
-            | SsaContinue <- sbTerm block -> (True, Set.insert current visited)
-            | SsaBreak    <- sbTerm block -> (True, Set.insert current visited)
+            | SsaContinue _ <- sbTerm block -> (True, Set.insert current visited)
+            | SsaBreak    _ <- sbTerm block -> (True, Set.insert current visited)
             | otherwise ->
                 let visited' = Set.insert current visited
                     succs    = termSuccessors (sbTerm block)
@@ -281,7 +281,7 @@ determineLoopExitTarget headers resolvedExits proc headerId =
       allSuccs = Set.fromList [ suc | bId <- Set.toList bodyBlocks, suc <- succsOf bId ]
       exits = Set.filter (/= headerId) (Set.difference allSuccs bodyBlocks)
       isReturnTerminated bId = case Map.lookup bId (spBlocks proc) of
-        Just block | SsaReturn _ <- sbTerm block -> True
+        Just block | SsaReturn _ _ <- sbTerm block -> True
         _                                        -> False
       (nonReturnExits, returnExits) = Set.partition (not P.. isReturnTerminated) exits
   in case Set.toList nonReturnExits of
@@ -305,7 +305,7 @@ ssaValToExpr SsaNull            = ExNull
 isLoopExit :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Maybe Text -> Text -> Bool
 isLoopExit _ _ _ Nothing _ = False
 isLoopExit _headers _exits proc (Just _headerId) targetId
-  | Just block <- Map.lookup targetId (spBlocks proc), SsaReturn _ <- sbTerm block = False
+  | Just block <- Map.lookup targetId (spBlocks proc), SsaReturn _ _ <- sbTerm block = False
 isLoopExit headers exits proc (Just headerId) targetId =
   let bodyBlocks = computeLoopBodyBlocks headers exits proc headerId
   in not (Set.member targetId bodyBlocks)
