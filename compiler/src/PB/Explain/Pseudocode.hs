@@ -85,8 +85,8 @@ resolveCallee env sigMap name
 leafToStmt :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> EffLeaf -> [PStmt]
 leafToStmt _env _sigMap (LAssign var ln ty) = [PAssign var ty (ExRaw []) ln]
 leafToStmt _env _sigMap (LAssignWithRhs var _lhsE rhsE ln ty) = [PAssign var ty rhsE ln]
-leafToStmt env sigMap (LCall name args ln) = [PCall name (resolveCallee env sigMap name) args ln]
-leafToStmt env sigMap (LSuspend name args ln) = [PCall name (resolveCallee env sigMap name) args ln]
+leafToStmt env sigMap (LCall name args ln _tags) = [PCall name (resolveCallee env sigMap name) args ln]
+leafToStmt env sigMap (LSuspend name args ln _tags) = [PCall name (resolveCallee env sigMap name) args ln]
 leafToStmt _env _sigMap (LReturn e ln) = [PReturn e ln]
 leafToStmt _env _sigMap (LBranchCond _cond _ln) = []
 

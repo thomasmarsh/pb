@@ -4,6 +4,7 @@ import PB.Prelude hiding (id, (.))
 import PB.AST.Expr        (BinOp (..), Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Ident       (Ident, identOrig, mkIdentSynthetic)
 import PB.AST.Type        (PbType (..))
+import PB.Analysis.CallClassify (EffectTag (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
@@ -29,7 +30,7 @@ tests :: TestTree
 tests = testGroup "PB.Explain.Signatures"
   [ testCase "a variable read before any local def in the region is a free input" $
       let term = EAssignWithRhs "y" (var "y") (var "x") 1 Nothing :: Eff () ()
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv (extractEffTable term)
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty (extractEffTable term)
       in case Map.elems sigs of
            [sig] -> assertBool
              ("expected \"x\" among free inputs, got " <> show (map vbName (sigInputs sig)))
@@ -39,7 +40,7 @@ tests = testGroup "PB.Explain.Signatures"
   , testCase "a variable defined and only used later within the same region is neither input nor output" $
       let term = EAssignWithRhs "y" (var "y") (var "x") 2 Nothing
                . EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv (extractEffTable term)
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty (extractEffTable term)
       in case Map.elems sigs of
            [sig] -> do
              assertBool ("\"x\" must not be a free input, got " <> show (map vbName (sigInputs sig)))
@@ -52,7 +53,7 @@ tests = testGroup "PB.Explain.Signatures"
       let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           term = EAssignWithRhs "y" (var "y") (var "x") 2 Nothing . ELetRef "blk1" :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty effTerm
           hasXOutput sig = any (\vb -> nameOf vb == "x") (sigOutputs sig)
       in assertBool
            ("expected some region to report \"x\" as a live-out output, got " <> show (Map.elems sigs))
@@ -62,7 +63,7 @@ tests = testGroup "PB.Explain.Signatures"
       let loopBody = J PInr . EAssignWithRhs "i" (var "i") (ExBinOp (var "i") BopAdd (ExInt "1")) 2 Nothing
                        :: Eff () (Either () ())
           term = ELoop loopBody 1 :: Eff () ()
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv (extractEffTable term)
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty (extractEffTable term)
       in case Map.elems sigs of
            [sig] -> do
              assertBool ("expected \"i\" among inputs, got " <> show (map vbName (sigInputs sig)))
@@ -74,7 +75,7 @@ tests = testGroup "PB.Explain.Signatures"
   , testCase "an input with a ScopedTypeEnv entry carries its real PbType" $
       let env = emptyEnv { steLocal = Map.singleton (ident "x") (PtPrimitive "integer") }
           term = EAssignWithRhs "y" (var "y") (var "x") 1 Nothing :: Eff () ()
-          sigs = computeSignatures defaultComplexityThreshold env (extractEffTable term)
+          sigs = computeSignatures defaultComplexityThreshold env Map.empty (extractEffTable term)
       in case Map.elems sigs of
            [sig] -> case filter (\vb -> nameOf vb == "x") (sigInputs sig) of
              [vb] -> vbType vb @?= Just (PtPrimitive "integer")
@@ -83,7 +84,7 @@ tests = testGroup "PB.Explain.Signatures"
 
   , testCase "an input with no ScopedTypeEnv entry carries Nothing, not an error" $
       let term = EAssignWithRhs "y" (var "y") (var "x") 1 Nothing :: Eff () ()
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv (extractEffTable term)
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty (extractEffTable term)
       in case Map.elems sigs of
            [sig] -> case filter (\vb -> nameOf vb == "x") (sigInputs sig) of
              [vb] -> vbType vb @?= Nothing
@@ -95,11 +96,26 @@ tests = testGroup "PB.Explain.Signatures"
                           , steParams = Set.empty
                           }
           term = EAssignWithRhs "y" (var "y") (var "gv") 1 Nothing :: Eff () ()
-          sigs = computeSignatures defaultComplexityThreshold env (extractEffTable term)
+          sigs = computeSignatures defaultComplexityThreshold env Map.empty (extractEffTable term)
       in case Map.elems sigs of
            [sig] -> case filter (\vb -> nameOf vb == "gv") (sigInputs sig) of
              [vb] -> vbType vb @?= Just (PtPrimitive "integer")
              other -> assertFailure ("expected \"gv\" among inputs with a real type, got " <> show other)
+           other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
+
+  , testCase "a region with a direct effect shows its own tags" $
+      let term = ECall "helper" [] 1 (Set.fromList [WritesDb]) :: Eff () ()
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty (extractEffTable term)
+      in case Map.elems sigs of
+           [sig] -> sigEffects sig @?= Set.fromList [WritesDb]
+           other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
+
+  , testCase "a region with no direct effect but a call to an effectful procedure shows the callee's transitive tags via the resolved-call map" $
+      let term = ECall "helper" [] 1 Set.empty :: Eff () ()
+          resolveEffects = Map.singleton "helper" (Set.fromList [ReadsDb, Suspends])
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv resolveEffects (extractEffTable term)
+      in case Map.elems sigs of
+           [sig] -> sigEffects sig @?= Set.fromList [ReadsDb, Suspends]
            other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
   ]
   where

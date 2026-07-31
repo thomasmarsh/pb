@@ -28,6 +28,7 @@ import PB.AST.Expr (Expr)
 import PB.AST.Ident (identOrig)
 import PB.AST.SourceFile (FnSig (..), SubSig (..), renderParams)
 import PB.AST.Type (renderPbType)
+import PB.Analysis.CallClassify (EffectTag)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..))
 import PB.Explain.Regions (RegionId, regionIdLabel)
 import PB.Explain.Signatures (InferredSignature (..), VarBinding (..))
@@ -91,9 +92,18 @@ regionHeader rid lns (Just sig) = renderInferredSig (regionLabel rid lns) sig
 
 renderInferredSig :: Text -> InferredSignature -> Text
 renderInferredSig name sig =
-  name <> "(" <> renderBindings (sigInputs sig) <> ") -> (" <> renderBindings (sigOutputs sig) <> ")"
+  name <> "(" <> renderBindings (sigInputs sig) <> ") -> (" <> renderBindings (sigOutputs sig)
+       <> ") [" <> renderEffects (sigEffects sig) <> "]"
   where
     renderBindings = T.intercalate ", " . map renderBinding
+
+-- | @[pure]@ for a genuinely effect-free region -- the first place this
+-- whole feature delivers "functional core" as a computed label rather than
+-- something left to the reader to infer (Plan 218's own stated goal).
+renderEffects :: Set.Set EffectTag -> Text
+renderEffects tags
+  | Set.null tags = "pure"
+  | otherwise     = T.intercalate ", " (map (T.pack . show) (Set.toAscList tags))
 
 renderBinding :: VarBinding -> Text
 renderBinding vb = case vbType vb of

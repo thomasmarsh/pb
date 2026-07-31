@@ -77,7 +77,7 @@ tests = testGroup "PB.Explain.Pseudocode"
   , testCase "a cut RegionId lowers to PRegionRef carrying its InferredSignature" $
       let arm = EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing :: Eff () ()
           term = branchEff (var "cond") arm arm 1 :: Eff () ()
-          sigs = computeSignatures 1 emptyEnv (extractEffTable term)
+          sigs = computeSignatures 1 emptyEnv Map.empty (extractEffTable term)
           pc = buildPseudocode 1 emptyEnv emptySigMap Nothing sigs (extractEffTable term)
       in case rootStmts pc of
            [PRegionRef rid lns msig] -> do
@@ -92,7 +92,7 @@ tests = testGroup "PB.Explain.Pseudocode"
       let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           term = EComp (ELetRef "blk1") (ELetRef "blk1") :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
       in case rootStmts pc of
            [PRegionRef rid1 _ _, PRegionRef rid2 _ _] -> do
@@ -122,7 +122,7 @@ tests = testGroup "PB.Explain.Pseudocode"
   , testCase "the root Pseudocode's pcRootSig is Just its own InferredSignature from the sigs map" $
       let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           effTerm = extractEffTable term
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
       in do
            assertBool "expected the sigs map to carry an entry for the root region" (isJust (Map.lookup (pcRootRegion pc) sigs))

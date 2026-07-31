@@ -31,8 +31,10 @@ module PB.Explain.Regions
 import PB.Prelude hiding (id, (.))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import qualified Data.Set as Set
 import PB.AST.Expr (Expr)
 import PB.AST.Type (PbType)
+import PB.Analysis.CallClassify (EffectTag)
 import PB.Compile.IR (Eff (..), EffTerm (..))
 
 -- | Opaque handle — the constructor is not exported. Every other layer
@@ -81,8 +83,8 @@ defaultComplexityThreshold = 10
 data EffLeaf
   = LAssign        Text Int (Maybe PbType)
   | LAssignWithRhs Text Expr Expr Int (Maybe PbType)
-  | LCall          Text [Expr] Int
-  | LSuspend       Text [Expr] Int
+  | LCall          Text [Expr] Int (Set.Set EffectTag)
+  | LSuspend       Text [Expr] Int (Set.Set EffectTag)
   | LReturn        Expr Int
   | LBranchCond    Expr Int
 
@@ -205,10 +207,10 @@ walk ops threshold table st eff = case eff of
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssign var ln ty)) Map.empty st
   EAssignWithRhs var lhsE rhsE ln ty ->
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssignWithRhs var lhsE rhsE ln ty)) Map.empty st
-  ECall n as ln _tags ->
-    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LCall n as ln)) Map.empty st
-  ESuspend n as ln _tags ->
-    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LSuspend n as ln)) Map.empty st
+  ECall n as ln tags ->
+    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LCall n as ln tags)) Map.empty st
+  ESuspend n as ln tags ->
+    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LSuspend n as ln tags)) Map.empty st
   EReturn e ln ->
     addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LReturn e ln)) Map.empty st
   ESplitValue -> st

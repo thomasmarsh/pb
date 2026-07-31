@@ -19,6 +19,7 @@ import qualified Data.Set as Set
 import PB.AST.Expr (Expr (..))
 import PB.AST.Ident (Ident, mkIdentSynthetic)
 import PB.AST.Type (PbType)
+import PB.Analysis.CallClassify (EffectTag)
 import PB.Analysis.Dataflow (lvRoot, lvalueSubscriptIdents, walkExprIdentsExcludingCallees)
 import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVarOrSelf)
 import PB.Compile.IR (EffTerm)
@@ -32,6 +33,7 @@ data VarBinding = VarBinding
 data InferredSignature = InferredSignature
   { sigInputs  :: [VarBinding]
   , sigOutputs :: [VarBinding]
+  , sigEffects :: Set.Set EffectTag
   } deriving (Eq, Show)
 
 -- | Per-region free\/live-variable accumulator threaded through
@@ -48,17 +50,21 @@ data SigAcc = SigAcc
   , saFreeReads      :: Set.Set Ident
   , saAllDefs        :: Set.Set Ident
   , saAllUses        :: Set.Set Ident
+  , saEffects        :: Set.Set EffectTag
   }
 
 sigAccEmpty :: SigAcc
-sigAccEmpty = SigAcc Set.empty Set.empty Set.empty Set.empty
+sigAccEmpty = SigAcc Set.empty Set.empty Set.empty Set.empty Set.empty
 
 -- | One atomic leaf's own contribution, relative to a fresh (empty) local-
 -- def context — 'sigAccSeq' reconciles that isolation against whatever is
 -- already locally defined when it threads this into a running
--- accumulator.
-sigAccLeaf :: EffLeaf -> SigAcc
-sigAccLeaf leaf = case leaf of
+-- accumulator. @resolveEffects@ maps a resolved callee name to its
+-- transitive effect tags ('PB.Analysis.EffectClosure'); a name absent from
+-- it (unresolved, or resolved but genuinely effect-free) contributes
+-- nothing beyond the leaf's own direct tags.
+sigAccLeaf :: Map.Map Text (Set.Set EffectTag) -> EffLeaf -> SigAcc
+sigAccLeaf resolveEffects leaf = case leaf of
   LAssign var _ln _ty ->
     let d = defIdent var Nothing
     in sigAccEmpty { saLocallyDefined = Set.singleton d, saAllDefs = Set.singleton d }
@@ -70,13 +76,18 @@ sigAccLeaf leaf = case leaf of
         , saFreeReads      = rs
         , saAllDefs        = Set.singleton d
         , saAllUses        = rs
+        , saEffects        = Set.empty
         }
-  LCall _name callArgs _ln    -> readsOnly (foldMap walkExprIdentsExcludingCallees callArgs)
-  LSuspend _name callArgs _ln -> readsOnly (foldMap walkExprIdentsExcludingCallees callArgs)
+  LCall name callArgs _ln tags    -> callLeaf name callArgs tags
+  LSuspend name callArgs _ln tags -> callLeaf name callArgs tags
   LReturn e _ln                -> readsOnly (walkExprIdentsExcludingCallees e)
   LBranchCond cond _ln         -> readsOnly (walkExprIdentsExcludingCallees cond)
   where
     readsOnly rs = sigAccEmpty { saFreeReads = rs, saAllUses = rs }
+    callLeaf name callArgs tags =
+      let rs  = foldMap walkExprIdentsExcludingCallees callArgs
+          eff = tags <> Map.findWithDefault Set.empty name resolveEffects
+      in sigAccEmpty { saFreeReads = rs, saAllUses = rs, saEffects = eff }
 
 -- | The assigned variable's real 'Ident'. Every real (FromSSA-compiled)
 -- @EAssignWithRhs@ carries its target as an @ExLvalue@ in @lhs@ (see
@@ -110,6 +121,7 @@ sigAccSeq left right = SigAcc
   , saFreeReads      = saFreeReads left <> Set.filter (`Set.notMember` saLocallyDefined left) (saFreeReads right)
   , saAllDefs        = saAllDefs left <> saAllDefs right
   , saAllUses        = saAllUses left <> saAllUses right
+  , saEffects        = saEffects left <> saEffects right
   }
 
 -- | Combine two alternative-path accumulators. Reads\/defs\/uses union
@@ -121,6 +133,7 @@ sigAccChoice a b = SigAcc
   , saFreeReads      = saFreeReads a <> saFreeReads b
   , saAllDefs        = saAllDefs a <> saAllDefs b
   , saAllUses        = saAllUses a <> saAllUses b
+  , saEffects        = saEffects a <> saEffects b
   }
 
 -- | 'opRef' contributes nothing: an 'PB.Explain.Regions.ELetRef' occurrence
@@ -128,11 +141,11 @@ sigAccChoice a b = SigAcc
 -- free/live-variable purposes -- the referenced region's own reads/defs are
 -- already captured under its own 'RegionId' in the accumulator map, read
 -- back out by 'computeSignatures' via 'allUsesElsewhere'.
-sigOps :: RegionOps SigAcc
-sigOps = RegionOps
-  { opLeaf   = sigAccLeaf
+sigOps :: Map.Map Text (Set.Set EffectTag) -> RegionOps SigAcc
+sigOps resolveEffects = RegionOps
+  { opLeaf   = sigAccLeaf resolveEffects
   , opFanIn  = sigAccChoice
-  , opBranch = \cond ln t f -> sigAccSeq (sigAccLeaf (LBranchCond cond ln)) (sigAccChoice t f)
+  , opBranch = \cond ln t f -> sigAccSeq (sigAccLeaf resolveEffects (LBranchCond cond ln)) (sigAccChoice t f)
   , opLoop   = \_ln body -> sigAccChoice body sigAccEmpty
   , opRef    = \_ _ -> sigAccEmpty
   , opSeq    = sigAccSeq
@@ -148,9 +161,9 @@ sigOps = RegionOps
 -- an 'PB.Explain.Regions.ELoop' body produces; this falls out of the
 -- general def\/use sets with no loop-specific case in the walk itself,
 -- only in this final per-region derivation.
-computeSignatures :: Int -> ScopedTypeEnv -> EffTerm a b -> Map.Map RegionId InferredSignature
-computeSignatures threshold env term =
-  let (_root, accs) = computeRegionsWith threshold sigOps term :: (Region, Map.Map RegionId SigAcc)
+computeSignatures :: Int -> ScopedTypeEnv -> Map.Map Text (Set.Set EffectTag) -> EffTerm a b -> Map.Map RegionId InferredSignature
+computeSignatures threshold env resolveEffects term =
+  let (_root, accs) = computeRegionsWith threshold (sigOps resolveEffects) term :: (Region, Map.Map RegionId SigAcc)
       allUsesElsewhere rid = Map.foldrWithKey
         (\rid' a acc -> if rid' == rid then acc else acc <> saAllUses a)
         Set.empty accs
@@ -162,5 +175,6 @@ computeSignatures threshold env term =
           in InferredSignature
                { sigInputs  = map toBinding (Set.toAscList (saFreeReads acc))
                , sigOutputs = map toBinding (Set.toAscList (loopCarried <> liveOut))
+               , sigEffects = saEffects acc
                })
        accs
