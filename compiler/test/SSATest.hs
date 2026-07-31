@@ -455,12 +455,20 @@ tests = testGroup "SSA"
           (ExCall { callee = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing], callArgs = [] })
           @?= SuspendCall
 
-    , testCase "commit() with Transaction type → SuspendCall" $
+    , testCase "commit() dotted-call syntax on Transaction type → PureCall (real corpus only uses the bare `commit;` statement keyword, never `.commit()`; transaction.sru has no such declared method)" $
         classifyExpr
           ScopedTypeEnv { steGlobal = Map.singleton "sqlca" (PtPrimitive "transaction")
                         , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty
                         , steObject = "", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty }
           (ExCall { callee = Lvalue [LvSegment "sqlca" Nothing, LvSegment "commit" Nothing], callArgs = [] })
+          @?= PureCall
+
+    , testCase "triggerevent() with Transaction type → SuspendCall (a real transaction.sru method)" $
+        classifyExpr
+          ScopedTypeEnv { steGlobal = Map.singleton "sqlca" (PtPrimitive "transaction")
+                        , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty
+                        , steObject = "", steControlIndex = Map.empty, steParams = Set.empty, steParamIndex = Map.empty }
+          (ExCall { callee = Lvalue [LvSegment "sqlca" Nothing, LvSegment "triggerevent" Nothing], callArgs = [] })
           @?= SuspendCall
 
     , testCase "free function my_func() → PureCall" $

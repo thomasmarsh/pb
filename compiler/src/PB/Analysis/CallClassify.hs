@@ -16,6 +16,7 @@ module PB.Analysis.CallClassify
   , isTriggerEvent
   , isBuiltinSuspendFn
   , isTypedSuspend
+  , decodeEffectTag
   , resolveReceiverType
   , resolveLvalueType
   , segName
@@ -37,6 +38,7 @@ import PB.Lexing.Token   (SourceSpan)
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainType)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), WorkspaceEnv, lookupScopedVar, lookupScopedVarOrSelf,
                              isDescendantOf, procEnv)
+import PB.Runtime.EffectAnnotations (realEffectAnnotations)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -51,8 +53,13 @@ data CallKind = PureCall | SuspendCall deriving (Eq, Show)
 
 -- | A tag describing one side effect a call performs. A call may carry
 -- several at once (e.g. a DataWindow @Update()@ both writes the DB and
--- suspends) -- see 'classifyEffects'.
+-- suspends) -- see 'classifyEffects'. 'ReadsControlState'\/'WritesControlState'
+-- cover a synchronous, non-suspending read or mutation of a stateful
+-- control's own buffer (@GetRow@\/@RowCount@\/@SetItem@, ...) -- distinct
+-- from 'ReadsDb'\/'WritesDb' (an actual backend round-trip) and from a pure
+-- function of declared inputs.
 data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
+               | ReadsControlState | WritesControlState
   deriving (Eq, Ord, Show)
 
 -- ---------------------------------------------------------------------------
@@ -159,41 +166,60 @@ dwTypes = Set.fromList ["datawindow", "datastore", "datawindowchild"]
 transTypes :: Set.Set Text
 transTypes = Set.singleton "transaction"
 
--- | Effect tags for a DataWindow/DataStore method. 'retrieve' reads the DB;
--- 'update'/'delete' and the remaining buffer-mutating operations
--- ('reset'/'rowscopy'/'rowsmove'/'sharedata'/'modify') write it; 'print' is
--- rendering/output, a UI effect rather than a data one.
+-- | Every DataWindow/DataStore/DataWindowChild method's effect tags, sourced
+-- from 'PB.Runtime.EffectAnnotations.realEffectAnnotations' (the
+-- @\/\/ \@effects@ pragma comments in @runtime\/datawindow.sru@\/
+-- @datastore.sru@\/@datawindowchild.sru@) rather than a hand-maintained
+-- literal. The three files' method vocabularies overlap heavily and a
+-- shared method name (e.g. @retrieve@) always carries the same tags
+-- regardless of which of the three declares it, so lookup is by method name
+-- alone -- matching 'isTypedSuspend'\/'typedEffectTags's dispatch shape,
+-- which already only distinguishes "is this receiver DW-family or
+-- Transaction," never which specific DW-family class.
 dwMethodEffectTags :: Map.Map Text (Set.Set EffectTag)
-dwMethodEffectTags = Map.fromList
-  [ ("retrieve",  Set.fromList [Suspends, ReadsDb])
-  , ("update",    Set.fromList [Suspends, WritesDb])
-  , ("delete",    Set.fromList [Suspends, WritesDb])
-  , ("reset",     Set.fromList [Suspends, WritesDb])
-  , ("rowscopy",  Set.fromList [Suspends, WritesDb])
-  , ("rowsmove",  Set.fromList [Suspends, WritesDb])
-  , ("sharedata", Set.fromList [Suspends, WritesDb])
-  , ("modify",    Set.fromList [Suspends, WritesDb])
-  , ("print",     Set.fromList [Suspends, WritesUi])
-  ]
+dwMethodEffectTags = decodedClassTable ["datawindow", "datastore", "datawindowchild"]
 
--- | Effect tags for a Transaction method. 'commit' finalizes pending writes;
--- the rest are connection/state management with no direct data effect.
+-- | Every Transaction method's effect tags, same sourcing as
+-- 'dwMethodEffectTags' but from @runtime\/transaction.sru@.
 transMethodEffectTags :: Map.Map Text (Set.Set EffectTag)
-transMethodEffectTags = Map.fromList
-  [ ("commit",     Set.fromList [Suspends, WritesDb])
-  , ("rollback",   Set.singleton Suspends)
-  , ("connect",    Set.singleton Suspends)
-  , ("disconnect", Set.singleton Suspends)
-  , ("autocommit", Set.singleton Suspends)
+transMethodEffectTags = decodedClassTable ["transaction"]
+
+-- | Merge the annotation rows for a set of runtime classes into a single
+-- method-name-keyed table, decoding each row's raw 'Text' tags into
+-- 'EffectTag' via 'decodeEffectTag'.
+decodedClassTable :: [Text] -> Map.Map Text (Set.Set EffectTag)
+decodedClassTable classes = Map.fromList
+  [ (meth, Set.fromList (mapMaybe decodeEffectTag (Set.toList rawTags)))
+  | ((cls, meth), rawTags) <- Map.toList realEffectAnnotations
+  , cls `elem` classes
   ]
 
--- | Return True when a method on a type (given by declared name) is side-effecting.
--- Uses isDescendantOf so user-defined DW/Transaction subclasses are handled
--- correctly even when the full stdlib inheritance chain is loaded.
+-- | Decode one raw annotation tag word into 'EffectTag'. An unrecognized
+-- word (a typo in a @\/\/ \@effects@ comment) is dropped here -- caught by
+-- the "every raw tag decodes" completeness test, not silently miscompiled.
+decodeEffectTag :: Text -> Maybe EffectTag
+decodeEffectTag "ReadsDb"            = Just ReadsDb
+decodeEffectTag "WritesDb"           = Just WritesDb
+decodeEffectTag "WritesUi"           = Just WritesUi
+decodeEffectTag "Suspends"           = Just Suspends
+decodeEffectTag "ReadsControlState"  = Just ReadsControlState
+decodeEffectTag "WritesControlState" = Just WritesControlState
+decodeEffectTag _                    = Nothing
+
+-- | Return True when a method on a type (given by declared name) suspends
+-- (carries the 'Suspends' tag specifically -- not merely "has some
+-- annotation," since the annotation-sourced tables now cover ~190
+-- classified methods, most of which are 'ReadsControlState'\/
+-- 'WritesControlState' with no 'Suspends' bit at all; a bare
+-- 'Map.member' check was a correct proxy only back when the old
+-- hand-maintained literal happened to contain nothing but Suspends-tagged
+-- entries). Uses isDescendantOf so user-defined DW/Transaction subclasses
+-- are handled correctly even when the full stdlib inheritance chain is
+-- loaded.
 isTypedSuspend :: Map.Map Ident Ident -> Text -> Text -> Bool
 isTypedSuspend inh ty meth
-  | isDescendantOf inh ty dwTypes    = meth `Map.member` dwMethodEffectTags
-  | isDescendantOf inh ty transTypes = meth `Map.member` transMethodEffectTags
+  | isDescendantOf inh ty dwTypes    = maybe False (Set.member Suspends) (Map.lookup meth dwMethodEffectTags)
+  | isDescendantOf inh ty transTypes = maybe False (Set.member Suspends) (Map.lookup meth transMethodEffectTags)
   | otherwise                        = False
 
 -- | Effect tags for a method call on a resolved receiver type. Mirrors

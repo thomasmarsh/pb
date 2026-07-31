@@ -9,9 +9,11 @@ import PB.AST.SourceFile
 import PB.AST.Type              (PbType (..))
 import PB.Lexing.Token          (SourceSpan (..))
 import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), ProcUnit (..), classifyExpr,
-                                  classifyEffects, effectName, forProcedures, resolveReceiverType)
+                                  classifyEffects, decodeEffectTag, effectName, forProcedures,
+                                  resolveReceiverType)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.TypeEnv      (ScopedTypeEnv (..), buildWorkspaceEnv)
+import PB.Runtime.EffectAnnotations (realEffectAnnotations)
 import ControlHierarchyTest     (withFyloFixture)
 
 import qualified Data.Map.Strict as Map
@@ -171,6 +173,17 @@ tests = testGroup "CallClassify"
         classifyEffects emptyEnv (ExCall (lv ["some_unrecognized_fn"]) []) @?= Set.empty
     , testCase "untyped receiver method -> empty set" $
         classifyEffects emptyEnv (ExMethodCall (ExLvalue (lv ["untyped_var"])) "retrieve" []) @?= Set.empty
+    , testCase "every raw tag word in every real @effects annotation decodes to a known EffectTag \
+               \(a typo would otherwise silently vanish via decodeEffectTag's Nothing case)" $
+        let unknown =
+              [ (cls, meth, tag)
+              | ((cls, meth), rawTags) <- Map.toList realEffectAnnotations
+              , tag <- Set.toList rawTags
+              , isNothing (decodeEffectTag tag)
+              ]
+        in case unknown of
+             [] -> pure ()
+             _  -> assertFailure ("undecodable @effects tag words: " <> show unknown)
     , testCase "Suspends tag agrees with classifyExpr's SuspendCall verdict (consistency)" $
         withFyloFixture $ \idx inh -> do
           let env = ScopedTypeEnv
@@ -272,24 +285,39 @@ tests = testGroup "CallClassify"
       , ("run",                 Set.singleton Suspends)
       ]
 
+    -- Sourced from the real runtime/*.sru @effects annotations (Plan 220
+    -- Phase 1), not a hand-maintained literal -- reset/rowscopy/rowsmove/
+    -- sharedata/modify are buffer/property mutations with no DB round-trip
+    -- (confirmed against doc/pb2025r2), correcting the old table's
+    -- WritesDb+Suspends misclassification of all five. "delete" is dropped
+    -- entirely: no such method exists on any of the three DW-family
+    -- classes (the real methods are deleterow/deletedcount, each
+    -- separately annotated).
     dwMethodCases :: [(Text, Set.Set EffectTag)]
     dwMethodCases =
       [ ("retrieve",  Set.fromList [Suspends, ReadsDb])
       , ("update",    Set.fromList [Suspends, WritesDb])
-      , ("delete",    Set.fromList [Suspends, WritesDb])
-      , ("reset",     Set.fromList [Suspends, WritesDb])
-      , ("rowscopy",  Set.fromList [Suspends, WritesDb])
-      , ("rowsmove",  Set.fromList [Suspends, WritesDb])
-      , ("sharedata", Set.fromList [Suspends, WritesDb])
-      , ("modify",    Set.fromList [Suspends, WritesDb])
+      , ("reset",     Set.singleton WritesControlState)
+      , ("rowscopy",  Set.singleton WritesControlState)
+      , ("rowsmove",  Set.singleton WritesControlState)
+      , ("sharedata", Set.singleton WritesControlState)
+      , ("modify",    Set.singleton WritesControlState)
       , ("print",     Set.fromList [Suspends, WritesUi])
+      , ("getrow",    Set.singleton ReadsControlState)
+      , ("rowcount",  Set.singleton ReadsControlState)
+      , ("setitem",   Set.singleton WritesControlState)
       ]
 
+    -- commit/rollback/connect/disconnect/autocommit are dropped: real
+    -- corpus usage (117 occurrences) is exclusively bare statement keywords
+    -- (`commit;`, `connect using x;`), never a dotted method call, and none
+    -- of the five is declared as a public function in transaction.sru --
+    -- there is no method-call dispatch site or annotation attachment point
+    -- for them. Their real classification is bare-keyword-statement effect
+    -- tagging, scoped to Plan 220 Phase 2 (sqlStmtEffectTags), not this
+    -- dotted-method-call table.
     transMethodCases :: [(Text, Set.Set EffectTag)]
     transMethodCases =
-      [ ("commit",     Set.fromList [Suspends, WritesDb])
-      , ("rollback",   Set.singleton Suspends)
-      , ("connect",    Set.singleton Suspends)
-      , ("disconnect", Set.singleton Suspends)
-      , ("autocommit", Set.singleton Suspends)
+      [ ("dbhandle",     Set.singleton ReadsControlState)
+      , ("triggerevent", Set.singleton Suspends)
       ]

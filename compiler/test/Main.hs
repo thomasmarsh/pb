@@ -54,6 +54,7 @@ import qualified ControlHierarchyTest
 import qualified DwParamBindingTest
 import qualified DwBuiltinsTest
 import qualified CallClassifyTest
+import qualified EffectAnnotationsTest
 import qualified CloneDetectTest
 import qualified RegionsTest
 import qualified SignaturesTest
@@ -124,6 +125,7 @@ tests = testGroup "pb-compiler"
   , DwParamBindingTest.tests
   , DwBuiltinsTest.tests
   , CallClassifyTest.tests
+  , EffectAnnotationsTest.tests
   , CloneDetectTest.tests
   , RegionsTest.tests
   , SignaturesTest.tests

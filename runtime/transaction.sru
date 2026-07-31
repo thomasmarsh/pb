@@ -22,39 +22,51 @@ string SQLReturnData
 string UserID
 end variables
 
+// @effects (pure)
 public function string classname ()
 end function
 
+// @effects ReadsControlState
 public function long dbhandle ()
 end function
 
+// @effects WritesControlState
 public function integer enablesecureconnection (boolean flag)
 end function
 
+// @effects ReadsControlState
 public function integer getcontextservice (string servicename, powerobject servicereference)
 end function
 
+// @effects ReadsControlState
 public function powerobject getparent ()
 end function
 
+// @effects ReadsControlState
 public function string getsecureconnectionstring ()
 end function
 
+// @effects Suspends
 public function boolean postevent (string event, long word, any long)
 end function
 
+// @effects WritesControlState
 public function integer setsecureconnectionproperty ()
 end function
 
+// @effects WritesControlState
 public function integer setsecureconnectionstring (string strconnect)
 end function
 
+// @effects (pure)
 public function string syntaxfromsql (string sqlselect, datawindow presentation, string err)
 end function
 
+// @effects Suspends
 public function integer triggerevent (string event, long word, long long)
 end function
 
+// @effects (pure)
 public function any typeof ()
 end function
 

@@ -91,6 +91,8 @@ library
     PB.Pipeline.SqlParse
     PB.Pipeline.FileWalk
     PB.Runtime.StdLib
+    PB.Runtime.StdLibBytes
+    PB.Runtime.EffectAnnotations
     PB.Algebra.Semiring
     PB.Algebra.Closure
     PB.Analysis.TaintEdges
@@ -245,6 +247,7 @@ test-suite pb-compiler-test
     , DwParamBindingTest
     , DwBuiltinsTest
     , CallClassifyTest
+    , EffectAnnotationsTest
     , CloneDetectTest
     , ClosureTest
     , TaintEdgesTest

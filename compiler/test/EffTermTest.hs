@@ -247,10 +247,15 @@ tests = testGroup "EffTerm"
              (hasEffSuspendEffect "retrieve:dw_foo" result)
 
     , testCase "ExMethodCall on Transaction emits ESuspend not ECall" $
-        -- sqlca.commit() — ExMethodCall on a transaction-typed receiver
+        -- sqlca.triggerevent() — ExMethodCall on a transaction-typed
+        -- receiver. Not sqlca.commit(): real corpus only ever calls commit
+        -- as the bare `commit;` statement keyword, never dotted-call
+        -- syntax, and transaction.sru has no declared `commit` method
+        -- (Plan 220 Phase 1) -- triggerevent is a real declared method that
+        -- still carries the Suspends tag.
         let callExpr = ExMethodCall
               { receiver   = ExLvalue (Lvalue [LvSegment "sqlca" Nothing])
-              , method     = "commit"
+              , method     = "triggerevent"
               , methodArgs = [] }
             sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0") 1] (SsaReturn 1 Nothing)
             result = compileSsaToEff dwEnv Set.empty sa
@@ -839,9 +844,14 @@ tests = testGroup "EffTerm"
             newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaEffTerm emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
 
-    , testCase "local transaction var .commit() classifies as SuspendCall" $
+    , testCase "local transaction var .triggerevent() classifies as SuspendCall" $
+        -- Not .commit(): real corpus only ever calls commit as the bare
+        -- `commit;` statement keyword, never dotted-call syntax, and
+        -- transaction.sru has no declared `commit` method (Plan 220 Phase
+        -- 1) -- triggerevent is a real declared method that still carries
+        -- the Suspends tag.
         let body = [ Located 1 (BsLocalVar [] (PtPrimitive "transaction") "ltrans_x" Nothing)
-                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "ltrans_x" Nothing])) "commit" [ExRaw []]))
+                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "ltrans_x" Nothing])) "triggerevent" [ExRaw []]))
                    ]
             expectedTrace = (Map.empty, [TeSuspend "executeSql" [VNull]], NaturalHalt)
             newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaEffTerm emptyEnv Set.empty body) Map.empty
