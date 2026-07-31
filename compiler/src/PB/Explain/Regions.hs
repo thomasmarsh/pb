@@ -19,6 +19,7 @@
 -- instantiation and its behavior is unchanged.
 module PB.Explain.Regions
   ( RegionId
+  , regionIdLabel
   , Region (..)
   , EffLeaf (..)
   , RegionOps (..)
@@ -36,21 +37,32 @@ import PB.Compile.IR (Eff (..), EffTerm (..))
 
 -- | Opaque handle — the constructor is not exported. Every other layer
 -- treats this as an inert 'Eq'/'Ord' key for matching a @PRegionRef@ back
--- to its defining block; it must never be parsed or displayed for its own
--- content. Display uses 'regionLines'. The line-keyed minting scheme below
--- is a 'PB.Explain.Regions'-internal implementation detail, not a
--- contract — it may change shape later without rippling to other layers.
+-- to its defining block, plus 'regionIdLabel' for a stable, guaranteed-
+-- unique-per-'computeRegionsWith'-call display fallback (used only when a
+-- region carries no line info of its own to show instead — see
+-- 'regionLines'). The minting scheme behind both is a
+-- 'PB.Explain.Regions'-internal implementation detail, not a contract — it
+-- may change shape later without rippling to other layers.
 newtype RegionId = RegionId Text
   deriving (Eq, Ord, Show)
 
+-- | A stable, human-distinguishable (not human-meaningful) display label.
+-- Never parsed back or relied on for identity — use 'Eq'/'Ord' for that.
+regionIdLabel :: RegionId -> Text
+regionIdLabel (RegionId t) = t
+
 data Region = Region
   { regionId         :: RegionId
-  , regionComplexity :: Int        -- ^ McCabe of THIS region only; a cut
-                                    -- child contributes 0 extra decision
-                                    -- points to its parent.
-  , regionLines      :: (Int, Int) -- ^ min/max source line directly owned
-                                    -- by this region (excludes any cut
-                                    -- child's own span).
+  , regionComplexity :: Int              -- ^ McCabe of THIS region only; a
+                                          -- cut child contributes 0 extra
+                                          -- decision points to its parent.
+  , regionLines      :: Maybe (Int, Int) -- ^ min/max source line directly
+                                          -- owned by this region (excludes
+                                          -- any cut child's own span);
+                                          -- 'Nothing' for a genuinely
+                                          -- leaf-free region (distinct from
+                                          -- a real region starting at line
+                                          -- 0).
   , regionChildren   :: [Region]
   }
 
@@ -98,7 +110,7 @@ data RegionOps acc = RegionOps
   , opFanIn  :: acc -> acc -> acc
   , opBranch :: Expr -> Int -> acc -> acc -> acc
   , opLoop   :: Int -> acc -> acc
-  , opRef    :: RegionId -> (Int, Int) -> acc
+  , opRef    :: RegionId -> Maybe (Int, Int) -> acc
   , opSeq    :: acc -> acc -> acc
   , opEmpty  :: acc
   }
@@ -120,16 +132,28 @@ mergeLines Nothing y = y
 mergeLines x Nothing = x
 mergeLines (Just (a1, b1)) (Just (a2, b2)) = Just (min a1 a2, max b1 b2)
 
-mkRegionId :: Maybe (Int, Int) -> RegionId
-mkRegionId lns = RegionId ("region@" <> maybe "0" (\(startLine, _) -> T.pack (show startLine)) lns)
+-- | Smallest-index fresh id not already a key in @doneMap@. Guarantees the
+-- 'Map.insert' in 'closeState' can never clobber a still-live entry,
+-- regardless of how many regions close with the same (or no) line info —
+-- the collision this replaces: two independently-closed leaf-free regions
+-- (e.g. two empty 'PB.Compile.IR.ELetRef' bodies) used to both mint the
+-- literal id @"region@0"@ and silently overwrite one another via
+-- 'Map.insert'. Reusing a numeric slot after its original entry has been
+-- deleted (an 'EFanIn'/'EBranch'/'ELoop' arm's own transient sub-region,
+-- see 'walk') is harmless: nothing still references the deleted entry.
+mkRegionId :: Map.Map RegionId acc -> RegionId
+mkRegionId doneMap = fresh (0 :: Int)
+  where
+    fresh n = let rid = RegionId ("region@" <> T.pack (show n))
+              in if Map.member rid doneMap then fresh (n + 1) else rid
 
 closeState :: WalkState acc -> (Region, acc, Map.Map RegionId acc)
 closeState (WalkState cplx lns ownKids cutKids acc doneMap) =
-  let rid = mkRegionId lns
+  let rid = mkRegionId doneMap
       region = Region
         { regionId         = rid
         , regionComplexity = cplx
-        , regionLines      = fromMaybe (0, 0) lns
+        , regionLines      = lns
         , regionChildren   = cutKids <> ownKids
         }
   in (region, acc, Map.insert rid acc doneMap)
@@ -192,7 +216,7 @@ walk ops threshold table st eff = case eff of
     let (aRegion, aAcc, aMap) = regionOf ops threshold table a
         (bRegion, bAcc, bMap) = regionOf ops threshold table b
         delta   = regionComplexity aRegion + regionComplexity bRegion - 1
-        lns     = mergeLines (Just (regionLines aRegion)) (Just (regionLines bRegion))
+        lns     = mergeLines (regionLines aRegion) (regionLines bRegion)
         kids    = regionChildren aRegion <> regionChildren bRegion
         subAcc  = opFanIn ops aAcc bAcc
         -- aRegion/bRegion themselves are discarded (only their own
@@ -204,7 +228,7 @@ walk ops threshold table st eff = case eff of
     let (tRegion, tAcc, tMap) = regionOf ops threshold table t
         (fRegion, fAcc, fMap) = regionOf ops threshold table f
         delta   = regionComplexity tRegion + regionComplexity fRegion - 1
-        lns     = mergeLines (Just (ln, ln)) (mergeLines (Just (regionLines tRegion)) (Just (regionLines fRegion)))
+        lns     = mergeLines (Just (ln, ln)) (mergeLines (regionLines tRegion) (regionLines fRegion))
         kids    = regionChildren tRegion <> regionChildren fRegion
         subAcc  = opBranch ops cond ln tAcc fAcc
         -- see EFanIn's own note: tRegion/fRegion are discarded, keep only
@@ -214,7 +238,7 @@ walk ops threshold table st eff = case eff of
   ELoop body ln ->
     let (bodyRegion, bodyAcc, bodyMap) = regionOf ops threshold table body
         delta   = regionComplexity bodyRegion
-        lns     = mergeLines (Just (ln, ln)) (Just (regionLines bodyRegion))
+        lns     = mergeLines (Just (ln, ln)) (regionLines bodyRegion)
         kids    = regionChildren bodyRegion
         subAcc  = opLoop ops ln bodyAcc
         -- see EFanIn's own note: bodyRegion is discarded, keep only its

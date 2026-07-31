@@ -85,7 +85,7 @@ tests = testGroup "PB.Explain.Pseudocode"
              assertBool "expected a Just signature for the cut region" (isJust msig)
              Map.lookup rid (pcRegions pc)
                @?= Just [PBranch (var "cond") [PAssign "a" Nothing (ExInt "1") 2] [PAssign "a" Nothing (ExInt "1") 2] 1]
-             lns @?= (1, 2)
+             lns @?= Just (1, 2)
            other -> assertFailure ("expected exactly 1 PRegionRef at root, got " <> show other)
 
   , testCase "two occurrences of the same ELetRef resolve to the same PRegionRef, not duplicated bodies" $

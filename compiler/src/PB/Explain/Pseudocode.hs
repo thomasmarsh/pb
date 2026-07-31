@@ -39,7 +39,7 @@ data PStmt
   | PBranch Expr [PStmt] [PStmt] Int
   | PLoop [PStmt] Int
   | PReturn Expr Int
-  | PRegionRef RegionId (Int, Int) (Maybe InferredSignature)
+  | PRegionRef RegionId (Maybe (Int, Int)) (Maybe InferredSignature)
   deriving (Eq, Show)
 
 data Pseudocode = Pseudocode

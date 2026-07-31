@@ -59,6 +59,7 @@ import qualified RegionsTest
 import qualified SignaturesTest
 import qualified PseudocodeTest
 import qualified RenderTextTest
+import qualified SimplifyTest
 
 
 import Prelude
@@ -128,4 +129,5 @@ tests = testGroup "pb-compiler"
   , SignaturesTest.tests
   , PseudocodeTest.tests
   , RenderTextTest.tests
+  , SimplifyTest.tests
   ]

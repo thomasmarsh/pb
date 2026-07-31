@@ -29,7 +29,7 @@ import PB.AST.Ident (identOrig)
 import PB.AST.SourceFile (FnSig (..), SubSig (..), renderParams)
 import PB.AST.Type (renderPbType)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..))
-import PB.Explain.Regions (RegionId)
+import PB.Explain.Regions (RegionId, regionIdLabel)
 import PB.Explain.Signatures (InferredSignature (..), VarBinding (..))
 import PB.Grammar.Unparse (unparseExpr)
 
@@ -54,13 +54,13 @@ rootHeader pc = catMaybes
     declaredName (Left fnsig)  = identOrig (fnsName fnsig)
     declaredName (Right subsig) = identOrig (ssName subsig)
 
-renderRefs :: Pseudocode -> Set.Set RegionId -> [(RegionId, (Int, Int), Maybe InferredSignature)] -> [Text]
+renderRefs :: Pseudocode -> Set.Set RegionId -> [(RegionId, Maybe (Int, Int), Maybe InferredSignature)] -> [Text]
 renderRefs _pc _seen [] = []
 renderRefs pc seen ((rid, lns, msig) : rest)
   | rid `Set.member` seen = renderRefs pc seen rest
   | otherwise =
       let stmts = Map.findWithDefault [] rid (pcRegions pc)
-          header = regionHeader lns msig
+          header = regionHeader rid lns msig
           block  = T.intercalate "\n" (header : concatMap (renderStmt 1) stmts)
       in block : renderRefs pc (Set.insert rid seen) (rest <> collectRefs stmts)
 
@@ -69,7 +69,7 @@ renderRefs pc seen ((rid, lns, msig) : rest)
 -- own independent straight-line run). Does not recurse into a referenced
 -- region's own body -- 'renderRefs' does that once, from 'pcRegions',
 -- after checking the dedup set.
-collectRefs :: [PStmt] -> [(RegionId, (Int, Int), Maybe InferredSignature)]
+collectRefs :: [PStmt] -> [(RegionId, Maybe (Int, Int), Maybe InferredSignature)]
 collectRefs = concatMap go
   where
     go (PRegionRef rid lns msig) = [(rid, lns, msig)]
@@ -77,12 +77,17 @@ collectRefs = concatMap go
     go (PLoop body _)            = collectRefs body
     go _                         = []
 
-regionLabel :: (Int, Int) -> Text
-regionLabel (startLine, _) = "region@" <> T.pack (show startLine)
+-- | A real line range prints as @region\@\<line\>@; a genuinely leaf-free
+-- region (no line info at all) falls back to 'regionIdLabel' so two such
+-- regions in the same output are still visually distinguishable, not both
+-- printed as an identical, ambiguous label.
+regionLabel :: RegionId -> Maybe (Int, Int) -> Text
+regionLabel _   (Just (startLine, _)) = "region@" <> T.pack (show startLine)
+regionLabel rid Nothing               = regionIdLabel rid
 
-regionHeader :: (Int, Int) -> Maybe InferredSignature -> Text
-regionHeader lns Nothing    = regionLabel lns
-regionHeader lns (Just sig) = renderInferredSig (regionLabel lns) sig
+regionHeader :: RegionId -> Maybe (Int, Int) -> Maybe InferredSignature -> Text
+regionHeader rid lns Nothing    = regionLabel rid lns
+regionHeader rid lns (Just sig) = renderInferredSig (regionLabel rid lns) sig
 
 renderInferredSig :: Text -> InferredSignature -> Text
 renderInferredSig name sig =
@@ -126,5 +131,5 @@ renderStmt ind (PLoop body ln) =
     <> [indent ind "end loop"]
 renderStmt ind (PReturn e ln) =
   [indent ind ("return " <> unparseExpr e <> backlink ln)]
-renderStmt ind (PRegionRef _rid lns _msig) =
-  [indent ind ("-> " <> regionLabel lns <> " (see below)")]
+renderStmt ind (PRegionRef rid lns _msig) =
+  [indent ind ("-> " <> regionLabel rid lns <> " (see below)")]

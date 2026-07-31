@@ -18,6 +18,7 @@ module PB.Analysis.Dataflow
   , extractDefsUses
   , extractSqlHostVars
   , walkExprIdents
+  , walkExprIdentsExcludingCallees
   , lvRoot
   , lvalueSubscriptIdents
   , isIdent
@@ -110,34 +111,49 @@ lvRoot lv = case segments lv of
 -- point where these particular occurrences become identity-comparable) --
 -- nothing downstream re-derives canonicalization.
 walkExprIdents :: Expr -> Set.Set Ident
-walkExprIdents = foldExprs identOf
-  where
-    identOf (ExLvalue lv) =
-      -- Root ident, plus any identifiers in the lvalue's own subscript
-      -- expressions (e.g. `arr[i+1]` reads `i` to compute which slot to
-      -- address) -- covers a subscripted lvalue read anywhere in an
-      -- expression tree (RHS, conditions, call args, returns), not just an
-      -- assignment's own LHS (see 'lvalueSubscriptIdents', used directly by
-      -- 'extractUseVars' for that LHS case since the LHS is never itself
-      -- wrapped in an 'ExLvalue' node).
-      maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv
-    -- Call/method-call arguments are real 'Expr' children ('exprChildren'),
-    -- so 'foldExprs' already recurses into them -- this leaf only
-    -- contributes the callee's own root identifier.
-    identOf (ExCall lv _) = maybe Set.empty Set.singleton (lvRoot lv)
-    -- Receiver and argument identifiers both come from 'foldExprs' recursing
-    -- via 'exprChildren' (ExMethodCall's receiver and args are children);
-    -- this leaf contributes nothing of its own.
-    identOf (ExMethodCall _ _ _) = Set.empty
-    -- Dispatch's object lvalue is not itself an 'Expr' child ('exprChildren'
-    -- only exposes the arguments), so its root/subscript idents are minted
-    -- here; the arguments are covered by 'foldExprs' recursion.
-    identOf (ExDispatch de) =
-      maybe Set.empty
-        (\lv -> maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv)
-        (object de)
-    identOf (ExRaw toks) = identTexts toks
-    identOf _ = Set.empty
+walkExprIdents = foldExprs (identOfShared IncludeCallees)
+
+-- | Same walk as 'walkExprIdents', except an 'ExCall'\'s own callee root
+-- contributes nothing (its argument children still recurse normally via
+-- 'foldExprs'). For a consumer asking "which variables does this
+-- expression read" (e.g. 'PB.Explain.Signatures'\' free-input inference)
+-- rather than "which identifiers does this expression reference at all" --
+-- a call's callee names a procedure, not a value the expression's result
+-- depends on, so it is not a free-read the way an argument or operand is.
+walkExprIdentsExcludingCallees :: Expr -> Set.Set Ident
+walkExprIdentsExcludingCallees = foldExprs (identOfShared ExcludeCallees)
+
+data CalleeTreatment = IncludeCallees | ExcludeCallees
+
+identOfShared :: CalleeTreatment -> Expr -> Set.Set Ident
+identOfShared _ (ExLvalue lv) =
+  -- Root ident, plus any identifiers in the lvalue's own subscript
+  -- expressions (e.g. `arr[i+1]` reads `i` to compute which slot to
+  -- address) -- covers a subscripted lvalue read anywhere in an
+  -- expression tree (RHS, conditions, call args, returns), not just an
+  -- assignment's own LHS (see 'lvalueSubscriptIdents', used directly by
+  -- 'extractUseVars' for that LHS case since the LHS is never itself
+  -- wrapped in an 'ExLvalue' node).
+  maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv
+-- Call/method-call arguments are real 'Expr' children ('exprChildren'), so
+-- 'foldExprs' already recurses into them -- this leaf only ever
+-- contributes the callee's own root identifier, suppressed entirely under
+-- 'ExcludeCallees'.
+identOfShared IncludeCallees (ExCall lv _) = maybe Set.empty Set.singleton (lvRoot lv)
+identOfShared ExcludeCallees (ExCall _  _) = Set.empty
+-- Receiver and argument identifiers both come from 'foldExprs' recursing
+-- via 'exprChildren' (ExMethodCall's receiver and args are children); this
+-- leaf contributes nothing of its own.
+identOfShared _ (ExMethodCall _ _ _) = Set.empty
+-- Dispatch's object lvalue is not itself an 'Expr' child ('exprChildren'
+-- only exposes the arguments), so its root/subscript idents are minted
+-- here; the arguments are covered by 'foldExprs' recursion.
+identOfShared _ (ExDispatch de) =
+  maybe Set.empty
+    (\lv -> maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv)
+    (object de)
+identOfShared _ (ExRaw toks) = identTexts toks
+identOfShared _ _ = Set.empty
 
 -- | Mint an 'Ident', in order, for every token in a flat list whose text is
 -- a valid identifier -- the one mint point for 'extractDefVar''s token-list

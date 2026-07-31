@@ -19,7 +19,7 @@ import qualified Data.Set as Set
 import PB.AST.Expr (Expr (..))
 import PB.AST.Ident (Ident, mkIdentSynthetic)
 import PB.AST.Type (PbType)
-import PB.Analysis.Dataflow (lvRoot, lvalueSubscriptIdents, walkExprIdents)
+import PB.Analysis.Dataflow (lvRoot, lvalueSubscriptIdents, walkExprIdentsExcludingCallees)
 import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVarOrSelf)
 import PB.Compile.IR (EffTerm)
 import PB.Explain.Regions (EffLeaf (..), Region, RegionId, RegionOps (..), computeRegionsWith)
@@ -64,17 +64,17 @@ sigAccLeaf leaf = case leaf of
     in sigAccEmpty { saLocallyDefined = Set.singleton d, saAllDefs = Set.singleton d }
   LAssignWithRhs var lhsE rhsE _ln _ty ->
     let d = defIdent var (Just lhsE)
-        rs = walkExprIdents rhsE <> lhsSubscriptIdents lhsE
+        rs = walkExprIdentsExcludingCallees rhsE <> lhsSubscriptIdents lhsE
     in SigAcc
         { saLocallyDefined = Set.singleton d
         , saFreeReads      = rs
         , saAllDefs        = Set.singleton d
         , saAllUses        = rs
         }
-  LCall _name callArgs _ln    -> readsOnly (foldMap walkExprIdents callArgs)
-  LSuspend _name callArgs _ln -> readsOnly (foldMap walkExprIdents callArgs)
-  LReturn e _ln                -> readsOnly (walkExprIdents e)
-  LBranchCond cond _ln         -> readsOnly (walkExprIdents cond)
+  LCall _name callArgs _ln    -> readsOnly (foldMap walkExprIdentsExcludingCallees callArgs)
+  LSuspend _name callArgs _ln -> readsOnly (foldMap walkExprIdentsExcludingCallees callArgs)
+  LReturn e _ln                -> readsOnly (walkExprIdentsExcludingCallees e)
+  LBranchCond cond _ln         -> readsOnly (walkExprIdentsExcludingCallees cond)
   where
     readsOnly rs = sigAccEmpty { saFreeReads = rs, saAllUses = rs }
 
