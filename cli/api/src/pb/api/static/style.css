@@ -555,6 +555,7 @@ body {
 /* Source viewer */
 .source-viewer {
     display: flex;
+    min-height: 0;
     background: #1e1e2e;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -1891,15 +1892,21 @@ kbd.kbd {
 .cfg-node-selected ellipse { stroke-width: 2.5 !important; }
 
 /* ── Explain split layout ────────────────────────────────────────────────── */
+/* Explicit flex-direction/flex-wrap/min-height on every level: Safari, unlike
+   Chrome, doesn't treat `overflow` as implying `min-height: 0` on a flex item
+   that's itself a flex container, so it lets the item grow to its content's
+   full height instead of respecting the row — collapsing the split into a
+   top/bottom stack. */
 .explain-split {
-    display: flex; flex: 1; min-height: 0; gap: 10px;
+    display: flex; flex-direction: row; flex-wrap: nowrap;
+    flex: 1; min-height: 0; gap: 10px;
 }
 .explain-region-pane {
-    flex: 1; min-width: 0; overflow-y: auto;
+    flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
     display: flex; flex-direction: column; gap: 10px;
 }
 .explain-source-pane {
-    flex: 1; min-width: 0; overflow: hidden;
+    flex: 1; min-width: 0; min-height: 0; overflow: hidden;
     display: flex; flex-direction: column;
 }
 .explain-region-card {
