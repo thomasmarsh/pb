@@ -18,6 +18,7 @@
 -- exists to do so).
 module PB.Explain.Render.Text
   ( renderText
+  , renderStmtLine
   ) where
 
 import PB.Prelude
@@ -125,21 +126,35 @@ backlink ln = "  -- line " <> T.pack (show ln)
 renderArgs :: [Expr] -> Text
 renderArgs = T.intercalate ", " . map unparseExpr
 
+-- | The single-node header text for one 'PStmt' -- no indent, no recursion
+-- into a 'PBranch'\/'PLoop' body, and no line-number backlink (the line is
+-- already a structured field on the node, not text to re-parse). 'renderStmt'
+-- composes this with indent\/backlink\/recursion for the CLI text view;
+-- 'PB.Pipeline.Serialise'\'s 'PStmt' JSON encoding calls it directly so every
+-- materialized node carries its own pre-rendered display text, and a UI
+-- consumer never re-derives 'Expr' -> 'Text' a third way.
+renderStmtLine :: PStmt -> Text
+renderStmtLine (PAssign var mty rhs _) =
+  var <> maybe "" ((": " <>) . renderPbType) mty <> " = " <> unparseExpr rhs
+renderStmtLine (PCall name _msig args _) =
+  name <> "(" <> renderArgs args <> ")"
+renderStmtLine (PBranch cond _ _ _) =
+  "if " <> unparseExpr cond <> " then"
+renderStmtLine (PLoop _ _) = "loop"
+renderStmtLine (PReturn e _) = "return " <> unparseExpr e
+renderStmtLine (PRegionRef rid lns _msig) = "-> " <> regionLabel rid lns
+
 renderStmt :: Int -> PStmt -> [Text]
-renderStmt ind (PAssign var mty rhs ln) =
-  [indent ind (var <> maybe "" ((": " <>) . renderPbType) mty <> " = " <> unparseExpr rhs <> backlink ln)]
-renderStmt ind (PCall name _msig args ln) =
-  [indent ind (name <> "(" <> renderArgs args <> ")" <> backlink ln)]
-renderStmt ind (PBranch cond t f ln) =
-  [indent ind ("if " <> unparseExpr cond <> " then" <> backlink ln)]
+renderStmt ind stmt@(PAssign _ _ _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
+renderStmt ind stmt@(PCall _ _ _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
+renderStmt ind stmt@(PBranch _ t f ln) =
+  [indent ind (renderStmtLine stmt <> backlink ln)]
     <> concatMap (renderStmt (ind + 1)) t
     <> (if null f then [] else indent ind "else" : concatMap (renderStmt (ind + 1)) f)
     <> [indent ind "end if"]
-renderStmt ind (PLoop body ln) =
-  [indent ind ("loop" <> backlink ln)]
+renderStmt ind stmt@(PLoop body ln) =
+  [indent ind (renderStmtLine stmt <> backlink ln)]
     <> concatMap (renderStmt (ind + 1)) body
     <> [indent ind "end loop"]
-renderStmt ind (PReturn e ln) =
-  [indent ind ("return " <> unparseExpr e <> backlink ln)]
-renderStmt ind (PRegionRef rid lns _msig) =
-  [indent ind ("-> " <> regionLabel rid lns <> " (see below)")]
+renderStmt ind stmt@(PReturn _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
+renderStmt ind stmt@(PRegionRef {}) = [indent ind (renderStmtLine stmt <> " (see below)")]

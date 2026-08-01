@@ -5,6 +5,7 @@ import PB.Prelude
 import Data.Aeson              (Options (..), ToJSON (..), ToJSONKey (..), defaultOptions, genericToJSON, (.=))
 import Data.Aeson.Types        (toJSONKeyText)
 import qualified Data.Aeson as J
+import qualified Data.Aeson.KeyMap as KM
 import Data.Char               (isLower, toLower)
 
 import PB.AST.BodyStmt
@@ -22,6 +23,7 @@ import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSu
 import PB.Explain.Regions     (RegionId, regionIdLabel)
 import PB.Explain.Signatures  (VarBinding, InferredSignature)
 import PB.Explain.Pseudocode  (PStmt, Pseudocode)
+import PB.Explain.Render.Text (renderStmtLine)
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
 --   "fnsReturnType" → "returnType", "srForward" → "forward".
@@ -162,5 +164,14 @@ instance ToJSON RegionId where toJSON = toJSON . regionIdLabel
 instance ToJSONKey RegionId where toJSONKey = toJSONKeyText regionIdLabel
 instance ToJSON VarBinding where toJSON = genericToJSON customOptions
 instance ToJSON InferredSignature where toJSON = genericToJSON customOptions
-instance ToJSON PStmt where toJSON = genericToJSON customOptions
+-- | Gains a sibling "stmtText" key over the generic tag/contents encoding,
+-- computed fresh from the node's own fields via 'renderStmtLine' at
+-- serialization time -- never a stored field on 'PStmt' itself, so it can't
+-- desync from the 'Expr' it renders. A 'PBranch'\/'PLoop'\'s nested
+-- @[PStmt]@ fields recurse back through this same instance automatically
+-- (the generic encoding calls 'toJSON' on each field value).
+instance ToJSON PStmt where
+  toJSON stmt = case genericToJSON customOptions stmt of
+    J.Object o -> J.Object (KM.insert "stmtText" (toJSON (renderStmtLine stmt)) o)
+    v          -> v
 instance ToJSON Pseudocode where toJSON = genericToJSON customOptions

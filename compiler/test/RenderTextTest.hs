@@ -10,8 +10,8 @@ import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
 import PB.Explain.Signatures (computeSignatures)
-import PB.Explain.Pseudocode (Pseudocode (..), buildPseudocode)
-import PB.Explain.Render.Text (renderText)
+import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
+import PB.Explain.Render.Text (renderText, renderStmtLine)
 import PB.Lexing.Token (SourceSpan (..))
 
 import qualified Data.Map.Strict as Map
@@ -145,4 +145,31 @@ tests = testGroup "PB.Explain.Render.Text"
             , "  unknown()  -- line 1"
             ]
       in renderText pc @?= expected
+
+  , testGroup "renderStmtLine"
+    [ testCase "renders a PAssign with its declared type, no indent or backlink" $
+        renderStmtLine (PAssign "x" (Just (PtPrimitive "integer")) (ExInt "1") 5) @?= "x: integer = 1"
+
+    , testCase "renders a PCall with no indent or backlink" $
+        renderStmtLine (PCall "foo" Nothing [var "a", ExInt "2"] 3) @?= "foo(a, 2)"
+
+    , testCase "renders a PBranch as just its condition header, no arms, no end-if" $
+        renderStmtLine (PBranch (var "cond") [PReturn (ExInt "1") 2] [PReturn (ExInt "2") 3] 1) @?= "if cond then"
+
+    , testCase "renders a PLoop as just its header, no body" $
+        renderStmtLine (PLoop [PReturn (ExInt "1") 2] 7) @?= "loop"
+
+    , testCase "renders a PReturn" $
+        renderStmtLine (PReturn (var "x") 9) @?= "return x"
+
+    , testCase "renders a PRegionRef without renderText's CLI-only \"(see below)\" suffix" $
+        let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 (Just (PtPrimitive "integer")) :: Eff () ()
+            term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing . ELetRef "blk1" :: Eff () ()
+            effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
+            pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing noSig effTerm
+            rootStmts = Map.findWithDefault [] (pcRootRegion pc) (pcRegions pc)
+        in case [s | s@(PRegionRef {}) <- rootStmts] of
+             [ref] -> renderStmtLine ref @?= "-> region@5"
+             other -> error ("expected exactly one PRegionRef in root region, got " <> show other)
+    ]
   ]

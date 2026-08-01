@@ -15,14 +15,15 @@ import PB.Prelude
 import Data.Aeson (ToJSON, encode)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text.Encoding as TE
-import PB.AST.Ident (Ident, IdentMap)
+import PB.AST.Ident (Ident, IdentMap, identSetFromList)
 import PB.AST.SourceFile (FnSig, SubSig)
 import PB.Analysis.CallClassify (EffectTag)
-import PB.Analysis.TypeEnv (ScopedTypeEnv)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR (EffTerm)
 import PB.Explain.Regions (defaultComplexityThreshold)
 import PB.Explain.Signatures (computeSignatures)
 import PB.Explain.Pseudocode (resolveCallee, buildPseudocode)
+import PB.Explain.Simplify (simplifyPseudocode)
 import PB.Pipeline.DuckDb (Handle, recreateTextTable, appendTextRows)
 import PB.Pipeline.Serialise ()
 
@@ -75,7 +76,9 @@ materializeProcPseudocode sigMap procEffects seedRows conn = do
         | ExplainSeedRow obj pName effTerm env <- seedRows
         , let declaredSig = resolveCallee env sigMap pName
               sigs = computeSignatures defaultComplexityThreshold env sigMap procEffects effTerm
-              pc = buildPseudocode defaultComplexityThreshold env sigMap declaredSig sigs effTerm
+              locals = identSetFromList (Map.keys (steLocal env))
+              pc = simplifyPseudocode locals
+                     (buildPseudocode defaultComplexityThreshold env sigMap declaredSig sigs effTerm)
         ]
   recreateTextTable conn "proc_pseudocode" ["object", "proc_name", "pseudocode_json"]
   appendTextRows conn "proc_pseudocode" rows

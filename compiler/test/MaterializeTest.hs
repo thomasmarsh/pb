@@ -26,12 +26,13 @@ import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Ident (Ident, IdentMap, identMapEmpty, identMapInsertWith, mkIdentSynthetic)
 import PB.AST.SourceFile (SubSig (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
-import PB.Compile.IR (Eff (..), extractEffTable)
+import PB.Compile.IR (Eff (..), extractEffTable, branchEff)
 import PB.Explain.Materialize (ExplainSeedRow (..), materializeProcPseudocode)
 import PB.Pipeline.Serialise ()
 import Data.Aeson (Value (..), decodeStrict)
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Vector       as V
 import qualified Data.Text.Encoding as TE
 
 -- | Local row shape for reading back (leg_kind, leg_source) pairs raw.
@@ -74,6 +75,8 @@ tests = testGroup "Materialize"
     , testCase "pseudocode_json decodes to a JSON object with a non-null rootRegion/regions shape" testMaterializeProcPseudocodeJsonShape
     , testCase "a call resolved via the caller's ancestor chain surfaces its transitive effect tag in the materialized rootSig" testMaterializeProcPseudocodeEffectsReachJson
     , testCase "two objects declaring the same bare proc name each materialize their own object's resolved effects, not a name-only union" testMaterializeProcPseudocodeNameCollision
+    , testCase "a materialized row's pseudocode_json reflects simplifyPseudocode's output, not raw buildPseudocode" testMaterializeProcPseudocodeSimplified
+    , testCase "each PStmt in a materialized row carries its pre-rendered stmtText, including nested branch children" testMaterializeProcPseudocodeStmtText
     ]
   ]
 
@@ -348,6 +351,37 @@ testMaterializeProcPseudocodeNameCollision = withHandle inMemory $ \conn -> do
       assertEqual "w_a's own resolved tag" (Array (pure (String "ReadsDb"))) (effectsFor rawA)
       assertEqual "w_b's own resolved tag, not w_a's" (Array (pure (String "WritesDb"))) (effectsFor rawB)
     other -> error ("expected exactly 2 rows, got " <> show other)
+
+testMaterializeProcPseudocodeSimplified :: IO ()
+testMaterializeProcPseudocodeSimplified = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let term = branchEff (var "cond") (EReturn (ExBool True) 2) (EReturn (ExBool False) 3) 1 :: Eff () ()
+      effTerm = extractEffTable term
+  materializeProcPseudocode identMapEmpty Map.empty [ExplainSeedRow "w_a" "ue_clicked" effTerm (envFor "w_a")] conn
+  [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
+  assertBool "if/return-true/return-false collapses to a single PReturn (simplifyPseudocode ran)"
+    (T.isInfixOf "\"PReturn\"" raw)
+  assertBool "the collapsed PBranch no longer appears (simplifyPseudocode ran, not raw buildPseudocode)"
+    (not (T.isInfixOf "\"PBranch\"" raw))
+
+testMaterializeProcPseudocodeStmtText :: IO ()
+testMaterializeProcPseudocodeStmtText = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let term = branchEff (var "cond")
+               (EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing)
+               (EAssignWithRhs "b" (var "b") (ExInt "2") 3 Nothing) 1 :: Eff () ()
+      effTerm = extractEffTable term
+  materializeProcPseudocode identMapEmpty Map.empty [ExplainSeedRow "w_a" "ue_clicked" effTerm (envFor "w_a")] conn
+  [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
+  assertEqual "stmtText present on the branch header and both arm assignments (3 PStmt nodes total)"
+    3 (T.count "\"stmtText\"" raw)
+  let v = decodeJson raw
+      rootLabel = case field' "rootRegion" v of String s -> s; _ -> error "rootRegion missing"
+      rootStmts = case field' rootLabel (field' "regions" v) of Array a -> V.toList a; _ -> []
+  case rootStmts of
+    [branchNode] -> assertEqual "branch header's own stmtText"
+      (String "if cond then") (field' "stmtText" branchNode)
+    other -> error ("expected exactly 1 root statement (the branch), got " <> show other)
 
 var :: Text -> Expr
 var name = ExLvalue (Lvalue [LvSegment (ident name) Nothing])
