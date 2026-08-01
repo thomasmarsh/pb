@@ -9,7 +9,7 @@ import type { Store } from "@pb/core";
 import {
   SourceView,
   collectRegionCards, sourceLinesForStmt,
-  formatInferredSignature, formatDeclaredSig, regionDisplayLabel,
+  formatInferredSignature, formatDeclaredSig, regionDisplayLabel, formatRegionCallLabel,
   highlightPowerScript,
   type NormalizedStmt, type RegionCard,
 } from "@pb/platform";
@@ -65,7 +65,11 @@ function StmtRow(props: {
             if (props.stmt.kind === "regionRef") props.onJump(props.stmt.regionId);
           }}
         >
-          <code innerHTML={highlightPowerScript(props.stmt.text)} />
+          <code>
+            {props.stmt.kind === "regionRef"
+              ? formatRegionCallLabel(props.stmt.regionId, props.stmt.lineRange, props.stmt.sig)
+              : ""}
+          </code>
         </div>
       </Show>
       <Show when={props.stmt.kind === "branch"}>
@@ -118,7 +122,7 @@ function RegionCardView(props: {
       <Show when={props.declaredSig}>
         <div class="explain-region-header explain-region-header--declared">declared {props.declaredSig}</div>
       </Show>
-      <div class="explain-region-header">inferred {header()}</div>
+      <div class="explain-region-header">{header()}</div>
       <div class="explain-region-body">
         <For each={props.card.stmts}>
           {(stmt) => <StmtRow stmt={stmt} depth={0} isActive={props.isActive} onHover={props.onHover} onPin={props.onPin} onJump={props.onJump} />}
@@ -180,9 +184,14 @@ export function ExplainCore(props: ExplainCoreProps): JSX.Element {
     const s = activeStmt();
     return s ? sourceLinesForStmt(s) : null;
   });
+  // Scrolling the source pane is a deliberate action (pin/click), never a
+  // side effect of the mouse merely passing over a statement — otherwise
+  // hovering while reading fights any manual scrolling in that pane.
   const scrollToLine = createMemo(() => {
-    const lines = activeLines();
-    return lines && lines.size > 0 ? Math.min(...lines) : null;
+    const s = pinned();
+    if (!s) return null;
+    const lines = sourceLinesForStmt(s);
+    return lines.size > 0 ? Math.min(...lines) : null;
   });
 
   function isActive(stmt: NormalizedStmt): boolean {

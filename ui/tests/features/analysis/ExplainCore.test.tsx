@@ -2,7 +2,7 @@
 // Explain split pane's hover/pin highlighting and region-ref jump chips
 // (Plan 222 Phase 4).
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { ExplainCore } from "../../../app/src/views/features/analysis/ExplainCore.js";
 import { createTestStore } from "../../helpers.js";
@@ -70,6 +70,24 @@ describe("ExplainCore", () => {
 
     const line1 = container.querySelector('.source-code-line[data-line="1"]')!;
     expect(line1.classList.contains("source-code-line--error")).toBe(true);
+  });
+
+  it("hovering a statement highlights but does not auto-scroll the source pane; pinning it does", () => {
+    const { container } = setup();
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    const stmtRow = [...container.querySelectorAll(".explain-stmt")].find((el) => el.textContent === "ls_x = 1")!;
+
+    fireEvent.mouseEnter(stmtRow);
+    expect(scrollSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(stmtRow);
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  it("renders a region-ref as a call (name(args)), not the raw '-> region@N' backend text", () => {
+    const { container } = setup();
+    const chip = container.querySelector(".explain-stmt--region-ref")!;
+    expect(chip.textContent).toBe("region_3()");
   });
 
   it("clicking a region-ref chip flashes its target region card", () => {

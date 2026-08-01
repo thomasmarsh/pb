@@ -187,6 +187,7 @@ export {
   formatEffects,
   formatInferredSignature,
   regionDisplayLabel,
+  formatRegionCallLabel,
   formatParams,
   formatDeclaredSig,
 } from "./components/analysis/pure/explainLayout.js";

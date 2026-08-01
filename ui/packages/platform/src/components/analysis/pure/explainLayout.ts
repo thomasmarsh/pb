@@ -159,7 +159,19 @@ export function formatInferredSignature(name: string, sig: InferredSignature): s
 }
 
 export function regionDisplayLabel(regionId: string, lineRange: [number, number] | null): string {
-  return lineRange ? `region@${lineRange[0]}` : regionId;
+  return lineRange ? `region_${lineRange[0]}` : regionId;
+}
+
+// A region-ref rendered as a call site (name + input arg names) rather than
+// the backend's "-> region@N" arrow text, so it reads like the function call
+// it stands in for; clicking it still jumps to that region's own card.
+export function formatRegionCallLabel(
+  regionId: string,
+  lineRange: [number, number] | null,
+  sig: InferredSignature | null,
+): string {
+  const args = sig ? sig.inputs.map((v) => v.name).join(", ") : "";
+  return `${regionDisplayLabel(regionId, lineRange)}(${args})`;
 }
 
 export function formatParams(params: Param[]): string {

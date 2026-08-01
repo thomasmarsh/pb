@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   normalizeStmt, sourceLinesForStmt, collectRegionCards,
-  formatInferredSignature, formatDeclaredSig,
+  formatInferredSignature, formatDeclaredSig, regionDisplayLabel, formatRegionCallLabel,
 } from "@pb/platform";
 import type { PStmt, Pseudocode, InferredSignature, DeclaredSig } from "@pb/platform";
 
@@ -115,6 +115,35 @@ describe("formatInferredSignature", () => {
   it("sorts effect tags ascending, matching Set.toAscList", () => {
     const sig: InferredSignature = { inputs: [], outputs: [], effects: ["WritesUi", "ReadsDb"] };
     expect(formatInferredSignature("r", sig)).toBe("r() -> ()  [ReadsDb, WritesUi]");
+  });
+});
+
+describe("regionDisplayLabel", () => {
+  it("formats a cut-region label as an identifier, not region@line", () => {
+    expect(regionDisplayLabel("region_3", [10, 14])).toBe("region_10");
+  });
+
+  it("falls back to the raw regionId when there's no line range (the root region)", () => {
+    expect(regionDisplayLabel("region_0", null)).toBe("region_0");
+  });
+});
+
+describe("formatRegionCallLabel", () => {
+  it("renders a region-ref as a call: name(inputArgNames)", () => {
+    expect(formatRegionCallLabel("region_3", [10, 14], SIG)).toBe("region_10(li_width)");
+  });
+
+  it("renders an empty arg list when the signature has no inputs", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: [] };
+    expect(formatRegionCallLabel("region_3", [10, 14], sig)).toBe("region_10()");
+  });
+
+  it("renders an empty arg list when the signature is null", () => {
+    expect(formatRegionCallLabel("region_3", [10, 14], null)).toBe("region_10()");
+  });
+
+  it("uses the raw regionId when there's no line range", () => {
+    expect(formatRegionCallLabel("region_0", null, SIG)).toBe("region_0(li_width)");
   });
 });
 
