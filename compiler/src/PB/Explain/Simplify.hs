@@ -14,6 +14,7 @@ module PB.Explain.Simplify
   ( simplifyPseudocode
   , dropDeadStores
   , collapseBooleanBranch
+  , inlineForwardingRegions
   ) where
 
 import PB.Prelude
@@ -152,9 +153,68 @@ eligibleFor locals refParams msig =
 -- excluded automatically (see 'refParamNames') even if the caller's
 -- @locals@ includes it.
 simplifyPseudocode :: IdentSet -> Pseudocode -> Pseudocode
-simplifyPseudocode locals pc = pc { pcRegions = Map.mapWithKey simplifyRegion (pcRegions pc) }
+simplifyPseudocode locals pc = inlineForwardingRegions pc'
   where
+    pc' = pc { pcRegions = Map.mapWithKey simplifyRegion (pcRegions pc) }
     sigs = regionSignatures pc
     refParams = refParamNames (pcDeclaredSig pc)
     simplifyRegion rid stmts =
       collapseBooleanBranch (dropDeadStores (eligibleFor locals refParams (Map.lookup rid sigs)) stmts)
+
+-- | A pure-forwarder region -- one whose entire body is a single
+-- 'PRegionRef' and nothing else. The root is never a candidate even when
+-- its own body happens to match: it is the procedure's real entry point
+-- and must stay independently addressable by its own declared name.
+forwardingRegions :: Pseudocode -> Map.Map RegionId (RegionId, Maybe (Int, Int), Maybe InferredSignature)
+forwardingRegions pc = Map.fromList
+  [ (rid, (target, lns, msig))
+  | (rid, [PRegionRef target lns msig]) <- Map.toList (pcRegions pc)
+  , rid /= pcRootRegion pc
+  ]
+
+-- | Follow a forwarding chain to its real, non-forwarding destination.
+-- Each forwarder's own carried @(lns, msig)@ already describes its
+-- immediate target's genuine line range and signature (every 'PRegionRef'
+-- is built by looking those fields up keyed on the region actually being
+-- referenced, never the referrer) -- so resolving one more hop, when the
+-- immediate target is itself a forwarder, simply means discarding this
+-- hop's own tuple in favor of the deeper one, not merging them.
+resolveForwarding
+  :: Map.Map RegionId (RegionId, Maybe (Int, Int), Maybe InferredSignature)
+  -> RegionId
+  -> Maybe (RegionId, Maybe (Int, Int), Maybe InferredSignature)
+resolveForwarding forwarders rid = case Map.lookup rid forwarders of
+  Nothing -> Nothing
+  Just immediate@(target, _, _)
+    | Map.member target forwarders -> resolveForwarding forwarders target
+    | otherwise                    -> Just immediate
+
+-- | Rewrite every 'PRegionRef' in a statement tree that targets a
+-- forwarding region to point directly at its real, fully-resolved
+-- destination; every other statement (and non-forwarded refs) is
+-- unchanged. Recurses into 'PBranch'\/'PLoop' bodies, the same shape
+-- 'dropDeadStoresWithLiveOut'\/'collapseBooleanBranch' already recurse
+-- with.
+retargetRefs
+  :: Map.Map RegionId (RegionId, Maybe (Int, Int), Maybe InferredSignature)
+  -> [PStmt] -> [PStmt]
+retargetRefs forwarders = map rewrite
+  where
+    rewrite (PRegionRef rid lns msig) = case resolveForwarding forwarders rid of
+      Just (target, lns', msig') -> PRegionRef target lns' msig'
+      Nothing                    -> PRegionRef rid lns msig
+    rewrite (PBranch cond t f ln) = PBranch cond (retargetRefs forwarders t) (retargetRefs forwarders f) ln
+    rewrite (PLoop body ln)       = PLoop (retargetRefs forwarders body) ln
+    rewrite stmt                  = stmt
+
+-- | Drop every pure-forwarder region from 'pcRegions' and retarget every
+-- remaining reference to point straight at the real destination a
+-- forwarding chain ultimately led to. A whole chain collapses in one pass
+-- (see 'resolveForwarding'), so this needs no repeated fixpoint
+-- iteration of its own.
+inlineForwardingRegions :: Pseudocode -> Pseudocode
+inlineForwardingRegions pc = pc
+  { pcRegions = Map.map (retargetRefs forwarders) (Map.withoutKeys (pcRegions pc) (Map.keysSet forwarders))
+  }
+  where
+    forwarders = forwardingRegions pc

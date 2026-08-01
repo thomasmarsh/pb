@@ -9,9 +9,10 @@ import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
 import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
-import PB.Explain.Simplify (collapseBooleanBranch, dropDeadStores, simplifyPseudocode)
+import PB.Explain.Simplify (collapseBooleanBranch, dropDeadStores, inlineForwardingRegions, simplifyPseudocode)
 import PB.Lexing.Token (SourceSpan (..))
 
+import Data.List (partition)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -148,7 +149,133 @@ tests = testGroup "PB.Explain.Simplify"
           once  = simplifyPseudocode locals pc
           twice = simplifyPseudocode locals once
       once === twice
+
+  , testGroup "inlineForwardingRegions"
+    [ testCase "a region whose body is a single PRegionRef is dropped, and every other reference to it retargets to its own target" $
+        let pc = singleForwarderPc
+            rootRid = pcRootRegion pc
+            nonRoot = Map.toList (Map.delete rootRid (pcRegions pc))
+            (forwarders, reals) = partition (\(_, stmts) -> isForwarderStmt stmts) nonRoot
+        in case (forwarders, reals) of
+             ([(fwdRid, [fwdRef])], [(targetRid, _)]) ->
+               let result = inlineForwardingRegions pc
+               in case Map.lookup rootRid (pcRegions result) of
+                    Just (refStmt : _) -> do
+                      Map.member fwdRid (pcRegions result) @?= False
+                      Map.member targetRid (pcRegions result) @?= True
+                      refStmt @?= fwdRef
+                    other -> assertFailure ("expected root region to retain at least its trailing statement, got " <> show other)
+             other -> assertFailure ("expected exactly one forwarder region and one real target region, got " <> show other)
+
+    , testCase "a chain of two forwarding regions collapses to a direct reference to the real final target" $
+        let pc = chainForwarderPc
+            rootRid = pcRootRegion pc
+            nonRoot = Map.toList (Map.delete rootRid (pcRegions pc))
+            (forwarders, reals) = partition (\(_, stmts) -> isForwarderStmt stmts) nonRoot
+        in case reals of
+             [(targetRid, _)] ->
+               -- the forwarder that references the real target directly already
+               -- carries the target's own real (lines, sig) -- exactly what every
+               -- reference to the chain should collapse to, however many hops away.
+               case [ ref | (_, [ref@(PRegionRef t _ _)]) <- forwarders, t == targetRid ] of
+                 [finalRef] ->
+                   let result = inlineForwardingRegions pc
+                   in do
+                        length forwarders @?= 2
+                        mapM_ (\(fwdRid, _) -> Map.member fwdRid (pcRegions result) @?= False) forwarders
+                        Map.member targetRid (pcRegions result) @?= True
+                        case Map.lookup rootRid (pcRegions result) of
+                          Just (refStmt : _) -> refStmt @?= finalRef
+                          other -> assertFailure ("expected root region to retain at least its trailing statement, got " <> show other)
+                 other -> assertFailure ("expected exactly one forwarder pointing directly at the real target, got " <> show other)
+             other -> assertFailure ("expected exactly one real (non-forwarder) target region, got " <> show other)
+
+    , testCase "a region with a PRegionRef plus any other statement is left untouched (not a pure forwarder)" $
+        let pc = refPlusStmtPc
+            rootRid = pcRootRegion pc
+            nonRoot = Map.toList (Map.delete rootRid (pcRegions pc))
+            hasRefPlusStmt (_, stmts) = length stmts > 1 && any isRegionRefStmt stmts
+        in case filter hasRefPlusStmt nonRoot of
+             [(mixedRid, mixedStmts)] ->
+               let result = inlineForwardingRegions pc
+               in Map.lookup mixedRid (pcRegions result) @?= Just mixedStmts
+             other -> assertFailure ("expected exactly one ref-plus-other-statement region, got " <> show other)
+
+    , testCase "the root region is never inlined away, even if its own body is a single forwarding reference" $
+        let pc = refPlusStmtPc
+            rootRid = pcRootRegion pc
+            result = inlineForwardingRegions pc
+        in do
+             Map.member rootRid (pcRegions result) @?= True
+             Map.lookup rootRid (pcRegions result) @?= Map.lookup rootRid (pcRegions pc)
+
+    , testProperty "inlineForwardingRegions is idempotent" $ property $ do
+        let pc = chainForwarderPc
+            rootRid = pcRootRegion pc
+            nonRoot = Map.toList (Map.delete rootRid (pcRegions pc))
+        -- Randomly turn some of the chain's real forwarders into non-forwarders
+        -- by appending a decoy trailing statement, covering every combination of
+        -- which links in the chain still forward -- without fabricating any
+        -- 'RegionId' (the constructor isn't exported; see 'trivialPc').
+        toggles <- forAll (Gen.list (Range.singleton (length nonRoot)) Gen.bool)
+        let mutate keep (rid, stmts) = (rid, if keep then stmts else stmts <> [PReturn (var "decoy") 999])
+            mutatedRegions = Map.fromList (zipWith mutate toggles nonRoot)
+            pc' = pc { pcRegions = Map.insert rootRid (Map.findWithDefault [] rootRid (pcRegions pc)) mutatedRegions }
+            once  = inlineForwardingRegions pc'
+            twice = inlineForwardingRegions once
+        once === twice
+    ]
   ]
+
+-- | A region whose body is exactly one 'PRegionRef' and nothing else -- the
+-- pure-forwarder shape 'inlineForwardingRegions' inlines away.
+isForwarderStmt :: [PStmt] -> Bool
+isForwarderStmt [PRegionRef {}] = True
+isForwarderStmt _               = False
+
+isRegionRefStmt :: PStmt -> Bool
+isRegionRefStmt PRegionRef {} = True
+isRegionRefStmt _             = False
+
+-- | root -> (ref "fwd", then a trailing return); "fwd" -> ELetRef "target"
+-- (a pure forwarder); "target" -> a real leaf. Three distinct real
+-- 'RegionId's, obtained the only way this module can (a genuine
+-- 'buildPseudocode' call) -- see 'trivialPc'\'s own header note.
+singleForwarderPc :: Pseudocode
+singleForwarderPc =
+  let table = Map.fromList
+        [ ("fwd", ELetRef "target")
+        , ("target", EReturn (ExBool True) 10)
+        ]
+      spine = EComp (EReturn (var "done") 20) (ELetRef "fwd") :: Eff () ()
+      effTerm = EffTerm spine table
+  in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
+
+-- | Same shape as 'singleForwarderPc' but with two forwarding hops
+-- ("fwd1" -> "fwd2" -> "target") before the real leaf.
+chainForwarderPc :: Pseudocode
+chainForwarderPc =
+  let table = Map.fromList
+        [ ("fwd1", ELetRef "fwd2")
+        , ("fwd2", ELetRef "target")
+        , ("target", EReturn (ExBool True) 10)
+        ]
+      spine = EComp (EReturn (var "done") 20) (ELetRef "fwd1") :: Eff () ()
+      effTerm = EffTerm spine table
+  in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
+
+-- | root's own body is itself a single forwarding reference (to "mixed"),
+-- and "mixed"'s own body is a 'PRegionRef' to "target" plus a trailing
+-- statement -- not a pure forwarder itself.
+refPlusStmtPc :: Pseudocode
+refPlusStmtPc =
+  let table = Map.fromList
+        [ ("mixed", EComp (EReturn (var "done") 30) (ELetRef "target"))
+        , ("target", EReturn (ExBool True) 10)
+        ]
+      spine = ELetRef "mixed" :: Eff () ()
+      effTerm = EffTerm spine table
+  in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
 
 -- | A real, opaque 'PB.Explain.Regions.RegionId' to build synthetic
 -- fixtures around -- there is no other way to obtain one (the constructor
