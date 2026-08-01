@@ -7,6 +7,7 @@ from typing import Any
 
 import duckdb
 from pb.api.routes.dependencies import rows
+from pb.api.services.objects import read_source_lines
 from pb.lib.slicing import backward_slice, build_proc_def_use, forward_slice
 
 
@@ -250,7 +251,29 @@ def get_explain_pseudocode(
     )
     if not pc_rows:
         return None
-    return json.loads(pc_rows[0]["pseudocode_json"])
+    result = json.loads(pc_rows[0]["pseudocode_json"])
+
+    proc_rows = rows(
+        conn.execute(
+            "SELECT file, start_line, end_line FROM procedures "
+            "WHERE object = ? AND proc_name = ?",
+            [object_name, proc_name],
+        )
+    )
+    source_original = None
+    proc_start_line = None
+    if proc_rows:
+        proc = proc_rows[0]
+        file_path, start, end = proc.get("file"), proc.get("start_line"), proc.get("end_line")
+        proc_start_line = start
+        if file_path and start and end:
+            all_lines = read_source_lines(conn, file_path)
+            if all_lines is not None:
+                source_original = "\n".join(all_lines[max(0, start - 1) : end])
+
+    result["sourceOriginal"] = source_original
+    result["procStartLine"] = proc_start_line
+    return result
 
 
 def get_taint_sources(

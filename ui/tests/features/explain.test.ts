@@ -18,6 +18,8 @@ const PSEUDOCODE: ExplainPseudocodeResponse = {
       { tag: "PReturn", contents: [null, 1], stmtText: "return true" },
     ],
   },
+  sourceOriginal: "return true",
+  procStartLine: 1,
 };
 
 describe("explain reducer", () => {

@@ -30,6 +30,7 @@ import { TaintPathView } from "./views/features/analysis/TaintPathView.js";
 import { SliceView } from "./views/features/analysis/SliceView.js";
 import { FormalReports, HealthCheck } from "@pb/platform";
 import { CFGDiagram } from "./views/features/analysis/CFGDiagram.js";
+import { ExplainView } from "./views/features/analysis/ExplainView.js";
 import { LaunchView } from "./views/features/launch/LaunchView.js";
 import { initViewFromUrl, setupPopstateHandler } from "./views/features/navigation/url-sync.js";
 
@@ -69,6 +70,7 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "sliceView"}><SliceView store={props.store} /></Show>
       <Show when={snap().nav.route.view === "formalReports"}><FormalReports /></Show>
       <Show when={snap().nav.route.view === "cfgDiagram"}><CFGDiagram store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "explainView"}><ExplainView store={props.store} /></Show>
       <Show when={snap().nav.route.view === "launch"}><LaunchView store={props.store} /></Show>
     </Layout>
   );

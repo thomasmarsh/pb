@@ -16,6 +16,25 @@ def _get_root(conn: duckdb.DuckDBPyConnection) -> Path | None:
     return Path(row[0]) if row else None
 
 
+def read_source_lines(conn: duckdb.DuckDBPyConnection, file_path: str) -> list[str] | None:
+    """A source file's lines (no trailing newlines), preferring the
+    self-contained `source_files` table and falling back to disk under the
+    ingestion root — the one place this DB-first/disk-fallback policy is
+    implemented, shared by every service that needs a file's source text."""
+    src_row = conn.execute("SELECT lines FROM source_files WHERE file = ?", [file_path]).fetchone()
+    if src_row and src_row[0]:
+        return src_row[0].splitlines()
+    root = _get_root(conn)
+    disk_path = (root / file_path) if root else Path(file_path)
+    if disk_path.exists():
+        try:
+            with open(disk_path, "r", errors="replace") as f:
+                return f.read().splitlines()
+        except OSError:
+            return None
+    return None
+
+
 def pbl_name(file_path: str) -> str:
     """Extract .pbl library name from an extracted file path."""
     parts = file_path.replace("\\", "/").split("/")
@@ -311,24 +330,8 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         return None
 
     file_path = obj_rows[0]["file"]
-    lines = []
-    if file_path:
-        # Try the source_files table first (self-contained DB source).
-        src_row = conn.execute(
-            "SELECT lines FROM source_files WHERE file = ?", [file_path]
-        ).fetchone()
-        if src_row and src_row[0]:
-            lines = src_row[0].splitlines()
-        else:
-            # Fallback: read from disk (preserves behaviour for non-PBL sources).
-            root = _get_root(conn)
-            disk_path = (root / file_path) if root else Path(file_path)
-            if disk_path.exists():
-                try:
-                    with open(disk_path, "r", errors="replace") as f:
-                        lines = f.read().splitlines()
-                except OSError:
-                    pass
+    lines = read_source_lines(conn, file_path) if file_path else None
+    lines = lines or []
 
     procs = rows(
         conn.execute(

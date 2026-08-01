@@ -6,6 +6,7 @@ from typing import Any
 
 import duckdb
 from pb.api.routes.dependencies import rows
+from pb.api.services.objects import read_source_lines
 
 # Union CTE: PowerScript parse errors + SQL parse errors (parse_ok = false).
 # Columns: file, error_kind, message, object, proc_name, line, snippet.
@@ -80,12 +81,4 @@ def get_error_source(
     file: str,
 ) -> dict[str, Any]:
     """Return the full source text for a file, used to show SQL error context."""
-    try:
-        src_row = conn.execute(
-            "SELECT lines FROM source_files WHERE file = ?", [file]
-        ).fetchone()
-        if src_row and src_row[0]:
-            return {"lines": src_row[0].splitlines()}
-    except Exception:
-        pass
-    return {"lines": []}
+    return {"lines": read_source_lines(conn, file) or []}

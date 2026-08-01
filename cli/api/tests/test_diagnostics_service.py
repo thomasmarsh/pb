@@ -6,7 +6,7 @@ import shutil
 
 import duckdb
 import pytest
-from pb.api.services.diagnostics import list_errors
+from pb.api.services.diagnostics import get_error_source, list_errors
 
 
 @pytest.fixture
@@ -45,3 +45,16 @@ def test_list_errors_pagination(conn_with_errors):
     result2 = list_errors(conn_with_errors, limit=1, offset=1)
     assert len(result2["items"]) == 1
     assert result["items"][0]["file"] != result2["items"][0]["file"]
+
+
+def test_get_error_source_reads_source_files_table(conn_with_errors):
+    conn_with_errors.execute(
+        "INSERT INTO source_files VALUES (?,?)", ["__synthetic__.srw", "select 1\nfrom dual"]
+    )
+    result = get_error_source(conn_with_errors, "__synthetic__.srw")
+    assert result["lines"] == ["select 1", "from dual"]
+
+
+def test_get_error_source_unknown_file_returns_empty(conn_with_errors):
+    result = get_error_source(conn_with_errors, "__no_such_file__.srw")
+    assert result["lines"] == []

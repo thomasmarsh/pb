@@ -805,11 +805,47 @@ export type PStmt =
   | { tag: "PReturn"; contents: [unknown, number]; stmtText: string }
   | { tag: "PRegionRef"; contents: [string, [number, number] | null, InferredSignature | null]; stmtText: string };
 
+// Mirrors PB.AST.SourceFile's Param/FnSig/SubSig under the same
+// stripCamelCasePrefix wire convention; Ident fields serialize as their
+// plain identOrig string (PB.AST.Ident's ToJSON instance). typeSpan/
+// returnTypeSpan stay unknown — the UI never renders a raw source span.
+export interface Param {
+  mods: string[];
+  type: string;
+  typeSpan: unknown;
+  name: string;
+}
+
+export interface FnSig {
+  mods: string[];
+  returnType: string;
+  returnTypeSpan: unknown;
+  name: string;
+  params: Param[];
+  throws: string | null;
+  library: string | null;
+  aliasFor: string | null;
+}
+
+export interface SubSig {
+  mods: string[];
+  name: string;
+  params: Param[];
+  throws: string | null;
+  library: string | null;
+  aliasFor: string | null;
+}
+
+// Aeson's default `Either a b` encoding — never customized in Serialise.hs.
+export type DeclaredSig = { Left: FnSig } | { Right: SubSig };
+
 export interface Pseudocode {
-  declaredSig: unknown | null;
+  declaredSig: DeclaredSig | null;
   rootRegion: string;
   rootSig: InferredSignature | null;
   regions: Record<string, PStmt[]>;
+  sourceOriginal: string | null;
+  procStartLine: number | null;
 }
 
 export type ExplainPseudocodeResponse = Pseudocode;

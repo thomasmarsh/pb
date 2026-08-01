@@ -1,0 +1,83 @@
+// tests/features/analysis/ExplainCore.test.tsx — Component tests for the
+// Explain split pane's hover/pin highlighting and region-ref jump chips
+// (Plan 222 Phase 4).
+
+import { describe, it, expect } from "vitest";
+import { fireEvent, render } from "@solidjs/testing-library";
+import { ExplainCore } from "../../../app/src/views/features/analysis/ExplainCore.js";
+import { createTestStore } from "../../helpers.js";
+import type { ExplainPseudocodeResponse } from "@pb/platform";
+
+const PSEUDOCODE: ExplainPseudocodeResponse = {
+  declaredSig: null,
+  rootRegion: "region_0",
+  rootSig: { inputs: [], outputs: [], effects: [] },
+  regions: {
+    region_0: [
+      { tag: "PAssign", contents: ["ls_x", null, null, 1], stmtText: "ls_x = 1" },
+      { tag: "PRegionRef", contents: ["region_1", [3, 4], { inputs: [], outputs: [], effects: [] }], stmtText: "-> region_1" },
+    ],
+    region_1: [
+      { tag: "PReturn", contents: [null, 3], stmtText: "return true" },
+    ],
+  },
+  sourceOriginal: "ls_x = 1\nls_y = 2\nif ls_x then\n  return true\nend if",
+  procStartLine: 1,
+};
+
+function setup() {
+  const { store } = createTestStore({
+    explainPseudocodes: {
+      "w_obj::uf_save": { object: "w_obj", proc: "uf_save", data: PSEUDOCODE },
+    },
+  });
+  const result = render(() => (
+    <ExplainCore object="w_obj" proc="uf_save" store={store} onGoto={() => {}} />
+  ));
+  return result;
+}
+
+describe("ExplainCore", () => {
+  it("hovering a statement highlights and dims its own source line", () => {
+    const { container } = setup();
+    const stmtRow = [...container.querySelectorAll(".explain-stmt")].find((el) => el.textContent === "ls_x = 1")!;
+    fireEvent.mouseEnter(stmtRow);
+
+    const line1 = container.querySelector('.source-code-line[data-line="1"]')!;
+    const line2 = container.querySelector('.source-code-line[data-line="2"]')!;
+    expect(line1.classList.contains("source-code-line--error")).toBe(true);
+    expect(line1.classList.contains("source-code-line--dim")).toBe(false);
+    expect(line2.classList.contains("source-code-line--dim")).toBe(true);
+  });
+
+  it("mouse-out reverts highlighting to nothing when no statement is pinned", () => {
+    const { container } = setup();
+    const stmtRow = [...container.querySelectorAll(".explain-stmt")].find((el) => el.textContent === "ls_x = 1")!;
+    fireEvent.mouseEnter(stmtRow);
+    fireEvent.mouseLeave(stmtRow);
+
+    const line1 = container.querySelector('.source-code-line[data-line="1"]')!;
+    expect(line1.classList.contains("source-code-line--error")).toBe(false);
+    expect(line1.classList.contains("source-code-line--dim")).toBe(false);
+  });
+
+  it("clicking a statement pins it; mouse-out then keeps the pinned highlight", () => {
+    const { container } = setup();
+    const stmtRow = [...container.querySelectorAll(".explain-stmt")].find((el) => el.textContent === "ls_x = 1")!;
+    fireEvent.mouseEnter(stmtRow);
+    fireEvent.click(stmtRow);
+    fireEvent.mouseLeave(stmtRow);
+
+    const line1 = container.querySelector('.source-code-line[data-line="1"]')!;
+    expect(line1.classList.contains("source-code-line--error")).toBe(true);
+  });
+
+  it("clicking a region-ref chip flashes its target region card", () => {
+    const { container } = setup();
+    const chip = container.querySelector(".explain-stmt--region-ref")!;
+    fireEvent.click(chip);
+
+    const targetCard = container.querySelector("#region-card-region_1")!;
+    expect(targetCard.classList.contains("explain-region-card--flash")).toBe(true);
+  });
+});

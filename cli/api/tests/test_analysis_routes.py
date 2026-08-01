@@ -118,6 +118,23 @@ def taint_client(tmp_path_factory):
          '"rootSig":{"sigInputs":[],"sigOutputs":[]},"regions":[]}'],
     )
 
+    # procedures / source_files — proc_a's own source text (get_explain_pseudocode
+    # embeds sourceOriginal/procStartLine alongside the pseudocode passthrough).
+    conn.execute("""
+        CREATE TABLE procedures (
+            file TEXT, object TEXT, proc_name TEXT, start_line INT, end_line INT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO procedures VALUES (?,?,?,?,?)",
+        ["w.srf", "w_obj", "proc_a", 2, 4],
+    )
+    conn.execute("CREATE TABLE source_files (file TEXT PRIMARY KEY, lines TEXT)")
+    conn.execute(
+        "INSERT INTO source_files VALUES (?,?)",
+        ["w.srf", "line1\nline2\nline3\nline4\nline5"],
+    )
+
     conn.close()
 
     from fastapi.testclient import TestClient
@@ -238,6 +255,14 @@ def test_explain_pseudocode_returns_parsed_json(taint_client):
     assert body["rootRegion"] == 0
     assert body["declaredSig"] == {"sigInputs": [], "sigOutputs": []}
     assert body["regions"] == []
+
+
+def test_explain_pseudocode_embeds_source(taint_client):
+    r = taint_client.get("/api/analysis/explain/w_obj/proc_a")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sourceOriginal"] == "line2\nline3\nline4"
+    assert body["procStartLine"] == 2
 
 
 def test_explain_pseudocode_404_for_unknown(taint_client):

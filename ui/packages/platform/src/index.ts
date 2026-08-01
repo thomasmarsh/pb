@@ -177,6 +177,24 @@ export type {
   TraceType,
   LinearTraceProps,
 } from "./components/analysis/LinearTrace.js";
+export {
+  normalizeStmt,
+  normalizeStmts,
+  sourceLinesForStmt,
+  collectRegionCards,
+  formatPbType,
+  formatVarBinding,
+  formatEffects,
+  formatInferredSignature,
+  regionDisplayLabel,
+  formatParams,
+  formatDeclaredSig,
+} from "./components/analysis/pure/explainLayout.js";
+export type {
+  NormalizedStmt,
+  RegionRefInfo,
+  RegionCard,
+} from "./components/analysis/pure/explainLayout.js";
 
 // Controls (PB window runtime controls)
 export { CommandButton } from "./components/controls/CommandButton.js";
