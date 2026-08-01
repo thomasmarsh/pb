@@ -32,7 +32,7 @@ import PB.Algebra.Closure
   )
 import PB.AST.Expr (Expr (..))
 import PB.AST.Ident (Ident)
-import PB.Analysis.CallClassify (EffectTag (..))
+import PB.Analysis.CallClassify (EffectTag (..), capabilityLabel)
 import PB.Analysis.Dataflow (lvRoot)
 import PB.Compile.IR (Eff (..), EffTerm (..))
 import PB.Pipeline.DuckDb (Handle, recreateTextTable, appendTextRows)
@@ -158,12 +158,15 @@ computeProcEffectClosure seedRows edges =
        ]
 
 -- | Materialize 'computeProcEffectClosure''s result as @proc_effects@: one
--- row per @(object, proc_name, effect_tag)@ -- the normalized shape
--- 'PB.Analysis.TaintEdges''s @taint_intra_edges@\/@taint_return_rows@
+-- row per @(object, proc_name, effect_tag, capability)@ -- the normalized
+-- shape 'PB.Analysis.TaintEdges''s @taint_intra_edges@\/@taint_return_rows@
 -- already use for a set-valued fact, not a comma-joined 'Text' column. A
 -- procedure whose closure is genuinely empty gets zero rows (absence is
--- purity, per Plan 220's own framing). Returns the computed 'Map' so a
--- caller doesn't need a second closure computation to use it in-memory.
+-- purity, per Plan 220's own framing). @capability@ is 'capabilityLabel'
+-- applied once here (Plan 225 Layer 3.6/6) -- computed in Haskell, not a
+-- SQL @CASE@, per @compiler/AGENTS.md@'s DuckDb Moat rule against decision
+-- logic in relation-reshaping SQL. Returns the computed 'Map' so a caller
+-- doesn't need a second closure computation to use it in-memory.
 materializeProcEffects
   :: [(Text, Text, Set.Set EffectTag)]
   -> [(Text, Text, Text, Text)]
@@ -172,10 +175,11 @@ materializeProcEffects
 materializeProcEffects seedRows edges conn = do
   let closure = computeProcEffectClosure seedRows edges
       rows =
-        [ [o, p, T.pack (show tag)]
+        [ [o, p, T.pack (show tag), capabilityLabel tag]
         | ((o, p), tags) <- Map.toList closure
         , tag <- Set.toList tags
         ]
-  recreateTextTable conn "proc_effects" ["object", "proc_name", "effect_tag"]
+
+  recreateTextTable conn "proc_effects" ["object", "proc_name", "effect_tag", "capability"]
   appendTextRows conn "proc_effects" rows
   pure closure

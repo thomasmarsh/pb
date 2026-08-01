@@ -10,6 +10,7 @@ module PB.Analysis.CallClassify
   ( CallKind (..)
   , classifyExpr
   , EffectTag (..)
+  , capabilityLabel
   , classifyEffects
   , effectName
   , calleeName
@@ -74,6 +75,19 @@ data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
 -- 'NFData' instance via containers' @NFData a => NFData (Set a)@.
 instance NFData EffectTag where
   rnf x = x `seq` ()
+
+-- | Groups the 7 'EffectTag' constructors into a small human-facing
+-- capability vocabulary (Plan 225 Layer 3.6) -- for display in
+-- 'PB.Explain.Render.Struct' and the corpus-wide @proc_effects@ capability
+-- catalog, not a new analysis.
+capabilityLabel :: EffectTag -> Text
+capabilityLabel ReadsDb             = "DB"
+capabilityLabel WritesDb            = "DB"
+capabilityLabel WritesUi            = "UI"
+capabilityLabel Suspends            = "Async"
+capabilityLabel ReadsControlState   = "Control"
+capabilityLabel WritesControlState  = "Control"
+capabilityLabel WritesInstanceState = "State"
 
 -- ---------------------------------------------------------------------------
 -- Side-effect classification

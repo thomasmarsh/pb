@@ -8,9 +8,9 @@ import PB.AST.Located          (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type              (PbType (..))
 import PB.Lexing.Token          (SourceSpan (..))
-import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), ProcUnit (..), classifyExpr,
-                                  classifyEffects, decodeEffectTag, effectName, forProcedures,
-                                  resolveReceiverType)
+import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), ProcUnit (..), capabilityLabel,
+                                  classifyExpr, classifyEffects, decodeEffectTag, effectName,
+                                  forProcedures, resolveReceiverType)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.TypeEnv      (ScopedTypeEnv (..), buildWorkspaceEnv)
 import PB.Runtime.EffectAnnotations (realEffectAnnotations)
@@ -25,6 +25,15 @@ import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
 
 emptyFile :: SrFile
 emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] [] []
+
+-- | Every 'EffectTag' constructor, hand-listed rather than deriving
+-- 'Bounded'\/'Enum' on the production type just for this one test's
+-- totality check (Plan 225).
+allEffectTags :: [EffectTag]
+allEffectTags =
+  [ ReadsDb, WritesDb, WritesUi, Suspends
+  , ReadsControlState, WritesControlState, WritesInstanceState
+  ]
 
 -- | Bare (unsubscripted) lvalue segment.
 seg :: Text -> LvSegment
@@ -200,6 +209,20 @@ tests = testGroup "CallClassify"
                 }
               expr = ExCall (lv ["nonexistent_ctrl", "sub_ctrl", "retrieve"]) []
           Set.member Suspends (classifyEffects env expr) @?= (classifyExpr env expr == SuspendCall)
+    ]
+  , testGroup "capabilityLabel (Plan 225)"
+    [ testCase "every EffectTag constructor maps to exactly one of the 5 known capability labels" $
+        Set.fromList (map capabilityLabel allEffectTags) @?= Set.fromList ["DB", "UI", "Async", "Control", "State"]
+    , testCase "ReadsDb and WritesDb both map to the DB capability" $ do
+        capabilityLabel ReadsDb @?= "DB"
+        capabilityLabel WritesDb @?= "DB"
+    , testCase "ReadsControlState and WritesControlState both map to the Control capability" $ do
+        capabilityLabel ReadsControlState @?= "Control"
+        capabilityLabel WritesControlState @?= "Control"
+    , testCase "WritesUi maps to UI, Suspends maps to Async, WritesInstanceState maps to State" $ do
+        capabilityLabel WritesUi @?= "UI"
+        capabilityLabel Suspends @?= "Async"
+        capabilityLabel WritesInstanceState @?= "State"
     ]
   , testGroup "effectName" $
     [ testCase (T.unpack (name <> " -> \"open\"")) $

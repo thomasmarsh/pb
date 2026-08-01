@@ -70,6 +70,7 @@ tests = testGroup "Materialize"
   , testCase "materializeProcEffects's proc_effects rows reflect tags transitively closed through a 2-hop call chain" testMaterializeProcEffectsTransitive
   , testCase "materializeProcEffects writes zero proc_effects rows for a procedure whose closure is genuinely empty" testMaterializeProcEffectsPure
   , testCase "materializeProcEffects's returned Map matches computeProcEffectClosure called directly" testMaterializeProcEffectsReturnValue
+  , testCase "materializeProcEffects writes the correct capability alongside each effect_tag (Plan 225)" testMaterializeProcEffectsCapability
   , testGroup "ProcPseudocode"
     [ testCase "one proc_pseudocode row per retained procedure, keyed by (object, proc_name)" testMaterializeProcPseudocodeRowPerProc
     , testCase "pseudocode_json decodes to a JSON object with a non-null rootRegion/regions shape" testMaterializeProcPseudocodeJsonShape
@@ -261,6 +262,31 @@ testMaterializeProcEffectsReturnValue = withHandle inMemory $ \conn -> do
   result <- materializeProcEffects seeds edges conn
   assertEqual "returned Map matches computeProcEffectClosure called directly"
     (computeProcEffectClosure seeds edges) result
+
+-- | Local row shape for reading back a @proc_effects@ row including its
+-- new @capability@ column (Plan 225).
+data ProcCapabilityRow = ProcCapabilityRow Text Text Text Text deriving (Eq, Ord, Show)
+
+instance FromRow ProcCapabilityRow where
+  fromRow = ProcCapabilityRow <$> field <*> field <*> field <*> field
+
+testMaterializeProcEffectsCapability :: IO ()
+testMaterializeProcEffectsCapability = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let seeds =
+        [ ("o", "a", Set.fromList [ReadsDb, WritesUi])
+        , ("o", "b", Set.singleton Suspends)
+        ]
+  _ <- materializeProcEffects seeds [] conn
+  rows <- queryHandle conn
+    "SELECT object, proc_name, effect_tag, capability FROM proc_effects ORDER BY object, proc_name, effect_tag"
+  assertEqual "proc_effects capability column"
+    (Set.fromList
+      [ ProcCapabilityRow "o" "a" "ReadsDb" "DB"
+      , ProcCapabilityRow "o" "a" "WritesUi" "UI"
+      , ProcCapabilityRow "o" "b" "Suspends" "Async"
+      ])
+    (Set.fromList rows)
 
 -- ---------------------------------------------------------------------------
 -- materializeProcPseudocode (Plan 221 Phase 2)
