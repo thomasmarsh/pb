@@ -29,6 +29,7 @@ module PB.Explain.Regions
   ) where
 
 import PB.Prelude hiding (id, (.))
+import Control.Monad.State.Strict (State, evalState, get, modify')
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Set as Set
@@ -183,41 +184,66 @@ addContribution ops threshold deltaComplexity lns extraKids subAcc subDoneMap (W
             in WalkState 1 Nothing [] (cutKids <> [closed]) freshAcc doneMap1
        else WalkState cplx' lines' ownKids' cutKids acc' doneMap0
 
+-- | Per-@bid@ memo cache threaded through one 'computeRegionsWith' call:
+-- once a shared 'ELetRef' binding has been walked, every later occurrence
+-- reuses its already-closed triple instead of re-deriving it from
+-- scratch. Region computation walks a DAG, not a tree — 'ELetRef' sharing
+-- lets one binding be referenced from multiple call sites (see this
+-- module's own header and 'RegionOps'\'s 'opRef' doc) — so without this
+-- cache, 'walk' unshares the DAG into a tree: each reference re-walks its
+-- entire subtree (including any further sharing inside it), exponential
+-- in the depth of nested sharing. Scoped to a single 'computeRegionsWith'
+-- call (a fresh 'Map.empty' per call), never shared across calls, since
+-- different calls can pass different 'RegionOps' (a different @acc@ type
+-- entirely, per 'PB.Explain.Signatures.computeSignatures' vs.
+-- 'PB.Explain.Pseudocode.buildPseudocode').
+type RegionMemo acc = Map.Map Text (Region, acc, Map.Map RegionId acc)
+
 -- | Compute a whole 'Region' (plus its own final accumulator and every
 -- region closed while computing it) for one self-contained 'Eff' subterm
 -- — used both for the top-level 'computeRegionsWith' call and recursively
 -- for each 'ELetRef' body, 'EBranch' arm, and 'ELoop' body (each of which
 -- is its own straight-line run for cut-point purposes).
-regionOf :: RegionOps acc -> Int -> Map.Map Text (Eff () ()) -> Eff x y -> (Region, acc, Map.Map RegionId acc)
-regionOf ops threshold table eff = closeState (walk ops threshold table (initWalkState (opEmpty ops)) eff)
+regionOf :: RegionOps acc -> Int -> Map.Map Text (Eff () ()) -> Eff x y -> State (RegionMemo acc) (Region, acc, Map.Map RegionId acc)
+regionOf ops threshold table eff = do
+  st <- walk ops threshold table (initWalkState (opEmpty ops)) eff
+  pure (closeState st)
 
-walk :: RegionOps acc -> Int -> Map.Map Text (Eff () ()) -> WalkState acc -> Eff x y -> WalkState acc
+walk :: RegionOps acc -> Int -> Map.Map Text (Eff () ()) -> WalkState acc -> Eff x y -> State (RegionMemo acc) (WalkState acc)
 walk ops threshold table st eff = case eff of
-  J _ -> st
-  ELetRef bid ->
-    let body = case Map.lookup bid table of
-          Just b  -> b
-          Nothing -> error ("PB.Explain.Regions.computeRegions: unbound ELetRef " <> show bid)
-        (childRegion, _childAcc, childMap) = regionOf ops threshold table body
-        WalkState cplx lns0 ownKids cutKids acc doneMap = st
+  J _ -> pure st
+  ELetRef bid -> do
+    memo <- get
+    (childRegion, _childAcc, childMap) <- case Map.lookup bid memo of
+      Just cached -> pure cached
+      Nothing -> do
+        let body = case Map.lookup bid table of
+              Just b  -> b
+              Nothing -> error ("PB.Explain.Regions.computeRegions: unbound ELetRef " <> show bid)
+        result <- regionOf ops threshold table body
+        modify' (Map.insert bid result)
+        pure result
+    let WalkState cplx lns0 ownKids cutKids acc doneMap = st
         acc' = opSeq ops acc (opRef ops (regionId childRegion) (regionLines childRegion))
-    in WalkState cplx lns0 (ownKids <> [childRegion]) cutKids acc' (Map.union doneMap childMap)
-  EComp g f -> walk ops threshold table (walk ops threshold table st f) g
+    pure (WalkState cplx lns0 (ownKids <> [childRegion]) cutKids acc' (Map.union doneMap childMap))
+  EComp g f -> do
+    st' <- walk ops threshold table st f
+    walk ops threshold table st' g
   EAssign var ln ty ->
-    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssign var ln ty)) Map.empty st
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssign var ln ty)) Map.empty st)
   EAssignWithRhs var lhsE rhsE ln ty ->
-    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssignWithRhs var lhsE rhsE ln ty)) Map.empty st
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssignWithRhs var lhsE rhsE ln ty)) Map.empty st)
   ECall n as ln tags ->
-    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LCall n as ln tags)) Map.empty st
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LCall n as ln tags)) Map.empty st)
   ESuspend n as ln tags ->
-    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LSuspend n as ln tags)) Map.empty st
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LSuspend n as ln tags)) Map.empty st)
   EReturn e ln ->
-    addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LReturn e ln)) Map.empty st
-  ESplitValue -> st
-  EFanIn a b ->
-    let (aRegion, aAcc, aMap) = regionOf ops threshold table a
-        (bRegion, bAcc, bMap) = regionOf ops threshold table b
-        delta   = regionComplexity aRegion + regionComplexity bRegion - 1
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LReturn e ln)) Map.empty st)
+  ESplitValue -> pure st
+  EFanIn a b -> do
+    (aRegion, aAcc, aMap) <- regionOf ops threshold table a
+    (bRegion, bAcc, bMap) <- regionOf ops threshold table b
+    let delta   = regionComplexity aRegion + regionComplexity bRegion - 1
         lns     = mergeLines (regionLines aRegion) (regionLines bRegion)
         kids    = regionChildren aRegion <> regionChildren bRegion
         subAcc  = opFanIn ops aAcc bAcc
@@ -225,28 +251,28 @@ walk ops threshold table st eff = case eff of
         -- children survive into 'kids'), so their own map entries --
         -- inserted by 'closeState' -- must be dropped too, not unioned in.
         subDoneMap = Map.union (Map.delete (regionId aRegion) aMap) (Map.delete (regionId bRegion) bMap)
-    in addContribution ops threshold delta lns kids subAcc subDoneMap st
-  EBranch cond t f ln ->
-    let (tRegion, tAcc, tMap) = regionOf ops threshold table t
-        (fRegion, fAcc, fMap) = regionOf ops threshold table f
-        delta   = regionComplexity tRegion + regionComplexity fRegion - 1
+    pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
+  EBranch cond t f ln -> do
+    (tRegion, tAcc, tMap) <- regionOf ops threshold table t
+    (fRegion, fAcc, fMap) <- regionOf ops threshold table f
+    let delta   = regionComplexity tRegion + regionComplexity fRegion - 1
         lns     = mergeLines (Just (ln, ln)) (mergeLines (regionLines tRegion) (regionLines fRegion))
         kids    = regionChildren tRegion <> regionChildren fRegion
         subAcc  = opBranch ops cond ln tAcc fAcc
         -- see EFanIn's own note: tRegion/fRegion are discarded, keep only
         -- their children's already-closed map entries.
         subDoneMap = Map.union (Map.delete (regionId tRegion) tMap) (Map.delete (regionId fRegion) fMap)
-    in addContribution ops threshold delta lns kids subAcc subDoneMap st
-  ELoop body ln ->
-    let (bodyRegion, bodyAcc, bodyMap) = regionOf ops threshold table body
-        delta   = regionComplexity bodyRegion
+    pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
+  ELoop body ln -> do
+    (bodyRegion, bodyAcc, bodyMap) <- regionOf ops threshold table body
+    let delta   = regionComplexity bodyRegion
         lns     = mergeLines (Just (ln, ln)) (regionLines bodyRegion)
         kids    = regionChildren bodyRegion
         subAcc  = opLoop ops ln bodyAcc
         -- see EFanIn's own note: bodyRegion is discarded, keep only its
         -- children's already-closed map entries.
         subDoneMap = Map.delete (regionId bodyRegion) bodyMap
-    in addContribution ops threshold delta lns kids subAcc subDoneMap st
+    pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
 
 -- | 'PB.Compile.IR.EffTerm''s 'ELetRef' table only ever stores bodies
 -- shaped @Eff () ()@ (see 'PB.Compile.IR.EffTerm'\'s own definition) — the
@@ -254,7 +280,7 @@ walk ops threshold table st eff = case eff of
 -- 'PB.Compile.IR.inlineEffTable'\/'foldFreyd'.
 computeRegionsWith :: Int -> RegionOps acc -> EffTerm a b -> (Region, Map.Map RegionId acc)
 computeRegionsWith threshold ops (EffTerm spine table) =
-  let (region, _acc, doneMap) = regionOf ops threshold table spine
+  let (region, _acc, doneMap) = evalState (regionOf ops threshold table spine) Map.empty
   in (region, doneMap)
 
 computeRegions :: Int -> EffTerm a b -> Region

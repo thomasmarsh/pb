@@ -3,11 +3,39 @@ module RegionsTest (tests) where
 import PB.Prelude hiding (id, (.))
 import PB.AST.Expr        (Expr (..))
 import PB.Compile.IR
-import PB.Explain.Regions (Region (..), computeRegions, defaultComplexityThreshold)
+import PB.Explain.Regions (Region (..), RegionOps (..), computeRegions, computeRegionsWith, defaultComplexityThreshold)
 
+import Control.Exception  (evaluate)
+import System.Timeout     (timeout)
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
 import Test.Tasty         (TestTree, testGroup)
-import Test.Tasty.HUnit   (assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit   (assertBool, assertFailure, testCase, (@?=))
+
+-- | A chain of @n@ table bindings, each (from level 1 up) referencing the
+-- previous level TWICE via a straight-line 'EComp' of two 'ELetRef's --
+-- the minimal shape that exercises 'PB.Explain.Regions' DAG sharing
+-- (documented in @doc/plan/222-explain-ui-wiring.md@'s Design section: one
+-- region referenced from multiple call sites). A walk that re-derives each
+-- referenced body from scratch on every occurrence (instead of computing it
+-- once) does @2^n@ leaf visits by the time it reaches @"blk" <> show n@.
+sharedChainTable :: Int -> (Map.Map Text (Eff () ()), Eff () ())
+sharedChainTable n = (Map.fromList (("blk0", leaf) : [ (nm i, body i) | i <- [1 .. n] ]), ELetRef (nm n))
+  where
+    nm i = "blk" <> T.pack (show i)
+    leaf = EAssignWithRhs "x" (ExInt "0") (ExInt "1") 1 Nothing :: Eff () ()
+    body i = EComp (ELetRef (nm (i - 1))) (ELetRef (nm (i - 1))) :: Eff () ()
+
+trivialOps :: RegionOps ()
+trivialOps = RegionOps
+  { opLeaf   = const ()
+  , opFanIn  = \_ _ -> ()
+  , opBranch = \_ _ _ _ -> ()
+  , opLoop   = \_ _ -> ()
+  , opRef    = \_ _ -> ()
+  , opSeq    = \_ _ -> ()
+  , opEmpty  = ()
+  }
 
 -- | Five sequential trivial branches (arms are pure no-ops, so each
 -- contributes exactly +1 decision point), on lines 1..5 — used to exercise
@@ -78,4 +106,12 @@ tests = testGroup "PB.Explain.Regions"
           r1 = computeRegions 2 effTerm
           r2 = computeRegions 2 effTerm
       in map regionId (regionChildren r1) @?= map regionId (regionChildren r2)
+
+  , testCase "a chain of nested doubly-referenced ELetRef bindings computes without exponential blowup" $ do
+      let (table, spine) = sharedChainTable 24
+          effTerm = EffTerm spine table
+      result <- timeout 5000000 (evaluate (Map.size (snd (computeRegionsWith defaultComplexityThreshold trivialOps effTerm))))
+      case result of
+        Just sz -> assertBool ("expected a small region count, got " ++ show sz) (sz < 100)
+        Nothing -> assertFailure "timed out after 5s: PB.Explain.Regions.walk's ELetRef case is re-deriving each shared binding's region on every occurrence instead of computing it once (exponential in the sharing chain's depth)"
   ]
