@@ -162,6 +162,18 @@ sigOps env sigMap procEffects = RegionOps
   , opEmpty  = sigAccEmpty
   }
 
+-- | For each ident, how many distinct regions have it in their 'saAllUses'.
+-- Built once, in a single pass over 'accs', so a per-region "is this def
+-- used elsewhere?" check ('usedElsewhere') is an O(1) map lookup instead of
+-- re-unioning every other region's use-set from scratch — the difference
+-- between this being O(regions * total-uses) overall and the O(regions^2)
+-- all-pairs union it replaces (regions can run into the hundreds for a
+-- large procedure, and this walk runs once per procedure corpus-wide).
+usesRegionCount :: Map.Map RegionId SigAcc -> Map.Map Ident Int
+usesRegionCount = Map.foldr
+  (\a counts -> Set.foldr (\i -> Map.insertWith (+) i (1 :: Int)) counts (saAllUses a))
+  Map.empty
+
 -- | Every region's candidate signature. Inputs are that region's own free
 -- reads, typed via 'lookupScopedVarOrSelf'. Outputs are the union of (a)
 -- vars this region defines that some *other* region reads (live-out) and
@@ -174,14 +186,17 @@ sigOps env sigMap procEffects = RegionOps
 computeSignatures :: Int -> ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map (Text, Text) (Set.Set EffectTag) -> EffTerm a b -> Map.Map RegionId InferredSignature
 computeSignatures threshold env sigMap procEffects term =
   let (_root, accs) = computeRegionsWith threshold (sigOps env sigMap procEffects) term :: (Region, Map.Map RegionId SigAcc)
-      allUsesElsewhere rid = Map.foldrWithKey
-        (\rid' a acc -> if rid' == rid then acc else acc <> saAllUses a)
-        Set.empty accs
+      counts = usesRegionCount accs
+      -- A def is used elsewhere iff some region other than its own uses it:
+      -- the total region-count for that ident, minus 1 if the def's own
+      -- region is itself among the users (self-use must not count).
+      usedElsewhere acc i =
+        Map.findWithDefault 0 i counts - (if Set.member i (saAllUses acc) then 1 else 0) > 0
       toBinding i = VarBinding i (lookupScopedVarOrSelf i env)
-  in Map.mapWithKey
-       (\rid acc ->
+  in Map.map
+       (\acc ->
           let loopCarried = Set.intersection (saFreeReads acc) (saAllDefs acc)
-              liveOut     = Set.intersection (saAllDefs acc) (allUsesElsewhere rid)
+              liveOut     = Set.filter (usedElsewhere acc) (saAllDefs acc)
           in InferredSignature
                { sigInputs  = map toBinding (Set.toAscList (saFreeReads acc))
                , sigOutputs = map toBinding (Set.toAscList (loopCarried <> liveOut))

@@ -156,6 +156,18 @@ tests = testGroup "PB.Explain.Signatures"
       in case Map.elems sigs of
            [sig] -> sigEffects sig @?= Set.fromList [ReadsDb]
            other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
+
+  , testCase "a variable used within its own defining region and in another region is still live-out" $
+      let letBody = EAssignWithRhs "y2" (var "y2") (var "x") 2 Nothing
+                   . EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
+          term = EAssignWithRhs "y" (var "y") (var "x") 3 Nothing . ELetRef "blk1" :: Eff () ()
+          effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
+          hasXOutput sig = any (\vb -> nameOf vb == "x") (sigOutputs sig)
+      in assertBool
+           ("expected the region defining \"x\" to still report it as live-out even though that "
+             <> "same region also reads \"x\" itself, got " <> show (Map.elems sigs))
+           (any hasXOutput (Map.elems sigs))
   ]
   where
     nameOf :: VarBinding -> Text
