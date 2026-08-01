@@ -59,6 +59,9 @@ export function print(route: Route): string {
     case "cfgDiagram":
       return "/analysis/cfg/" + encodeURIComponent(route.object)
              + "/"            + encodeURIComponent(route.proc);
+    case "explainView":
+      return "/analysis/explain/" + encodeURIComponent(route.object)
+             + "/"                + encodeURIComponent(route.proc);
     case "launch":           return "/launch";
   }
 }
@@ -156,6 +159,13 @@ export function parse(path: string, search?: string): Route {
       if (segs[1] === "cfg" && segs[2] && segs[3]) {
         return {
           view: "cfgDiagram",
+          object: decodeURIComponent(segs[2]),
+          proc:   decodeURIComponent(segs[3]),
+        };
+      }
+      if (segs[1] === "explain" && segs[2] && segs[3]) {
+        return {
+          view: "explainView",
           object: decodeURIComponent(segs[2]),
           proc:   decodeURIComponent(segs[3]),
         };

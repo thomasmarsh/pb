@@ -1,7 +1,7 @@
 // app/actions.ts — AppAction: tagged sum type routing to each feature reducer.
 
 import type { JobPollAction } from "@pb/core";
-import type { DashboardAction, CfgDiagramResponse } from "@pb/platform";
+import type { DashboardAction, CfgDiagramResponse, ExplainPseudocodeResponse } from "@pb/platform";
 import { type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type DiagnosticsAction, type AnalysisAction, type NavigationAction, type DiagramKind } from "@pb/platform";
 import { type RuntimeAction, type WindowManagerAction, type LaunchAction } from "@pb/windowing";
 import type { Theme } from "./state.js";
@@ -15,6 +15,11 @@ export type InlineDiagramAction =
 export type CfgDiagramAction =
   | { tag: "request"; key: string; object: string; proc: string }
   | { tag: "job"; key: string; action: JobPollAction<CfgDiagramResponse> };
+
+export type ExplainAction =
+  | { tag: "request"; key: string; object: string; proc: string }
+  | { tag: "loaded"; key: string; data: ExplainPseudocodeResponse }
+  | { tag: "failed"; key: string; error: string };
 
 export type AppAction =
   | { tag: "theme"; action: ThemeAction }
@@ -31,6 +36,7 @@ export type AppAction =
   | { tag: "analysis"; action: AnalysisAction }
   | { tag: "inlineDiagram"; action: InlineDiagramAction }
   | { tag: "cfgDiagram"; action: CfgDiagramAction }
+  | { tag: "explain"; action: ExplainAction }
   | { tag: "runtime"; windowId: string; action: RuntimeAction }
   | { tag: "windowManager"; action: WindowManagerAction }
   | { tag: "launch"; action: LaunchAction };

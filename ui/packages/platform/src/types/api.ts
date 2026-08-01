@@ -770,3 +770,46 @@ export interface ExploreProcDetail {
   cyclomatic: number | null;
   sql_statements: SqlStatementRow[];
 }
+
+// ── Explain (pseudocode) ──────────────────────────────────────────────────────
+// Mirrors PB.Explain.Pseudocode/Signatures's genericToJSON wire shape
+// (PB.Pipeline.Serialise's customOptions/stripCamelCasePrefix). The UI never
+// unparses an Expr (Plan 222's own Non-Goal) — the raw Expr/callee-signature
+// positions in PStmt's `contents` stay `unknown`; only `stmtText` (pre-rendered
+// by PB.Explain.Render.Text.renderStmtLine) is displayed.
+
+export type EffectTag = "ReadsDb" | "WritesDb" | "WritesUi" | "Suspends";
+
+export type PbType =
+  | { tag: "PtPrimitive"; contents: string }
+  | { tag: "PtUserDefined"; contents: string }
+  | { tag: "PtAny" }
+  | { tag: "PtDecimalPrec"; contents: number };
+
+export interface VarBinding {
+  name: string;
+  type: PbType | null;
+}
+
+export interface InferredSignature {
+  inputs: VarBinding[];
+  outputs: VarBinding[];
+  effects: EffectTag[];
+}
+
+export type PStmt =
+  | { tag: "PAssign"; contents: [string, PbType | null, unknown, number]; stmtText: string }
+  | { tag: "PCall"; contents: [string, unknown, unknown[], number]; stmtText: string }
+  | { tag: "PBranch"; contents: [unknown, PStmt[], PStmt[], number]; stmtText: string }
+  | { tag: "PLoop"; contents: [PStmt[], number]; stmtText: string }
+  | { tag: "PReturn"; contents: [unknown, number]; stmtText: string }
+  | { tag: "PRegionRef"; contents: [string, [number, number] | null, InferredSignature | null]; stmtText: string };
+
+export interface Pseudocode {
+  declaredSig: unknown | null;
+  rootRegion: string;
+  rootSig: InferredSignature | null;
+  regions: Record<string, PStmt[]>;
+}
+
+export type ExplainPseudocodeResponse = Pseudocode;

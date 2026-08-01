@@ -31,6 +31,7 @@ import type {
   DecompositionCandidatesResponse,
   CfgDiagramResponse,
   SliceResult,
+  ExplainPseudocodeResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult, type JobSubmitResult, type JobPollResult } from "@pb/core";
@@ -60,6 +61,7 @@ export interface ApiClient {
   submitDiagramJob(kind: string, params: Record<string, string | number>): Promise<JobSubmitResult<string>>;
   pollDiagramJob<T>(jobId: string): Promise<JobPollResult<T>>;
   submitCfgDiagramJob(object: string, proc: string): Promise<JobSubmitResult<CfgDiagramResponse>>;
+  getExplainPseudocode(object: string, proc: string): Promise<ExplainPseudocodeResponse>;
   getQueries(): Promise<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
   runSql(sql: string): Promise<QueryResult>;
@@ -143,6 +145,7 @@ export function createEnv(api: ApiClient): Env {
     pollDiagramJob: (jobId) => lift(() => api.pollDiagramJob<string>(jobId)),
     submitCfgDiagramJob: (o, p) => lift(() => api.submitCfgDiagramJob(o, p)),
     pollCfgDiagramJob: (jobId) => lift(() => api.pollDiagramJob<CfgDiagramResponse>(jobId)),
+    getExplainPseudocode: (o, p) => lift(() => api.getExplainPseudocode(o, p)),
     getQueries: () => lift(() => api.getQueries()),
     runQuery: (n, p) => lift(() => api.runQuery(n, p)),
     runSql: (sql) => lift(() => api.runSql(sql)),
@@ -277,6 +280,12 @@ export function createApiClient(): ApiClient {
     async submitCfgDiagramJob(object: string, proc: string): Promise<JobSubmitResult<CfgDiagramResponse>> {
       return fetchJson(
         `/api/diagrams/cfg/${encodeURIComponent(object)}/${encodeURIComponent(proc)}?async=1`,
+      );
+    },
+
+    async getExplainPseudocode(object: string, proc: string): Promise<ExplainPseudocodeResponse> {
+      return fetchJson(
+        `/api/analysis/explain/${encodeURIComponent(object)}/${encodeURIComponent(proc)}`,
       );
     },
 

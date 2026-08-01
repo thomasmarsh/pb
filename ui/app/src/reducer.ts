@@ -4,7 +4,7 @@
 import { pullback, pullbackWithNav, combine, Effect, jobPollReduce, initialJobPollState, type JobPollEnv, type JobSubmitResult, type JobPollResult } from "@pb/core";
 import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
-import type { CfgDiagramResponse } from "@pb/platform";
+import type { CfgDiagramResponse, ExplainPseudocodeResponse } from "@pb/platform";
 
 import { navReducer, type NavEnv, dashboardReducer, type DashboardEnv, initialDashboardState, exploreReducer, makeInitialExploreState, type ExploreEnv, objectsReducer, type ObjectsEnv, initialObjectsState, datawindowsReducer, type DatawindowsEnv, initialDatawindowsState, tablesReducer, type TablesEnv, initialTablesState, diagramsReducer, type DiagramsEnv, initialDiagramsState, queriesReducer, type QueriesEnv, initialQueriesState, searchReducer, type SearchEnv, initialSearchState, diagnosticsReducer, type DiagnosticsEnv, initialDiagnosticsState, analysisReducer, type AnalysisEnv, initialAnalysisState, type NavigationAction, type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type DiagnosticsAction, type AnalysisAction } from "@pb/platform";
 import { runtimeReducer, type RuntimeEnv, initialRuntimeState, windowManagerReducer, initialWindowManagerState, launchReducer, initialLaunchState, type LaunchAction, type WindowManagerAction } from "@pb/windowing";
@@ -16,7 +16,7 @@ export type { RuntimeAction } from "@pb/windowing";
 
 import type { Theme } from "./state.js";
 
-export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & DiagnosticsEnv & AnalysisEnv & ThemeEnv & RuntimeEnv & CfgDiagramEnv;
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & DiagnosticsEnv & AnalysisEnv & ThemeEnv & RuntimeEnv & CfgDiagramEnv & ExplainEnv;
 
 export interface ThemeEnv {
   loadTheme(): Effect<Theme>;
@@ -26,6 +26,10 @@ export interface ThemeEnv {
 export interface CfgDiagramEnv {
   submitCfgDiagramJob(object: string, proc: string): Effect<JobSubmitResult<CfgDiagramResponse>>;
   pollCfgDiagramJob(jobId: string): Effect<JobPollResult<CfgDiagramResponse>>;
+}
+
+export interface ExplainEnv {
+  getExplainPseudocode(object: string, proc: string): Effect<ExplainPseudocodeResponse>;
 }
 
 // ── Lenses (app-level: connect features to AppState) ─────────────────────────
@@ -68,6 +72,7 @@ export function initialState(): AppState {
     analysis: initialAnalysisState,
     inlineDiagrams: {},
     cfgDiagrams: {},
+    explainPseudocodes: {},
     runtimes: {},
     windowManager: initialWindowManagerState,
     launch: initialLaunchState,
@@ -163,6 +168,31 @@ export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect
       };
       const eff = jobPollReduce(entry.job, ca.action, jobEnv);
       return eff ? eff.map((a): AppAction => ({ tag: "cfgDiagram", action: { tag: "job", key: ca.key, action: a } })) : null;
+    }
+    }
+  }
+  if (action.tag === "explain") {
+    const { action: ea } = action;
+    switch (ea.tag) {
+    case "request": {
+      const existing = draft.explainPseudocodes[ea.key];
+      if (existing && existing.data === null) return null;
+      draft.explainPseudocodes[ea.key] = { object: ea.object, proc: ea.proc, data: null };
+      return env.getExplainPseudocode(ea.object, ea.proc)
+        .map((data): AppAction => ({ tag: "explain", action: { tag: "loaded", key: ea.key, data } }))
+        .catch((err): AppAction => ({ tag: "explain", action: { tag: "failed", key: ea.key, error: String(err) } }));
+    }
+    case "loaded": {
+      const entry = draft.explainPseudocodes[ea.key];
+      if (!entry) return null;
+      entry.data = ea.data;
+      return null;
+    }
+    case "failed": {
+      const entry = draft.explainPseudocodes[ea.key];
+      if (!entry) return null;
+      entry.data = { error: ea.error };
+      return null;
     }
     }
   }

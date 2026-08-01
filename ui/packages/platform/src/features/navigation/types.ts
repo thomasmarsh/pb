@@ -23,7 +23,8 @@ export type Route =
   | { view: "sliceView"; object: string; proc: string; line: number; direction: "backward" | "forward" }
   | { view: "formalReports" }
   | { view: "launch" }
-  | { view: "cfgDiagram"; object: string; proc: string };
+  | { view: "cfgDiagram"; object: string; proc: string }
+  | { view: "explainView"; object: string; proc: string };
 
 export type ViewName = Route["view"];
 

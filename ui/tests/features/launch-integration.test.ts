@@ -47,6 +47,7 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     pollDiagramJob: () => Effect.none(),
     submitCfgDiagramJob: () => Effect.none(),
     pollCfgDiagramJob: () => Effect.none(),
+    getExplainPseudocode: () => Effect.none(),
     getQueries: () => Effect.none(),
     runQuery: () => Effect.none(),
     runSql: () => Effect.none(),
