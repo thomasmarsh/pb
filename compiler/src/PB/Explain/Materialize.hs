@@ -18,11 +18,12 @@ import qualified Data.Text.Encoding as TE
 import PB.AST.Ident (Ident, IdentMap, identSetFromList)
 import PB.AST.SourceFile (FnSig, SubSig)
 import PB.Analysis.CallClassify (EffectTag)
+import PB.Analysis.Taint qualified as Taint
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR (EffTerm)
 import PB.Explain.Regions (defaultComplexityThreshold)
-import PB.Explain.Signatures (computeSignatures)
-import PB.Explain.Pseudocode (resolveCallee, buildPseudocode)
+import PB.Explain.Signatures (buildResolvedCallSiteMap, computeSignatures, lookupDeclaredSig)
+import PB.Explain.Pseudocode (buildPseudocode)
 import PB.Explain.Simplify (simplifyPseudocode)
 import PB.Pipeline.DuckDb (Handle, recreateTextTable, appendTextRows)
 import PB.Pipeline.Serialise ()
@@ -61,24 +62,29 @@ jsonText = TE.decodeUtf8 . BSL.toStrict . encode
 -- 'PB.Explain.Pseudocode.buildPseudocode' over every retained procedure and
 -- write one @(object, proc_name, pseudocode_json)@ row per procedure to
 -- @proc_pseudocode@. @sigMap@\/@procEffects@ are threaded straight through
--- to 'computeSignatures'\/'buildPseudocode' with no lossy collapsing step --
--- both already resolve a bare call name via the caller's own ancestor
--- chain against the real, unlossy inputs.
+-- to 'computeSignatures'\/'buildPseudocode' with no lossy collapsing step.
+-- @callRows@ (the same corpus-wide 'Taint.ResolvedCallRow's already used to
+-- build @proc_effects@ itself) is reshaped once, outside the per-procedure
+-- loop, into a 'PB.Explain.Signatures.ResolvedCallSiteMap' so every call
+-- leaf -- dotted or bare, same-object or not -- resolves against the real
+-- corpus-wide resolution instead of a caller-local search.
 materializeProcPseudocode
   :: IdentMap (Map.Map Ident (Either FnSig SubSig))
   -> Map.Map (Text, Text) (Set.Set EffectTag)
+  -> [Taint.ResolvedCallRow]
   -> [ExplainSeedRow]
   -> Handle
   -> IO ()
-materializeProcPseudocode sigMap procEffects seedRows conn = do
-  let rows =
+materializeProcPseudocode sigMap procEffects callRows seedRows conn = do
+  let callSiteMap = buildResolvedCallSiteMap callRows
+      rows =
         [ [obj, pName, jsonText pc]
         | ExplainSeedRow obj pName effTerm env <- seedRows
-        , let declaredSig = resolveCallee env sigMap pName
-              sigs = computeSignatures defaultComplexityThreshold env sigMap procEffects effTerm
+        , let declaredSig = lookupDeclaredSig sigMap obj pName
+              sigs = computeSignatures defaultComplexityThreshold env pName callSiteMap procEffects effTerm
               locals = identSetFromList (Map.keys (steLocal env))
               pc = simplifyPseudocode locals
-                     (buildPseudocode defaultComplexityThreshold env sigMap declaredSig sigs effTerm)
+                     (buildPseudocode defaultComplexityThreshold env sigMap pName callSiteMap declaredSig sigs effTerm)
         ]
   recreateTextTable conn "proc_pseudocode" ["object", "proc_name", "pseudocode_json"]
   appendTextRows conn "proc_pseudocode" rows

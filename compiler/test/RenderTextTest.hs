@@ -9,7 +9,7 @@ import PB.Analysis.CallClassify (EffectTag (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
-import PB.Explain.Signatures (computeSignatures)
+import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
 import PB.Explain.Render.Text (renderText, renderStmtLine)
 import PB.Lexing.Token (SourceSpan (..))
@@ -37,10 +37,13 @@ emptySigMap = identMapEmpty
 noSig :: Map.Map r a
 noSig = Map.empty
 
+noCallSites :: ResolvedCallSiteMap
+noCallSites = Map.empty
+
 -- | Build via a bare 'Eff', no callee-resolution/declared-sig machinery,
 -- no signature computation (root's own inferred signature is 'Nothing').
 build :: Eff () () -> Pseudocode
-build term = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing noSig (extractEffTable term)
+build term = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig (extractEffTable term)
 
 tests :: TestTree
 tests = testGroup "PB.Explain.Render.Text"
@@ -69,8 +72,8 @@ tests = testGroup "PB.Explain.Render.Text"
             { steGlobal = Map.singleton (ident "gv") (PtPrimitive "integer")
             , steLocal  = Map.singleton (ident "result") (PtPrimitive "integer")
             }
-          sigs = computeSignatures defaultComplexityThreshold env emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold env emptySigMap Nothing sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold env "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold env emptySigMap "proc" noCallSites Nothing sigs effTerm
           expected = T.intercalate "\n"
             [ "  -> region@5 (see below)"
             , "  y = result  -- line 6"
@@ -84,8 +87,8 @@ tests = testGroup "PB.Explain.Render.Text"
       let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 Nothing :: Eff () ()
           term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing . ELetRef "blk1" :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
           expected = T.intercalate "\n"
             [ "  -> region@5 (see below)"
             , "  y = result  -- line 6"
@@ -101,7 +104,7 @@ tests = testGroup "PB.Explain.Render.Text"
           falseArm = EAssignWithRhs "y" (var "y") (ExInt "0") 12 Nothing :: Eff () ()
           term = branchEff (var "cond") trueArm falseArm 10 :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("gc", grandchild)])
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing noSig effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
           rendered = renderText pc
       in T.count "region@20" rendered @?= 2
 
@@ -114,8 +117,8 @@ tests = testGroup "PB.Explain.Render.Text"
           env = emptyEnv { steGlobal = Map.singleton (ident "gv") (PtPrimitive "boolean") }
           term = EAssignWithRhs "result" (var "result") (var "gv") 1 (Just (PtPrimitive "integer")) :: Eff () ()
           effTerm = extractEffTable term
-          sigs = computeSignatures defaultComplexityThreshold env emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold env emptySigMap (Just declaredSig) sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold env "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold env emptySigMap "proc" noCallSites (Just declaredSig) sigs effTerm
           expected = T.intercalate "\n"
             [ "declared helper(integer li_count)"
             , "inferred helper(gv: boolean) -> () [pure]"
@@ -126,8 +129,8 @@ tests = testGroup "PB.Explain.Render.Text"
   , testCase "a genuinely effect-free region renders [pure]" $
       let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           effTerm = extractEffTable term
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
           expected = T.intercalate "\n"
             [ "inferred root() -> () [pure]"
             , "  x = 1  -- line 1"
@@ -138,8 +141,8 @@ tests = testGroup "PB.Explain.Render.Text"
       let term = ECall "unknown" [] 1 Set.empty :: Eff () ()
           procEffects = Map.singleton ("someobj", "known_other") (Set.fromList [WritesDb])
           effTerm = extractEffTable term
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap procEffects effTerm
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites procEffects effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
           expected = T.intercalate "\n"
             [ "inferred root() -> () [pure]"
             , "  unknown()  -- line 1"
@@ -166,7 +169,7 @@ tests = testGroup "PB.Explain.Render.Text"
         let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 (Just (PtPrimitive "integer")) :: Eff () ()
             term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing . ELetRef "blk1" :: Eff () ()
             effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
-            pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing noSig effTerm
+            pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
             rootStmts = Map.findWithDefault [] (pcRootRegion pc) (pcRegions pc)
         in case [s | s@(PRegionRef {}) <- rootStmts] of
              [ref] -> renderStmtLine ref @?= "-> region@5"

@@ -9,7 +9,7 @@ import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
   , SchGraph (..), schObjectKey
   )
-import PB.Analysis.Taint (TaintSource (..), TaintSink (..))
+import PB.Analysis.Taint (TaintSource (..), TaintSink (..), ResolvedCallRow (..))
 import PB.Analysis.CallClassify (EffectTag (..))
 import PB.Analysis.EffectClosure (materializeProcEffects, computeProcEffectClosure)
 import PB.Pipeline.SqlParse (TableRef (..))
@@ -73,7 +73,7 @@ tests = testGroup "Materialize"
   , testGroup "ProcPseudocode"
     [ testCase "one proc_pseudocode row per retained procedure, keyed by (object, proc_name)" testMaterializeProcPseudocodeRowPerProc
     , testCase "pseudocode_json decodes to a JSON object with a non-null rootRegion/regions shape" testMaterializeProcPseudocodeJsonShape
-    , testCase "a call resolved via the caller's ancestor chain surfaces its transitive effect tag in the materialized rootSig" testMaterializeProcPseudocodeEffectsReachJson
+    , testCase "a call resolved via the corpus-wide resolved-call-site map surfaces its transitive effect tag in the materialized rootSig" testMaterializeProcPseudocodeEffectsReachJson
     , testCase "two objects declaring the same bare proc name each materialize their own object's resolved effects, not a name-only union" testMaterializeProcPseudocodeNameCollision
     , testCase "a materialized row's pseudocode_json reflects simplifyPseudocode's output, not raw buildPseudocode" testMaterializeProcPseudocodeSimplified
     , testCase "each PStmt in a materialized row carries its pre-rendered stmtText, including nested branch children" testMaterializeProcPseudocodeStmtText
@@ -277,12 +277,25 @@ data ProcPseudocodeRow = ProcPseudocodeRow Text Text Text deriving (Eq, Show)
 instance FromRow ProcPseudocodeRow where
   fromRow = ProcPseudocodeRow <$> field <*> field <*> field
 
--- | Declares @name@ as callable on @obj@, resolvable via the ancestor-chain
--- walk 'PB.Explain.Signatures'/'PB.Explain.Pseudocode' both use.
+-- | Declares @name@ as callable on @obj@ in a declared-signature lookup map
+-- ('PB.Explain.Signatures.lookupDeclaredSig').
 sigMapWith :: Text -> Text -> IdentMap (Map.Map Ident (Either a SubSig))
 sigMapWith obj name = identMapInsertWith Map.union (ident obj)
   (Map.singleton (ident name) (Right (SubSig [] (ident name) [] Nothing Nothing Nothing)))
   identMapEmpty
+
+-- | A single resolved call site, corpus-wide shape
+-- ('PB.Analysis.Taint.ResolvedCallRow'), reduced to the fields
+-- 'PB.Explain.Signatures.buildResolvedCallSiteMap' actually reads --
+-- everything else is placeholder, irrelevant to call-site resolution.
+callRow :: Text -> Text -> Int -> Text -> Text -> ResolvedCallRow
+callRow obj fromProc ln targetObj targetProc = ResolvedCallRow
+  { rcrFile = "f.srf", rcrObject = obj, rcrFromProc = fromProc, rcrToName = targetProc
+  , rcrCallType = "ExCall", rcrCallLine = Just ln
+  , rcrTargetObject = Just targetObj, rcrTargetProc = Just targetProc
+  , rcrResolutionKind = "virtual", rcrConfidence = "high"
+  , rcrReturnType = Nothing, rcrSpan = Nothing
+  }
 
 -- | Decode a @pseudocode_json@ column value into a 'Value', navigating
 -- @stripCamelCasePrefix@'d keys ("pcRootSig" -> "rootSig", etc. -- see
@@ -302,7 +315,7 @@ testMaterializeProcPseudocodeRowPerProc = withHandle inMemory $ \conn -> do
         [ ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")
         , ExplainSeedRow "w_b" "ue_open"    term (envFor "w_b")
         ]
-  materializeProcPseudocode identMapEmpty Map.empty seedRows conn
+  materializeProcPseudocode identMapEmpty Map.empty [] seedRows conn
   rows <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode ORDER BY object, proc_name"
   assertEqual "one row per retained procedure"
     [("w_a", "ue_clicked"), ("w_b", "ue_open")]
@@ -312,7 +325,7 @@ testMaterializeProcPseudocodeJsonShape :: IO ()
 testMaterializeProcPseudocodeJsonShape = withHandle inMemory $ \conn -> do
   initSchema conn
   let term = extractEffTable (EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ())
-  materializeProcPseudocode identMapEmpty Map.empty [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
+  materializeProcPseudocode identMapEmpty Map.empty [] [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
   [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
   let v = decodeJson raw
   assertBool "rootRegion present" (field' "rootRegion" v /= Null)
@@ -324,10 +337,11 @@ testMaterializeProcPseudocodeEffectsReachJson = withHandle inMemory $ \conn -> d
   let term = extractEffTable (ECall "helper" [] 1 Set.empty :: Eff () ())
       sigMap = sigMapWith "w_a" "helper"
       procEffects = Map.singleton ("w_a", "helper") (Set.singleton ReadsDb)
-  materializeProcPseudocode sigMap procEffects [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
+      callRows = [callRow "w_a" "ue_clicked" 1 "w_a" "helper"]
+  materializeProcPseudocode sigMap procEffects callRows [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
   [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
   let effects = field' "effects" (field' "rootSig" (decodeJson raw))
-  assertEqual "rootSig.effects carries the ancestor-chain-resolved ReadsDb tag" (Array (pure (String "ReadsDb"))) effects
+  assertEqual "rootSig.effects carries the resolved-call-site-map-resolved ReadsDb tag" (Array (pure (String "ReadsDb"))) effects
 
 testMaterializeProcPseudocodeNameCollision :: IO ()
 testMaterializeProcPseudocodeNameCollision = withHandle inMemory $ \conn -> do
@@ -339,11 +353,15 @@ testMaterializeProcPseudocodeNameCollision = withHandle inMemory $ \conn -> do
         [ (("w_a", "helper"), Set.singleton ReadsDb)
         , (("w_b", "helper"), Set.singleton WritesDb)
         ]
+      callRows =
+        [ callRow "w_a" "ue_clicked" 1 "w_a" "helper"
+        , callRow "w_b" "ue_open"    1 "w_b" "helper"
+        ]
       seedRows =
         [ ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")
         , ExplainSeedRow "w_b" "ue_open"    term (envFor "w_b")
         ]
-  materializeProcPseudocode sigMap procEffects seedRows conn
+  materializeProcPseudocode sigMap procEffects callRows seedRows conn
   rows <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode ORDER BY object, proc_name"
   let effectsFor raw = field' "effects" (field' "rootSig" (decodeJson raw))
   case rows of
@@ -357,7 +375,7 @@ testMaterializeProcPseudocodeSimplified = withHandle inMemory $ \conn -> do
   initSchema conn
   let term = branchEff (var "cond") (EReturn (ExBool True) 2) (EReturn (ExBool False) 3) 1 :: Eff () ()
       effTerm = extractEffTable term
-  materializeProcPseudocode identMapEmpty Map.empty [ExplainSeedRow "w_a" "ue_clicked" effTerm (envFor "w_a")] conn
+  materializeProcPseudocode identMapEmpty Map.empty [] [ExplainSeedRow "w_a" "ue_clicked" effTerm (envFor "w_a")] conn
   [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
   assertBool "if/return-true/return-false collapses to a single PReturn (simplifyPseudocode ran)"
     (T.isInfixOf "\"PReturn\"" raw)
@@ -371,7 +389,7 @@ testMaterializeProcPseudocodeStmtText = withHandle inMemory $ \conn -> do
                (EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing)
                (EAssignWithRhs "b" (var "b") (ExInt "2") 3 Nothing) 1 :: Eff () ()
       effTerm = extractEffTable term
-  materializeProcPseudocode identMapEmpty Map.empty [ExplainSeedRow "w_a" "ue_clicked" effTerm (envFor "w_a")] conn
+  materializeProcPseudocode identMapEmpty Map.empty [] [ExplainSeedRow "w_a" "ue_clicked" effTerm (envFor "w_a")] conn
   [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
   assertEqual "stmtText present on the branch header and both arm assignments (3 PStmt nodes total)"
     3 (T.count "\"stmtText\"" raw)

@@ -290,7 +290,7 @@ runPhaseB conn mDefaultNamespace hierarchy procMap callableProcMap callableSigMa
     (sinkSchemaCategoryOutput conn)
   dcRows  <- initDeadCodeInput conn resolvedCallRows
   procEffects <- computeProcEffects conn padEffectSeedRows (Relations.dcrCallEdges dcRows)
-  computeProcPseudocode conn callableSigMap procEffects padExplainSeedRows
+  computeProcPseudocode conn callableSigMap procEffects (Relations.dcrCalls dcRows) padExplainSeedRows
   dcReady <- computeDeadCodeClosure conn dcRows
   schRows <- initSchemaInput conn schGraph catFks
   scReady <- computeSchemaClosure conn schRows
@@ -457,13 +457,17 @@ computeProcEffects conn seedRows callEdges =
 -- 'PB.Explain.Pseudocode' over every retained procedure and materialize
 -- @proc_pseudocode@, over the same 'computeProcEffects' closure -- no
 -- second corpus-wide parse+compile pass (Plan 221 Phase 2 Decision: the
--- 'EffTerm's are already retained in-memory from Phase A).
+-- 'EffTerm's are already retained in-memory from Phase A). @callRows@ is the
+-- same 'Taint.ResolvedCallRow's 'initDeadCodeInput' already derived
+-- ('Relations.dcrCalls') -- the real, corpus-wide, dotted-call-aware
+-- resolution, reused rather than re-derived, so every call leaf resolves
+-- against real facts instead of a caller-local ancestor-chain search.
 computeProcPseudocode
   :: Handle -> IdentMap (Map.Map Ident (Either FnSig SubSig))
-  -> Map.Map (Text, Text) (Set.Set EffectTag) -> [ExplainSeedRow] -> IO ()
-computeProcPseudocode conn callableSigMap procEffects seedRows =
+  -> Map.Map (Text, Text) (Set.Set EffectTag) -> [Taint.ResolvedCallRow] -> [ExplainSeedRow] -> IO ()
+computeProcPseudocode conn callableSigMap procEffects callRows seedRows =
   Progress.timedStep "Explain pseudocode" $
-    materializeProcPseudocode callableSigMap procEffects seedRows conn
+    materializeProcPseudocode callableSigMap procEffects callRows seedRows conn
 
 -- | Materialize the schema input relations view (@leg_source@\/@stmt@\/
 -- @seed@\/@join_leg@\/@fk@). Idempotent (@CREATE OR REPLACE VIEW@). Must run

@@ -7,7 +7,7 @@ import PB.AST.SourceFile  (Param (..), SubSig (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
-import PB.Explain.Signatures (computeSignatures)
+import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
 import PB.Explain.Simplify (collapseBooleanBranch, dropDeadStores, simplifyPseudocode)
 import PB.Lexing.Token (SourceSpan (..))
@@ -39,6 +39,9 @@ emptySigMap = identMapEmpty
 
 noSig :: Map.Map r a
 noSig = Map.empty
+
+noCallSites :: ResolvedCallSiteMap
+noCallSites = Map.empty
 
 tests :: TestTree
 tests = testGroup "PB.Explain.Simplify"
@@ -113,8 +116,8 @@ tests = testGroup "PB.Explain.Simplify"
       let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           term = EAssignWithRhs "y" (var "y") (var "x") 2 Nothing . ELetRef "blk1" :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
           simplified = simplifyPseudocode (safeVars ["x"]) pc
           nonRootRegions = Map.delete (pcRootRegion pc) (pcRegions simplified)
       in case Map.elems nonRootRegions of
@@ -129,8 +132,8 @@ tests = testGroup "PB.Explain.Simplify"
             }
           term = EAssignWithRhs "al_x" (var "al_x") (ExInt "1") 1 Nothing :: Eff () ()
           effTerm = extractEffTable term
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap (Just (Right refParam)) sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites (Just (Right refParam)) sigs effTerm
           -- deliberately careless caller: includes the ref param's own
           -- name in locals, relying on simplifyPseudocode to still
           -- exclude it via pcDeclaredSig.
@@ -152,7 +155,7 @@ tests = testGroup "PB.Explain.Simplify"
 -- is not exported), so every property-test fixture reuses the same one via
 -- a trivial 'buildPseudocode' call.
 trivialPc :: Pseudocode
-trivialPc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing noSig
+trivialPc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig
   (extractEffTable (EAssignWithRhs "a" (var "a") (ExInt "1") 1 Nothing :: Eff () ()))
 
 genStmts :: Gen [PStmt]

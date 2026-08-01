@@ -5,7 +5,8 @@ module EffectClosureTest (tests) where
 -- ('computeProcEffectClosure'). See doc/plan/220-effect-capability-system.md
 -- Layer 4 for the six closure cases this mirrors.
 import PB.Prelude
-import PB.AST.Expr (Expr (..))
+import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Ident (Ident, mkIdentSynthetic)
 import PB.Analysis.CallClassify (EffectTag (..))
 import PB.Analysis.EffectClosure (foldEffectClosureEff, computeProcEffectClosure)
 import PB.Compile.IR (Eff (..), EffTerm (..), extractEffTable, branchEff)
@@ -15,21 +16,27 @@ import qualified Data.Set as Set
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
+ident :: Text -> Ident
+ident = mkIdentSynthetic "EffectClosureTest fixture"
+
+var :: Text -> Expr
+var name = ExLvalue (Lvalue [LvSegment (ident name) Nothing])
+
 tests :: TestTree
 tests = testGroup "PB.Analysis.EffectClosure"
   [ testGroup "foldEffectClosureEff"
     [ testCase "a single ECall leaf contributes its tags" $
-        foldEffectClosureEff
+        foldEffectClosureEff Set.empty
           (extractEffTable (ECall "f" [] 1 (Set.singleton ReadsDb) :: Eff () ()))
           @?= Set.singleton ReadsDb
 
     , testCase "a single ESuspend leaf contributes its tags" $
-        foldEffectClosureEff
+        foldEffectClosureEff Set.empty
           (extractEffTable (ESuspend "retrieve:dw" [] 1 (Set.singleton Suspends) :: Eff () ()))
           @?= Set.singleton Suspends
 
     , testCase "EBranch unions both arms' tags" $
-        foldEffectClosureEff
+        foldEffectClosureEff Set.empty
           (extractEffTable
             (branchEff (ExBool True)
               (ECall "f" [] 1 (Set.singleton ReadsDb))
@@ -38,10 +45,25 @@ tests = testGroup "PB.Analysis.EffectClosure"
           @?= Set.fromList [ReadsDb, WritesDb]
 
     , testCase "ELetRef resolves a shared body's tags via the table" $
-        foldEffectClosureEff
+        foldEffectClosureEff Set.empty
           (EffTerm (ELetRef "blk")
             (Map.singleton "blk" (ECall "f" [] 1 (Set.singleton WritesUi))))
           @?= Set.singleton WritesUi
+
+    , testCase "an assignment to an instance-var ident tags WritesInstanceState" $
+        foldEffectClosureEff (Set.singleton (ident "ai_count"))
+          (extractEffTable (EAssignWithRhs "ai_count" (var "ai_count") (ExInt "1") 1 Nothing :: Eff () ()))
+          @?= Set.singleton WritesInstanceState
+
+    , testCase "an assignment to a local/param ident (not in the instance set) contributes no tag" $
+        foldEffectClosureEff (Set.singleton (ident "ai_count"))
+          (extractEffTable (EAssignWithRhs "li_local" (var "li_local") (ExInt "1") 1 Nothing :: Eff () ()))
+          @?= Set.empty
+
+    , testCase "an assignment when no instance vars are known at all contributes no tag" $
+        foldEffectClosureEff Set.empty
+          (extractEffTable (EAssignWithRhs "ai_count" (var "ai_count") (ExInt "1") 1 Nothing :: Eff () ()))
+          @?= Set.empty
     ]
 
   , testGroup "computeProcEffectClosure"

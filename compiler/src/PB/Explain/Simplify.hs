@@ -29,8 +29,7 @@ import PB.Explain.Regions (RegionId)
 import PB.Explain.Signatures (InferredSignature (..), VarBinding (..))
 
 -- | 'PStmt'\'s own fields carry only a flattened 'Text' var name at this
--- layer (same gap 'PB.Explain.Pseudocode.resolveCallee' bridges for a call
--- callee) -- there is no other in-memory 'Ident' to recover it from here,
+-- layer -- there is no other in-memory 'Ident' to recover it from here,
 -- so a fresh 'Ident' is minted per comparison for PB's case-insensitive
 -- identifier equality, never for anything else.
 bridgeIdent :: Text -> Ident

@@ -41,8 +41,8 @@ import PB.Analysis.EffectClosure (foldEffectClosureEff)
 import PB.Explain.Materialize (ExplainSeedRow (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
-import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, withDwTables,
-                                 withDwControls, withDwParamBindings, procEnv,
+import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv (steInstance), buildWorkspaceEnv,
+                                 withDwTables, withDwControls, withDwParamBindings, procEnv,
                                  extractNestedTypeDecls, buildCallableProcMap, buildCallableSigMap)
 import PB.Analysis.DwBuiltins  (classifyDwControlKind)
 import PB.Analysis.Dataflow    qualified as Dataflow
@@ -428,7 +428,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                , typeMismatches
                , taintEdgeRows
                , taintReturnRows
-               , (obj, pName, foldEffectClosureEff effTerm)
+               , (obj, pName, foldEffectClosureEff (Map.keysSet (steInstance typeCheckEnv)) effTerm)
                , ExplainSeedRow obj pName effTerm typeCheckEnv )
           | ((sLine, eLine), pu) <- procSpecs
           , let pName = puName pu; pType = puKind pu; params = puParams pu

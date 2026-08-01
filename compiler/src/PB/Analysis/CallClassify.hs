@@ -59,9 +59,13 @@ data CallKind = PureCall | SuspendCall deriving (Eq, Show)
 -- cover a synchronous, non-suspending read or mutation of a stateful
 -- control's own buffer (@GetRow@\/@RowCount@\/@SetItem@, ...) -- distinct
 -- from 'ReadsDb'\/'WritesDb' (an actual backend round-trip) and from a pure
--- function of declared inputs.
+-- function of declared inputs. 'WritesInstanceState' is structurally
+-- detected rather than annotated (see 'PB.Analysis.EffectClosure.foldEffectClosureEff'):
+-- a plain assignment whose target is the enclosing object's own instance
+-- variable, for any user-defined class -- not just the four annotated
+-- runtime/stdlib classes 'WritesControlState' covers.
 data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
-               | ReadsControlState | WritesControlState
+               | ReadsControlState | WritesControlState | WritesInstanceState
   deriving (Eq, Ord, Show, Generic)
 
 -- | A fixed-shape enum has no substructure left to force once the

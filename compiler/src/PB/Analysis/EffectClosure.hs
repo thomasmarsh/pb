@@ -30,7 +30,10 @@ import PB.Algebra.Closure
   , fromEdges
   , reachFrom
   )
-import PB.Analysis.CallClassify (EffectTag)
+import PB.AST.Expr (Expr (..))
+import PB.AST.Ident (Ident)
+import PB.Analysis.CallClassify (EffectTag (..))
+import PB.Analysis.Dataflow (lvRoot)
 import PB.Compile.IR (Eff (..), EffTerm (..))
 import PB.Pipeline.DuckDb (Handle, recreateTextTable, appendTextRows)
 
@@ -78,21 +81,28 @@ effectTagsOf :: EffectSetLabel -> Set.Set EffectTag
 effectTagsOf (EffectSetLabel m) = fromMaybe Set.empty m
 
 -- | Direct effect tags for one procedure: the union of every 'ECall'\/
--- 'ESuspend' leaf's own tag set within the compiled 'EffTerm'. Mirrors
+-- 'ESuspend' leaf's own tag set within the compiled 'EffTerm', plus
+-- 'WritesInstanceState' for any 'EAssignWithRhs' whose target is one of
+-- @instanceVars@ (the enclosing object's own instance-var 'Ident's, e.g.
+-- 'PB.Analysis.TypeEnv.ScopedTypeEnv''s @steInstance@ keys). Mirrors
 -- 'PB.Analysis.SchFootprint.foldSchFootprintEff''s walk\/memo shape (a
 -- direct fold, not the generic 'PB.Compile.IR.foldFreyd' instance-dispatch
 -- route), minus the 'FunctorCtx' that fold needs for its own
 -- 'resolveSetItem' lookup -- this fold only reads the tag already stored on
--- each leaf, no external context required.
-foldEffectClosureEff :: EffTerm a b -> Set.Set EffectTag
-foldEffectClosureEff (EffTerm spine table) = fst (go spine Map.empty)
+-- each leaf (or, for an assignment, its own lhs 'Expr'), no further
+-- external context required beyond @instanceVars@.
+foldEffectClosureEff :: Set.Set Ident -> EffTerm a b -> Set.Set EffectTag
+foldEffectClosureEff instanceVars (EffTerm spine table) = fst (go spine Map.empty)
   where
     go :: Eff x y -> Map.Map Text (Set.Set EffectTag)
        -> (Set.Set EffectTag, Map.Map Text (Set.Set EffectTag))
     go (J _)                      m = (Set.empty, m)
     go (EComp g f)                m = let (rg, m1) = go g m in let (rf, m2) = go f m1 in (rg <> rf, m2)
+    -- 'EAssign' carries no lhs 'Expr' at all (only a bare 'Text' var name) --
+    -- dead in production (see 'PB.Explain.Signatures.defIdent''s identical
+    -- note), so there is no real Ident to check here.
     go (EAssign _ _ _)            m = (Set.empty, m)
-    go (EAssignWithRhs _ _ _ _ _) m = (Set.empty, m)
+    go (EAssignWithRhs _ lhs _ _ _) m = (assignTags lhs, m)
     go (ECall _ _ _ tags)         m = (tags, m)
     go (ESuspend _ _ _ tags)      m = (tags, m)
     go ESplitValue                m = (Set.empty, m)
@@ -105,6 +115,11 @@ foldEffectClosureEff (EffTerm spine table) = fst (go spine Map.empty)
       Nothing     -> case Map.lookup bid table of
         Just body -> let (r, m') = go body m in (r, Map.insert bid r m')
         Nothing   -> error ("foldEffectClosureEff: unbound ELetRef " <> show bid)
+
+    assignTags :: Expr -> Set.Set EffectTag
+    assignTags (ExLvalue lv)
+      | Just root <- lvRoot lv, root `Set.member` instanceVars = Set.singleton WritesInstanceState
+    assignTags _ = Set.empty
 
 -- | Transitive per-procedure effect closure over the resolved call graph.
 -- @seedRows@ is every procedure's own direct tags (from

@@ -8,7 +8,7 @@ import PB.AST.Type        (PbType (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
-import PB.Explain.Signatures (computeSignatures)
+import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
 
 import qualified Data.Map.Strict as Map
@@ -33,11 +33,14 @@ emptySigMap = identMapEmpty
 noSig :: Map.Map r a
 noSig = Map.empty
 
+noCallSites :: ResolvedCallSiteMap
+noCallSites = Map.empty
+
 -- | Build a 'Pseudocode' with no callee-resolution or declared-sig
 -- machinery in play -- the shape most tests below only need.
 build :: Int -> Eff () () -> Pseudocode
 build threshold term =
-  buildPseudocode threshold emptyEnv emptySigMap Nothing noSig (extractEffTable term)
+  buildPseudocode threshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig (extractEffTable term)
 
 rootStmts :: Pseudocode -> [PStmt]
 rootStmts pc = case Map.lookup (pcRootRegion pc) (pcRegions pc) of
@@ -77,8 +80,8 @@ tests = testGroup "PB.Explain.Pseudocode"
   , testCase "a cut RegionId lowers to PRegionRef carrying its InferredSignature" $
       let arm = EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing :: Eff () ()
           term = branchEff (var "cond") arm arm 1 :: Eff () ()
-          sigs = computeSignatures 1 emptyEnv emptySigMap Map.empty (extractEffTable term)
-          pc = buildPseudocode 1 emptyEnv emptySigMap Nothing sigs (extractEffTable term)
+          sigs = computeSignatures 1 emptyEnv "proc" noCallSites Map.empty (extractEffTable term)
+          pc = buildPseudocode 1 emptyEnv emptySigMap "proc" noCallSites Nothing sigs (extractEffTable term)
       in case rootStmts pc of
            [PRegionRef rid lns msig] -> do
              msig @?= Map.lookup rid sigs
@@ -92,8 +95,8 @@ tests = testGroup "PB.Explain.Pseudocode"
       let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           term = EComp (ELetRef "blk1") (ELetRef "blk1") :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
       in case rootStmts pc of
            [PRegionRef rid1 _ _, PRegionRef rid2 _ _] -> do
              rid1 @?= rid2
@@ -101,29 +104,38 @@ tests = testGroup "PB.Explain.Pseudocode"
              length (Map.toList (pcRegions pc)) @?= 2  -- root + the one shared block, not 3
            other -> assertFailure ("expected exactly 2 PRegionRef entries at root, got " <> show other)
 
-  , testCase "a resolved call's PCall carries its callee FnSig/SubSig from buildCallableSigMap" $
+  , testCase "a resolved call's PCall carries its callee FnSig/SubSig via the resolved-call-site map" $
       let env = emptyEnv { steObject = ident "myobj" }
           sigMap = identMapInsertWith Map.union (ident "myobj") (Map.singleton (ident "helper") (Right helperSig)) identMapEmpty
+          callSiteMap = Map.singleton ("myobj", "the_proc", 1) ("myobj", "helper")
           term = ECall "helper" [] 1 Set.empty :: Eff () ()
-          pc = buildPseudocode defaultComplexityThreshold env sigMap Nothing noSig (extractEffTable term)
+          pc = buildPseudocode defaultComplexityThreshold env sigMap "the_proc" callSiteMap Nothing noSig (extractEffTable term)
       in rootStmts pc @?= [PCall "helper" (Just (Right helperSig)) [] 1]
+
+  , testCase "a dotted-looking call name resolves its declared signature via the same resolved-call-site map, not by parsing the call text" $
+      let env = emptyEnv { steObject = ident "myobj" }
+          sigMap = identMapInsertWith Map.union (ident "dw_1") (Map.singleton (ident "retrieve") (Right helperSig)) identMapEmpty
+          callSiteMap = Map.singleton ("myobj", "the_proc", 1) ("dw_1", "retrieve")
+          term = ECall "dw_1.retrieve" [] 1 Set.empty :: Eff () ()
+          pc = buildPseudocode defaultComplexityThreshold env sigMap "the_proc" callSiteMap Nothing noSig (extractEffTable term)
+      in rootStmts pc @?= [PCall "dw_1.retrieve" (Just (Right helperSig)) [] 1]
 
   , testCase "an unresolved call's PCall carries Nothing, not an error" $
       let env = emptyEnv { steObject = ident "myobj" }
           term = ECall "unknownproc" [] 1 Set.empty :: Eff () ()
-          pc = buildPseudocode defaultComplexityThreshold env emptySigMap Nothing noSig (extractEffTable term)
+          pc = buildPseudocode defaultComplexityThreshold env emptySigMap "the_proc" noCallSites Nothing noSig (extractEffTable term)
       in rootStmts pc @?= [PCall "unknownproc" Nothing [] 1]
 
   , testCase "the root Pseudocode's pcDeclaredSig is Just the procedure's own FnSig/SubSig" $
       let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap (Just (Right helperSig)) noSig (extractEffTable term)
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites (Just (Right helperSig)) noSig (extractEffTable term)
       in pcDeclaredSig pc @?= Just (Right helperSig)
 
   , testCase "the root Pseudocode's pcRootSig is Just its own InferredSignature from the sigs map" $
       let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
           effTerm = extractEffTable term
-          sigs = computeSignatures defaultComplexityThreshold emptyEnv emptySigMap Map.empty effTerm
-          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap Nothing sigs effTerm
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
       in do
            assertBool "expected the sigs map to carry an entry for the root region" (isJust (Map.lookup (pcRootRegion pc) sigs))
            pcRootSig pc @?= Map.lookup (pcRootRegion pc) sigs

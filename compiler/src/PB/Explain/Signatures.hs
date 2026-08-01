@@ -10,6 +10,9 @@
 module PB.Explain.Signatures
   ( VarBinding (..)
   , InferredSignature (..)
+  , ResolvedCallSiteMap
+  , buildResolvedCallSiteMap
+  , lookupDeclaredSig
   , computeSignatures
   ) where
 
@@ -18,12 +21,13 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import PB.AST.Expr (Expr (..))
-import PB.AST.Ident (Ident, IdentMap, identOrig, mkIdentSynthetic)
+import PB.AST.Ident (Ident, IdentMap, identMapLookup, identOrig, mkIdentSynthetic)
 import PB.AST.SourceFile (FnSig, SubSig)
 import PB.AST.Type (PbType)
 import PB.Analysis.CallClassify (EffectTag)
 import PB.Analysis.Dataflow (lvRoot, lvalueSubscriptIdents, walkExprIdentsExcludingCallees)
-import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVarOrSelf, resolveCalleeTarget)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
+import PB.Analysis.Taint qualified as Taint
 import PB.Compile.IR (EffTerm)
 import PB.Explain.Regions (EffLeaf (..), Region, RegionId, RegionOps (..), computeRegionsWith)
 
@@ -37,6 +41,40 @@ data InferredSignature = InferredSignature
   , sigOutputs :: [VarBinding]
   , sigEffects :: Set.Set EffectTag
   } deriving (Eq, Show, Generic)
+
+-- | Every corpus-wide resolved call site, keyed by exactly where it's
+-- written: @(callerObject, callerProc, callLine) -> (calleeObject,
+-- calleeProc)@. Sourced from 'PB.Analysis.Taint.ResolvedCallRow' — the same
+-- fact 'PB.Analysis.TypeResolve.resolveVirtual' already computes once,
+-- corpus-wide, handling both a dotted receiver-typed call (@dw_1.Retrieve()@)
+-- and a bare call to a global function or an unrelated object (via
+-- 'resolveVirtual''s own "exactly one other match" fallback) — a
+-- deliberately more complete resolution than any bare ancestor-chain walk
+-- rooted at the caller's own object could give. A row with no line number or
+-- no resolved target is simply absent, not an error (same "unresolved
+-- degrades to no extra fact" shape the rest of this module already uses).
+type ResolvedCallSiteMap = Map.Map (Text, Text, Int) (Text, Text)
+
+buildResolvedCallSiteMap :: [Taint.ResolvedCallRow] -> ResolvedCallSiteMap
+buildResolvedCallSiteMap rows = Map.fromList
+  [ ((Taint.rcrObject r, Taint.rcrFromProc r, ln), (tObj, tProc))
+  | r <- rows
+  , Just ln   <- [Taint.rcrCallLine r]
+  , Just tObj <- [Taint.rcrTargetObject r]
+  , Just tProc <- [Taint.rcrTargetProc r]
+  ]
+
+-- | A known @(object, name)@'s own declared signature, no resolution search
+-- — 'buildCallableSigMap''s own intended shape ("this map does not itself
+-- attempt any resolution"). Used both for a procedure's own self-lookup
+-- (its declaring object is already known exactly) and, once a call site's
+-- target is already known via 'ResolvedCallSiteMap', for that target's
+-- declared signature.
+lookupDeclaredSig :: IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Text -> Text -> Maybe (Either FnSig SubSig)
+lookupDeclaredSig sigMap objText nameText =
+  case identMapLookup (mkIdentSynthetic "PB.Explain.Signatures.lookupDeclaredSig: object" objText) sigMap of
+    Just (_, procs) -> Map.lookup (mkIdentSynthetic "PB.Explain.Signatures.lookupDeclaredSig: name" nameText) procs
+    Nothing         -> Nothing
 
 -- | Per-region free\/live-variable accumulator threaded through
 -- 'computeRegionsWith'. 'saLocallyDefined' tracks definite assignment —
@@ -61,17 +99,16 @@ sigAccEmpty = SigAcc Set.empty Set.empty Set.empty Set.empty Set.empty
 -- | One atomic leaf's own contribution, relative to a fresh (empty) local-
 -- def context — 'sigAccSeq' reconciles that isolation against whatever is
 -- already locally defined when it threads this into a running
--- accumulator. A call leaf's transitive effect tags are resolved via
--- 'resolveCalleeTarget' against @env@\/@sigMap@ (the same ancestor-chain
--- walk 'PB.Explain.Pseudocode.resolveCallee' uses to resolve a callee's
--- declared signature), then looked up in @procEffects@
+-- accumulator. A call leaf's transitive effect tags are resolved by keying
+-- @(selfObj, selfProc, callLine)@ into @callSiteMap@
+-- ('ResolvedCallSiteMap', already correct for dotted and cross-object
+-- calls — see its own doc comment), then looked up in @procEffects@
 -- ('PB.Analysis.EffectClosure.computeProcEffects''s real @(object,
--- proc_name)@-keyed closure) — an unresolved call (dotted name, or a bare
--- name absent from every object in the chain) contributes nothing beyond
--- the leaf's own direct tags, same as a resolved-but-genuinely-effect-free
--- call.
-sigAccLeaf :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map (Text, Text) (Set.Set EffectTag) -> EffLeaf -> SigAcc
-sigAccLeaf env sigMap procEffects leaf = case leaf of
+-- proc_name)@-keyed closure) — an unresolved call site (absent from
+-- @callSiteMap@) contributes nothing beyond the leaf's own direct tags,
+-- same as a resolved-but-genuinely-effect-free call.
+sigAccLeaf :: Text -> Text -> ResolvedCallSiteMap -> Map.Map (Text, Text) (Set.Set EffectTag) -> EffLeaf -> SigAcc
+sigAccLeaf selfObj selfProc callSiteMap procEffects leaf = case leaf of
   LAssign var _ln _ty ->
     let d = defIdent var Nothing
     in sigAccEmpty { saLocallyDefined = Set.singleton d, saAllDefs = Set.singleton d }
@@ -85,17 +122,17 @@ sigAccLeaf env sigMap procEffects leaf = case leaf of
         , saAllUses        = rs
         , saEffects        = Set.empty
         }
-  LCall name callArgs _ln tags    -> callLeaf name callArgs tags
-  LSuspend name callArgs _ln tags -> callLeaf name callArgs tags
+  LCall _name callArgs ln tags    -> callLeaf callArgs ln tags
+  LSuspend _name callArgs ln tags -> callLeaf callArgs ln tags
   LReturn e _ln                -> readsOnly (walkExprIdentsExcludingCallees e)
   LBranchCond cond _ln         -> readsOnly (walkExprIdentsExcludingCallees cond)
   where
     readsOnly rs = sigAccEmpty { saFreeReads = rs, saAllUses = rs }
-    callLeaf name callArgs tags =
+    callLeaf callArgs ln tags =
       let rs  = foldMap walkExprIdentsExcludingCallees callArgs
-          resolvedEff = case resolveCalleeTarget env sigMap name of
-            Just (obj, _sig) -> Map.findWithDefault Set.empty (identOrig obj, name) procEffects
-            Nothing           -> Set.empty
+          resolvedEff = case Map.lookup (selfObj, selfProc, ln) callSiteMap of
+            Just target -> Map.findWithDefault Set.empty target procEffects
+            Nothing     -> Set.empty
           eff = tags <> resolvedEff
       in sigAccEmpty { saFreeReads = rs, saAllUses = rs, saEffects = eff }
 
@@ -151,11 +188,11 @@ sigAccChoice a b = SigAcc
 -- free/live-variable purposes -- the referenced region's own reads/defs are
 -- already captured under its own 'RegionId' in the accumulator map, read
 -- back out by 'computeSignatures' via 'allUsesElsewhere'.
-sigOps :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map (Text, Text) (Set.Set EffectTag) -> RegionOps SigAcc
-sigOps env sigMap procEffects = RegionOps
-  { opLeaf   = sigAccLeaf env sigMap procEffects
+sigOps :: Text -> Text -> ResolvedCallSiteMap -> Map.Map (Text, Text) (Set.Set EffectTag) -> RegionOps SigAcc
+sigOps selfObj selfProc callSiteMap procEffects = RegionOps
+  { opLeaf   = sigAccLeaf selfObj selfProc callSiteMap procEffects
   , opFanIn  = sigAccChoice
-  , opBranch = \cond ln t f -> sigAccSeq (sigAccLeaf env sigMap procEffects (LBranchCond cond ln)) (sigAccChoice t f)
+  , opBranch = \cond ln t f -> sigAccSeq (sigAccLeaf selfObj selfProc callSiteMap procEffects (LBranchCond cond ln)) (sigAccChoice t f)
   , opLoop   = \_ln body -> sigAccChoice body sigAccEmpty
   , opRef    = \_ _ -> sigAccEmpty
   , opSeq    = sigAccSeq
@@ -183,9 +220,10 @@ usesRegionCount = Map.foldr
 -- an 'PB.Explain.Regions.ELoop' body produces; this falls out of the
 -- general def\/use sets with no loop-specific case in the walk itself,
 -- only in this final per-region derivation.
-computeSignatures :: Int -> ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map (Text, Text) (Set.Set EffectTag) -> EffTerm a b -> Map.Map RegionId InferredSignature
-computeSignatures threshold env sigMap procEffects term =
-  let (_root, accs) = computeRegionsWith threshold (sigOps env sigMap procEffects) term :: (Region, Map.Map RegionId SigAcc)
+computeSignatures :: Int -> ScopedTypeEnv -> Text -> ResolvedCallSiteMap -> Map.Map (Text, Text) (Set.Set EffectTag) -> EffTerm a b -> Map.Map RegionId InferredSignature
+computeSignatures threshold env selfProc callSiteMap procEffects term =
+  let selfObj = identOrig (steObject env)
+      (_root, accs) = computeRegionsWith threshold (sigOps selfObj selfProc callSiteMap procEffects) term :: (Region, Map.Map RegionId SigAcc)
       counts = usesRegionCount accs
       -- A def is used elsewhere iff some region other than its own uses it:
       -- the total region-count for that ident, minus 1 if the def's own

@@ -18,7 +18,6 @@
 module PB.Explain.Pseudocode
   ( PStmt (..)
   , Pseudocode (..)
-  , resolveCallee
   , buildPseudocode
   ) where
 
@@ -26,13 +25,13 @@ import PB.Prelude hiding (id, (.))
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import PB.AST.Expr (Expr (..))
-import PB.AST.Ident (Ident, IdentMap)
+import PB.AST.Ident (Ident, IdentMap, identOrig)
 import PB.AST.SourceFile (FnSig, SubSig)
 import PB.AST.Type (PbType)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..), resolveCalleeTarget)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR (EffTerm)
 import PB.Explain.Regions (EffLeaf (..), RegionId, Region (..), RegionOps (..), computeRegionsWith)
-import PB.Explain.Signatures (InferredSignature)
+import PB.Explain.Signatures (InferredSignature, ResolvedCallSiteMap, lookupDeclaredSig)
 
 data PStmt
   = PAssign Text (Maybe PbType) Expr Int
@@ -50,40 +49,46 @@ data Pseudocode = Pseudocode
   , pcRegions     :: Map.Map RegionId [PStmt]
   } deriving (Eq, Show, Generic)
 
--- | Resolve a bare (dot-free) call name to its declaring object's own
--- ancestor chain in @sigMap@ ('PB.Analysis.TypeEnv.buildCallableSigMap'),
--- via the shared 'PB.Analysis.TypeEnv.resolveCalleeTarget' walk (also used
--- by 'PB.Explain.Signatures' for transitive effect-tag lookup -- both need
--- the identical "which ancestor owns this bare name" resolution). Any
--- dotted name (@this.foo@, @recv.method@) renders name-only: real
--- receiver-type resolution needs 'PB.Analysis.TypeResolve''s heavier
--- 'CallSite'\/'ResolvedCall' machinery, sourced from token-level extraction
--- this pure 'EffTerm'-only walk has no access to -- matches the plan's own
--- Non-Goal that an unresolved call degrades to name-only rather than
--- blocking ('Eff'\'s 'ECall'\/'ESuspend' carry only a flattened 'Text'
--- callee name; widening them to carry a resolved 'Ident' is blocked by the
--- shared 'PB.Compile.IR.Effectful' 'callProc' method signature across 4+
--- other instances -- logged to 'BACKLOG.md' as its own follow-on gap, not
--- fixed here).
-resolveCallee :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Text -> Maybe (Either FnSig SubSig)
-resolveCallee env sigMap name = snd <$> resolveCalleeTarget env sigMap name
+-- | Resolve a call site's declared signature by keying @(selfObj, selfProc,
+-- callLine)@ into @callSiteMap@ ('PB.Explain.Signatures.ResolvedCallSiteMap')
+-- to get its real resolved target, then looking that target's declaration up
+-- in @sigMap@ via 'PB.Explain.Signatures.lookupDeclaredSig' -- the same
+-- corpus-wide resolution 'PB.Explain.Signatures' uses for transitive
+-- effect-tag lookup, so a dotted receiver call (@dw_1.Retrieve()@) or a bare
+-- call to a global function resolves here too, not just a same-object bare
+-- call. An unresolved call site (absent from @callSiteMap@) renders
+-- name-only, matching the plan's own Non-Goal that an unresolved call
+-- degrades rather than blocks.
+resolveCallSite
+  :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig))
+  -> Text -> ResolvedCallSiteMap -> Int
+  -> Maybe (Either FnSig SubSig)
+resolveCallSite env sigMap selfProc callSiteMap ln =
+  Map.lookup (identOrig (steObject env), selfProc, ln) callSiteMap
+    >>= \(tObj, tProc) -> lookupDeclaredSig sigMap tObj tProc
 
 -- | One atomic 'EffLeaf' contribution's own 'PStmt' (a singleton list).
 -- 'LBranchCond' is unreachable through this module's own 'opBranch' (which
 -- receives the condition directly, not via a leaf) but the pattern match
 -- must stay total since 'EffLeaf' is a type shared with
 -- 'PB.Explain.Signatures'.
-leafToStmt :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> EffLeaf -> [PStmt]
-leafToStmt _env _sigMap (LAssign var ln ty) = [PAssign var ty (ExRaw []) ln]
-leafToStmt _env _sigMap (LAssignWithRhs var _lhsE rhsE ln ty) = [PAssign var ty rhsE ln]
-leafToStmt env sigMap (LCall name args ln _tags) = [PCall name (resolveCallee env sigMap name) args ln]
-leafToStmt env sigMap (LSuspend name args ln _tags) = [PCall name (resolveCallee env sigMap name) args ln]
-leafToStmt _env _sigMap (LReturn e ln) = [PReturn e ln]
-leafToStmt _env _sigMap (LBranchCond _cond _ln) = []
+leafToStmt
+  :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig))
+  -> Text -> ResolvedCallSiteMap -> EffLeaf -> [PStmt]
+leafToStmt _env _sigMap _selfProc _callSiteMap (LAssign var ln ty) = [PAssign var ty (ExRaw []) ln]
+leafToStmt _env _sigMap _selfProc _callSiteMap (LAssignWithRhs var _lhsE rhsE ln ty) = [PAssign var ty rhsE ln]
+leafToStmt env sigMap selfProc callSiteMap (LCall name args ln _tags) =
+  [PCall name (resolveCallSite env sigMap selfProc callSiteMap ln) args ln]
+leafToStmt env sigMap selfProc callSiteMap (LSuspend name args ln _tags) =
+  [PCall name (resolveCallSite env sigMap selfProc callSiteMap ln) args ln]
+leafToStmt _env _sigMap _selfProc _callSiteMap (LReturn e ln) = [PReturn e ln]
+leafToStmt _env _sigMap _selfProc _callSiteMap (LBranchCond _cond _ln) = []
 
-pseudoOps :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig)) -> Map.Map RegionId InferredSignature -> RegionOps [PStmt]
-pseudoOps env sigMap sigs = RegionOps
-  { opLeaf   = leafToStmt env sigMap
+pseudoOps
+  :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig))
+  -> Text -> ResolvedCallSiteMap -> Map.Map RegionId InferredSignature -> RegionOps [PStmt]
+pseudoOps env sigMap selfProc callSiteMap sigs = RegionOps
+  { opLeaf   = leafToStmt env sigMap selfProc callSiteMap
   , opFanIn  = (<>)
   , opBranch = \cond ln t f -> [PBranch cond t f ln]
   , opLoop   = \ln body -> [PLoop body ln]
@@ -96,12 +101,14 @@ buildPseudocode
   :: Int
   -> ScopedTypeEnv
   -> IdentMap (Map.Map Ident (Either FnSig SubSig))
+  -> Text
+  -> ResolvedCallSiteMap
   -> Maybe (Either FnSig SubSig)
   -> Map.Map RegionId InferredSignature
   -> EffTerm a b
   -> Pseudocode
-buildPseudocode threshold env sigMap declaredSig sigs term =
-  let ops = pseudoOps env sigMap sigs
+buildPseudocode threshold env sigMap selfProc callSiteMap declaredSig sigs term =
+  let ops = pseudoOps env sigMap selfProc callSiteMap sigs
       (root, regionsMap) = computeRegionsWith threshold ops term
   in Pseudocode
        { pcDeclaredSig = declaredSig
