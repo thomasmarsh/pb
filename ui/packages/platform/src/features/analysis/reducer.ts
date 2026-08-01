@@ -3,18 +3,22 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { AnalysisState } from "./types.js";
 import type { AnalysisAction } from "./actions.js";
-import type { LiveProcedureRef, DeadVarFinding, TypeMismatchFinding } from "../../types/api.js";
+import type { LiveProcedureRef, DeadVarFinding, TypeMismatchFinding, CapabilityCatalogItem, CapabilityProcedureRef } from "../../types/api.js";
 
 export interface AnalysisEnv {
   getLiveProcedures(): Effect<LiveProcedureRef[]>;
   getDeadVars(): Effect<DeadVarFinding[]>;
   getTypeMismatches(): Effect<TypeMismatchFinding[]>;
+  getCapabilities(): Effect<CapabilityCatalogItem[]>;
+  getCapabilityProcedures(capability: string): Effect<CapabilityProcedureRef[]>;
 }
 
 export const initialAnalysisState: AnalysisState = {
   liveProcedures: [], liveProceduresLoaded: false,
   deadVars: [], deadVarsLoaded: false,
   typeMismatches: [], typeMismatchesLoaded: false,
+  capabilities: [], capabilitiesLoaded: false,
+  capabilityProcedures: {},
 };
 
 function reduce(draft: AnalysisState, action: AnalysisAction, env: AnalysisEnv): Effect<AnalysisAction> | null {
@@ -39,6 +43,21 @@ function reduce(draft: AnalysisState, action: AnalysisAction, env: AnalysisEnv):
   case "type-mismatches-loaded":
     draft.typeMismatches = action.items;
     draft.typeMismatchesLoaded = true;
+    return null;
+  case "load-capabilities":
+    if (draft.capabilitiesLoaded) return null;
+    return env.getCapabilities().map((items): AnalysisAction => ({ tag: "capabilities-loaded", items }));
+  case "capabilities-loaded":
+    draft.capabilities = action.items;
+    draft.capabilitiesLoaded = true;
+    return null;
+  case "load-capability-procedures":
+    if (draft.capabilityProcedures[action.capability] !== undefined) return null;
+    return env.getCapabilityProcedures(action.capability).map((items): AnalysisAction => (
+      { tag: "capability-procedures-loaded", capability: action.capability, items }
+    ));
+  case "capability-procedures-loaded":
+    draft.capabilityProcedures[action.capability] = action.items;
     return null;
   default:
     return null;

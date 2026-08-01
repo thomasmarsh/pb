@@ -550,6 +550,26 @@ export interface LiveProceduresResponse {
   total: number;
 }
 
+// ── Capability catalog (Plan 225 Layer 6 — proc_effects.capability) ──────────
+
+export interface CapabilityCatalogItem {
+  capability: string;
+  proc_count: number;
+}
+
+export interface CapabilityCatalogResponse {
+  capabilities: CapabilityCatalogItem[];
+}
+
+export interface CapabilityProcedureRef {
+  object: string;
+  proc_name: string;
+}
+
+export interface CapabilityProceduresResponse {
+  procedures: CapabilityProcedureRef[];
+}
+
 // ── Dead variables (Plan 174 T0-1 promotion) ─────────────────────────────────
 
 export interface DeadVarFinding {

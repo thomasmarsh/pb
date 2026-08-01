@@ -1090,3 +1090,62 @@ def test_live_procedures_endpoint_works_against_real_corpus(db_path):
     assert "items" in body
     assert "total" in body
     assert body["total"] == len(body["items"])
+
+
+# ---------------------------------------------------------------------------
+# GET /api/analysis/capabilities, /api/analysis/capabilities/{capability}
+# (Plan 225 Phase 2 — corpus-wide capability catalog over proc_effects)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def capability_client(tmp_path_factory):
+    """TestClient backed by a synthetic DB with a populated proc_effects table.
+
+    proc_a carries two DB-grouped tags (ReadsDb, WritesDb) on the same
+    (object, proc_name) — the COUNT(DISTINCT object || '.' || proc_name)
+    catalog query must dedup this to one DB proc, not two.
+    """
+    tmp = tmp_path_factory.mktemp("capability_db")
+    db_path = str(tmp / "capability.duckdb")
+    conn = duckdb.connect(db_path)
+
+    conn.execute("""
+        CREATE TABLE proc_effects (
+            object TEXT, proc_name TEXT, effect_tag TEXT, capability TEXT
+        )
+    """)
+    for row in [
+        ("w_obj", "proc_a", "ReadsDb", "DB"),
+        ("w_obj", "proc_a", "WritesDb", "DB"),
+        ("w_obj", "proc_b", "WritesUi", "UI"),
+        ("w_obj", "proc_c", "Suspends", "Async"),
+    ]:
+        conn.execute("INSERT INTO proc_effects VALUES (?, ?, ?, ?)", row)
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+def test_capabilities_catalog_returns_one_row_per_capability_with_proc_count(capability_client):
+    r = capability_client.get("/api/analysis/capabilities")
+    assert r.status_code == 200
+    by_capability = {c["capability"]: c["proc_count"] for c in r.json()["capabilities"]}
+    assert by_capability == {"DB": 1, "UI": 1, "Async": 1}
+
+
+def test_capability_procedures_returns_distinct_object_proc_list(capability_client):
+    r = capability_client.get("/api/analysis/capabilities/DB")
+    assert r.status_code == 200
+    procs = r.json()["procedures"]
+    assert procs == [{"object": "w_obj", "proc_name": "proc_a"}]
+
+
+def test_capability_procedures_unknown_capability_returns_empty_list(capability_client):
+    r = capability_client.get("/api/analysis/capabilities/NoSuchCapability")
+    assert r.status_code == 200
+    assert r.json()["procedures"] == []

@@ -70,6 +70,9 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
     case "liveProcedures":
       return [{ icon: ICONS.analysis, label: "Live Procedures", route }];
 
+    case "capabilities":
+      return [{ icon: ICONS.analysis, label: "Capabilities", route }];
+
     case "taintExplorer":
       return [{ icon: ICONS.analysis, label: "Taint Explorer", route }];
 

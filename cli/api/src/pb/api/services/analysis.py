@@ -276,6 +276,37 @@ def get_explain_pseudocode(
     return result
 
 
+def get_capability_catalog(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Corpus-wide capability catalog (Plan 225 Layer 6): one row per display
+    capability (PB.Analysis.CallClassify.capabilityLabel's grouping of the 7
+    EffectTag constructors), with the count of distinct procedures carrying it."""
+    catalog_rows = rows(
+        conn.execute(
+            "SELECT capability, COUNT(DISTINCT object || '.' || proc_name) AS proc_count "
+            "FROM proc_effects "
+            "GROUP BY capability "
+            "ORDER BY proc_count DESC"
+        )
+    )
+    return {"capabilities": catalog_rows}
+
+
+def get_capability_procedures(
+    conn: duckdb.DuckDBPyConnection,
+    capability: str,
+) -> dict[str, Any]:
+    proc_rows = rows(
+        conn.execute(
+            "SELECT DISTINCT object, proc_name "
+            "FROM proc_effects "
+            "WHERE capability = ? "
+            "ORDER BY object, proc_name",
+            [capability],
+        )
+    )
+    return {"procedures": proc_rows}
+
+
 def get_taint_sources(
     conn: duckdb.DuckDBPyConnection,
     *,

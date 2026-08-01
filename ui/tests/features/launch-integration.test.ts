@@ -65,6 +65,8 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     getLiveProcedures: () => Effect.none(),
     getDeadVars: () => Effect.none(),
     getTypeMismatches: () => Effect.none(),
+    getCapabilities: () => Effect.none(),
+    getCapabilityProcedures: () => Effect.none(),
     getDwQueries: () => Effect.none<Record<string, string>>(),
     executeSql: () => Effect.none(),
     navigate: () => Effect.none(),

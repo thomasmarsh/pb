@@ -18,6 +18,7 @@ export type Route =
   | { view: "deadVars" }
   | { view: "typeMismatches" }
   | { view: "liveProcedures" }
+  | { view: "capabilities" }
   | { view: "taintExplorer" }
   | { view: "taintPathView"; pathId: number }
   | { view: "sliceView"; object: string; proc: string; line: number; direction: "backward" | "forward" }

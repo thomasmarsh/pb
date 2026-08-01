@@ -33,6 +33,7 @@ const ANALYSIS_NAV: AnalysisItem[] = [
   { label: "Dead Variables", view: "deadVars",      phase: 1, gated: false },
   { label: "Type Mismatches", view: "typeMismatches", phase: 1, gated: false },
   { label: "Live Procedures", view: "liveProcedures", phase: 1, gated: false },
+  { label: "Capabilities",   view: "capabilities",   phase: 1, gated: false },
   { label: "Taint Explorer", view: "taintExplorer", phase: 3, gated: true  },
   { label: "Formal Reports", view: "formalReports", phase: 4, gated: true  },
 ];

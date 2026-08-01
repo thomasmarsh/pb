@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pb.api.models import LiveProceduresResponse
 from pb.api.routes.dependencies import get_db
 from pb.api.services.analysis import (
+    get_capability_catalog,
+    get_capability_procedures,
     get_code_quality_report,
     get_dead_code,
     get_dead_vars,
@@ -131,6 +133,19 @@ async def explain_pseudocode(
             detail=f"No pseudocode for {object_name}.{proc_name}",
         )
     return result
+
+
+@router.get("/api/analysis/capabilities")
+async def capabilities(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    return get_capability_catalog(conn)
+
+
+@router.get("/api/analysis/capabilities/{capability}")
+async def capability_procedures(
+    capability: str,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    return get_capability_procedures(conn, capability)
 
 
 @router.get("/api/analysis/sources")
