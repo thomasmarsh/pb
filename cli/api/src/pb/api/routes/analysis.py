@@ -10,6 +10,7 @@ from pb.api.services.analysis import (
     get_code_quality_report,
     get_dead_code,
     get_dead_vars,
+    get_explain_pseudocode,
     get_live_procedures,
     get_program_slice,
     get_sql_lint_summary,
@@ -113,6 +114,21 @@ async def taint_annotations(
         raise HTTPException(
             status_code=404,
             detail=f"No taint annotations for {object_name}.{proc_name}",
+        )
+    return result
+
+
+@router.get("/api/analysis/explain/{object_name}/{proc_name}")
+async def explain_pseudocode(
+    object_name: str,
+    proc_name: str,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    result = get_explain_pseudocode(conn, object_name, proc_name)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No pseudocode for {object_name}.{proc_name}",
         )
     return result
 

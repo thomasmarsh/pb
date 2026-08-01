@@ -236,6 +236,23 @@ def get_taint_annotations(
     return {"annotations": annotations}
 
 
+def get_explain_pseudocode(
+    conn: duckdb.DuckDBPyConnection,
+    object_name: str,
+    proc_name: str,
+) -> dict[str, Any] | None:
+    pc_rows = rows(
+        conn.execute(
+            "SELECT pseudocode_json FROM proc_pseudocode "
+            "WHERE object = ? AND proc_name = ?",
+            [object_name, proc_name],
+        )
+    )
+    if not pc_rows:
+        return None
+    return json.loads(pc_rows[0]["pseudocode_json"])
+
+
 def get_taint_sources(
     conn: duckdb.DuckDBPyConnection,
     *,

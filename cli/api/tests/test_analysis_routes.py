@@ -105,6 +105,19 @@ def taint_client(tmp_path_factory):
     conn.execute("INSERT INTO taint_annotations VALUES (?,?,?,?,?,?,?)",
                  ["w.srf", "w_obj", "proc_b", "b0", False, True, '["ls_input"]'])
 
+    # proc_pseudocode
+    conn.execute("""
+        CREATE TABLE proc_pseudocode (
+            object TEXT, proc_name TEXT, pseudocode_json TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO proc_pseudocode VALUES (?,?,?)",
+        ["w_obj", "proc_a",
+         '{"declaredSig":{"sigInputs":[],"sigOutputs":[]},"rootRegion":0,'
+         '"rootSig":{"sigInputs":[],"sigOutputs":[]},"regions":[]}'],
+    )
+
     conn.close()
 
     from fastapi.testclient import TestClient
@@ -210,6 +223,25 @@ def test_taint_annotations_sink_block(taint_client):
 
 def test_taint_annotations_404_for_unknown(taint_client):
     r = taint_client.get("/api/analysis/taint-annotations/no_obj/no_proc")
+    assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /api/analysis/explain/{object}/{proc}
+# ---------------------------------------------------------------------------
+
+
+def test_explain_pseudocode_returns_parsed_json(taint_client):
+    r = taint_client.get("/api/analysis/explain/w_obj/proc_a")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rootRegion"] == 0
+    assert body["declaredSig"] == {"sigInputs": [], "sigOutputs": []}
+    assert body["regions"] == []
+
+
+def test_explain_pseudocode_404_for_unknown(taint_client):
+    r = taint_client.get("/api/analysis/explain/no_obj/no_proc")
     assert r.status_code == 404
 
 
