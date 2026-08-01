@@ -37,6 +37,19 @@ function setup() {
   return result;
 }
 
+function setupWith(overrides: { declaredSig: ExplainPseudocodeResponse["declaredSig"] }) {
+  const pc: ExplainPseudocodeResponse = { ...PSEUDOCODE, declaredSig: overrides.declaredSig };
+  const { store } = createTestStore({
+    explainPseudocodes: {
+      "w_obj::uf_save": { object: "w_obj", proc: "uf_save", data: pc },
+    },
+  });
+  const result = render(() => (
+    <ExplainCore object="w_obj" proc="uf_save" store={store} onGoto={() => {}} />
+  ));
+  return result;
+}
+
 describe("ExplainCore", () => {
   it("hovering a statement highlights and dims its own source line", () => {
     const { container } = setup();
@@ -110,5 +123,50 @@ describe("ExplainCore", () => {
 
     const targetCard = container.querySelector("#region-card-region_1")!;
     expect(targetCard.classList.contains("explain-region-card--flash")).toBe(true);
+  });
+
+  it("root card with FnSig declaredSig shows the declared return type capitalized in the header", () => {
+    const { container } = setupWith({
+      declaredSig: {
+        Left: {
+          mods: [], returnType: "string", returnTypeSpan: null, name: "uf_save",
+          params: [], throws: null, library: null, aliasFor: null,
+        },
+      },
+    });
+    const rootCard = container.querySelector("#region-card-region_0")!;
+    const headers = [...rootCard.querySelectorAll(".explain-region-header")];
+    const inferredHeader = headers.find((h) => h.textContent?.startsWith("function region_0"))!;
+    expect(inferredHeader.textContent).toBe("function region_0() -> String {");
+  });
+
+  it("root card with SubSig declaredSig (event handler) falls through to the inferred signature", () => {
+    const { container } = setupWith({
+      declaredSig: {
+        Right: {
+          mods: [], name: "uf_close", params: [],
+          throws: null, library: null, aliasFor: null,
+        },
+      },
+    });
+    const rootCard = container.querySelector("#region-card-region_0")!;
+    const headers = [...rootCard.querySelectorAll(".explain-region-header")];
+    const inferredHeader = headers.find((h) => h.textContent?.startsWith("function region_0"))!;
+    expect(inferredHeader.textContent).toBe("function region_0() -> () {");
+  });
+
+  it("cut (non-root) region card does not show the declared return type even when declaredSig is a FnSig", () => {
+    const { container } = setupWith({
+      declaredSig: {
+        Left: {
+          mods: [], returnType: "string", returnTypeSpan: null, name: "uf_save",
+          params: [], throws: null, library: null, aliasFor: null,
+        },
+      },
+    });
+    const cutCard = container.querySelector("#region-card-region_1")!;
+    const headers = [...cutCard.querySelectorAll(".explain-region-header")];
+    const inferredHeader = headers.find((h) => h.textContent?.startsWith("function region@3"))!;
+    expect(inferredHeader.textContent).toBe("function region@3() -> () {");
   });
 });

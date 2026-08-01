@@ -104,6 +104,7 @@ function StmtRow(props: {
 function RegionCardView(props: {
   card: RegionCard;
   declaredSig: string | null;
+  declaredReturnType: string | null;
   flashed: boolean;
   isActive: (stmt: NormalizedStmt) => boolean;
   onHover: (stmt: NormalizedStmt | null) => void;
@@ -111,7 +112,9 @@ function RegionCardView(props: {
   onJump: (regionId: string) => void;
 }): JSX.Element {
   const label = () => regionDisplayLabel(props.card.regionId, props.card.lineRange);
-  const header = () => (props.card.sig ? formatInferredSignature(label(), props.card.sig) : label());
+  const header = () => (props.card.sig
+    ? formatInferredSignature(label(), props.card.sig, props.declaredReturnType ?? undefined)
+    : label());
 
   return (
     <div
@@ -176,6 +179,14 @@ export function ExplainCore(props: ExplainCoreProps): JSX.Element {
     return d?.declaredSig ? formatDeclaredSig(d.declaredSig) : null;
   });
 
+  // SubSig (event handler) has no return type; the in-check narrows the
+  // DeclaredSig union so the .Left.returnType access is type-safe.
+  const declaredReturnText = createMemo(() => {
+    const d = data();
+    const ds = d?.declaredSig;
+    return ds && "Left" in ds ? ds.Left.returnType : null;
+  });
+
   const sourceLines = createMemo((): string[] => {
     const d = data();
     return d?.sourceOriginal ? d.sourceOriginal.split("\n") : [];
@@ -230,6 +241,7 @@ export function ExplainCore(props: ExplainCoreProps): JSX.Element {
                 <RegionCardView
                   card={card}
                   declaredSig={card.isRoot ? declaredSigText() : null}
+                  declaredReturnType={card.isRoot ? declaredReturnText() : null}
                   flashed={flashedRegion() === card.regionId}
                   isActive={isActive}
                   onHover={setHovered}

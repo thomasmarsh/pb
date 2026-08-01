@@ -188,9 +188,15 @@ function formatOutputType(outputs: VarBinding[]): string {
   return `(${outputs.map(formatVarBinding).join(", ")})`;
 }
 
-export function formatInferredSignature(name: string, sig: InferredSignature): string {
+export function formatInferredSignature(
+  name: string,
+  sig: InferredSignature,
+  declaredReturnType?: string,
+): string {
   const ins = sig.inputs.map(formatVarBinding).join(", ");
-  const outType = formatOutputType(sig.outputs);
+  const outType = declaredReturnType !== undefined
+    ? capitalizeFirst(declaredReturnType)
+    : formatOutputType(sig.outputs);
   const ability = capabilitiesOf(sig.effects);
   const abilityPrefix = ability.length > 0 ? `'{${ability.join(", ")}} ` : "";
   return `function ${name}(${ins}) -> ${abilityPrefix}${outType} {`;

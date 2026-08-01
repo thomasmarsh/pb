@@ -153,6 +153,29 @@ describe("formatInferredSignature", () => {
     expect(formatInferredSignature("f", single)).toBe("function f() -> x {");
     expect(formatInferredSignature("f", multi)).toBe("function f() -> (x, y) {");
   });
+
+  it("with declaredReturnType='string', emits '-> String' instead of the live-out tuple", () => {
+    expect(formatInferredSignature("region_0", SIG, "string")).toBe("function region_0(li_width: Integer) -> String {");
+  });
+
+  it("with declaredReturnType='integer', emits '-> Integer'", () => {
+    expect(formatInferredSignature("region_0", SIG, "integer")).toBe("function region_0(li_width: Integer) -> Integer {");
+  });
+
+  it("with no declaredReturnType, falls back to the inferred live-out tuple (existing behavior)", () => {
+    const single: InferredSignature = { inputs: [], outputs: [{ name: "x", type: null }], effects: [] };
+    expect(formatInferredSignature("f", single)).toBe("function f() -> x {");
+  });
+
+  it("with declaredReturnType and effects, ability prefix still applies: '-> '{DB} String'", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: ["ReadsDb"] };
+    expect(formatInferredSignature("r", sig, "string")).toBe("function r() -> '{DB} String {");
+  });
+
+  it("with declaredReturnType='string' and no inferred sig.inputs, emits 'function f() -> String {'", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: [] };
+    expect(formatInferredSignature("f", sig, "string")).toBe("function f() -> String {");
+  });
 });
 
 describe("regionDisplayLabel", () => {
