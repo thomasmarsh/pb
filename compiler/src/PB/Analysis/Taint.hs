@@ -47,7 +47,7 @@ import PB.AST.Ident        (Ident, identOrig, mkIdent)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.Lexing.Token     (SourceSpan)
-import PB.Analysis.Dataflow (extractSqlHostVars)
+import PB.Analysis.Dataflow (extractSqlHostVars, hasIntoClause, intoTargetSpan)
 
 import Control.DeepSeq            (NFData)
 import Control.Parallel.Strategies (parListChunk, rdeepseq, withStrategy)
@@ -331,33 +331,6 @@ classifyOperation txt =
         (w:_) -> T.toUpper (T.dropWhileEnd (== ';') w)
         []    -> ""
   in if first `Set.member` sqlKeywords then first else ""
-
--- | Check if raw SQL contains an INTO clause (SELECT ... INTO :var FROM ...).
-hasIntoClause :: Text -> Bool
-hasIntoClause txt =
-  let upper = T.toUpper txt
-      hasInto = "INTO" `T.isInfixOf` upper
-      -- Must not be "INSERT INTO" — only "SELECT ... INTO" counts
-      isInsert = "INSERT" `T.isPrefixOf` T.toUpper (T.strip txt)
-  in hasInto && not isInsert
-
--- | The target-variable-list substring of a @SELECT ... INTO@ statement:
--- from just after the (first) @INTO@ keyword up to the next @FROM@
--- keyword, or the end of the text if none follows. Confines
--- 'extractSqlHostVars' to the INTO target list only, so a WHERE-clause
--- bind variable sharing the same statement as an unrelated INTO target is
--- never misclassified as a 'db_read' source. Same infix-scan precision as
--- 'hasIntoClause' — not a full SQL tokenizer.
-intoTargetSpan :: Text -> Text
-intoTargetSpan txt =
-  case T.breakOn "INTO" (T.toUpper txt) of
-    (pre, rest)
-      | T.null rest -> ""
-      | otherwise ->
-          let afterInto = T.drop (T.length "INTO") (T.drop (T.length pre) txt)
-              afterIntoUpper = T.drop (T.length "INTO") rest
-              (target, _) = T.breakOn "FROM" afterIntoUpper
-          in T.take (T.length target) afterInto
 
 -- | Walk AST body statements to extract SQL statements.
 extractSqlStmts :: Text -> Text -> Text -> [Located BodyStmt] -> [SqlStmt]

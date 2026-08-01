@@ -17,6 +17,8 @@ module PB.Analysis.Dataflow
   , ProcFlow (..)
   , extractDefsUses
   , extractSqlHostVars
+  , hasIntoClause
+  , intoTargetSpan
   , walkExprIdents
   , walkExprIdentsExcludingCallees
   , lvRoot
@@ -33,7 +35,7 @@ module PB.Analysis.Dataflow
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident    (Ident, mkIdent, mkIdentAt)
+import PB.AST.Ident    (Ident, mkIdent, mkIdentAt, mkIdentSynthetic)
 import PB.AST.Located  (Located (..))
 import PB.Lexing.Token (Token (..), tkSpan)
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..))
@@ -193,15 +195,19 @@ isIdent t = case T.uncons t of
 -- ---------------------------------------------------------------------------
 -- Statement def/use extraction
 
--- | Extract the defined variable name from a definition statement.
-extractDefVar :: BodyStmt -> Maybe Ident
-extractDefVar (BsAssign lv _)    = lvRoot lv
-extractDefVar (BsLocalVar _ _ n _) = Just n
-extractDefVar (BsFor ft)       = lvRoot (forVar ft)
-extractDefVar (BsAugAssign lv _ _) = lvRoot lv
-extractDefVar (BsInc lv)         = lvRoot lv
-extractDefVar (BsDec lv)         = lvRoot lv
-extractDefVar _                  = Nothing
+-- | Extract the defined variable name(s) from a definition statement. Every
+-- other case defines at most one variable; 'BsRaw' can define several at
+-- once (a multi-target @SELECT ... INTO :a, :b FROM ...@), so this returns
+-- a list rather than a 'Maybe'.
+extractDefVar :: BodyStmt -> [Ident]
+extractDefVar (BsAssign lv _)    = maybeToList (lvRoot lv)
+extractDefVar (BsLocalVar _ _ n _) = [n]
+extractDefVar (BsFor ft)       = maybeToList (lvRoot (forVar ft))
+extractDefVar (BsAugAssign lv _ _) = maybeToList (lvRoot lv)
+extractDefVar (BsInc lv)         = maybeToList (lvRoot lv)
+extractDefVar (BsDec lv)         = maybeToList (lvRoot lv)
+extractDefVar (BsRaw txt)        = map mintSqlHostVar (intoTargetVars txt)
+extractDefVar _                  = []
 
 -- | True when a def only writes one member of a multi-segment lvalue
 -- (@item.label = x@), not the whole variable. Only BsAssign carries a
@@ -220,6 +226,7 @@ defKind (BsFor {})       = "for_var"
 defKind (BsAugAssign {}) = "augassign"
 defKind (BsInc {})       = "inc"
 defKind (BsDec {})       = "dec"
+defKind (BsRaw {})       = "sql_into"
 defKind _                = "assign"
 
 -- | Extract used variable names from a statement.
@@ -264,8 +271,16 @@ extractUseVars (BsReturn mExpr) = maybe Set.empty walkExprIdents mExpr
 extractUseVars (BsCall expr)    = walkExprIdents expr
 extractUseVars (BsDestroy lv)   = maybe Set.empty Set.singleton (lvRoot lv)
 extractUseVars (BsAugAssign _ _ toks) = Set.fromList (identTokenList toks)
-extractUseVars (BsRaw txt)      = Set.fromList (map mkIdent (extractSqlHostVars txt))
+extractUseVars (BsRaw txt)      =
+  Set.fromList (map mintSqlHostVar (extractSqlHostVars txt)) `Set.difference` Set.fromList (map mintSqlHostVar (intoTargetVars txt))
 extractUseVars _ = Set.empty
+
+-- | Mint an 'Ident' for a SQL host-variable name extracted from unparsed
+-- 'BsRaw' text -- genuinely no real span to recover here (embedded SQL
+-- isn't grammar-parsed), so this is a deliberate 'Synthetic' bridge, not a
+-- re-mint of a real parse-time 'Ident' -- see the ident-minting skill.
+mintSqlHostVar :: Text -> Ident
+mintSqlHostVar = mkIdentSynthetic "PB.Analysis.Dataflow: SQL host-variable name extracted from unparsed BsRaw text"
 
 -- | Extract :identifier host-variable names referenced in embedded SQL.
 -- 'BsRaw' carries raw, unparsed SQL text (embedded-SQL parsing is not yet
@@ -285,6 +300,44 @@ extractSqlHostVars = go
             (var, remaining) = T.span isIdentChar afterColon
         in if T.null var then go remaining else var : go remaining
     isIdentChar c = isAlpha c || c == '_' || (c >= '0' && c <= '9')
+
+-- | Check if raw SQL contains an INTO clause (@SELECT ... INTO :var FROM
+-- ...@) -- distinguishes a @SELECT@'s result-binding host variables from
+-- ordinary read-only host variables elsewhere in the same statement.
+hasIntoClause :: Text -> Bool
+hasIntoClause txt =
+  let upper = T.toUpper txt
+      hasInto = "INTO" `T.isInfixOf` upper
+      -- Must not be "INSERT INTO" -- only "SELECT ... INTO" counts.
+      isInsert = "INSERT" `T.isPrefixOf` T.toUpper (T.strip txt)
+  in hasInto && not isInsert
+
+-- | The target-variable-list substring of a @SELECT ... INTO@ statement:
+-- from just after the (first) @INTO@ keyword up to the next @FROM@
+-- keyword, or the end of the text if none follows. Confines
+-- 'extractSqlHostVars' to the INTO target list only, so a WHERE-clause
+-- bind variable sharing the same statement as an unrelated INTO target is
+-- never misclassified as a def. Same infix-scan precision as
+-- 'hasIntoClause' -- not a full SQL tokenizer.
+intoTargetSpan :: Text -> Text
+intoTargetSpan txt =
+  case T.breakOn "INTO" (T.toUpper txt) of
+    (pre, rest)
+      | T.null rest -> ""
+      | otherwise ->
+          let afterInto = T.drop (T.length "INTO") (T.drop (T.length pre) txt)
+              afterIntoUpper = T.drop (T.length "INTO") rest
+              (target, _) = T.breakOn "FROM" afterIntoUpper
+          in T.take (T.length target) afterInto
+
+-- | The INTO-target host-variable names of a raw SQL statement, or @[]@ if
+-- it has no INTO clause. Shared by 'extractUseVars' (which excludes them
+-- from ordinary host-var reads) and 'extractDefVar' (which reports them as
+-- defs).
+intoTargetVars :: Text -> [Text]
+intoTargetVars txt
+  | hasIntoClause txt = extractSqlHostVars (intoTargetSpan txt)
+  | otherwise          = []
 
 -- | Determine use kind from statement tag.
 useKind :: BodyStmt -> Text
@@ -321,9 +374,9 @@ extractDefsUses blk = BlockFlow
 
     localDefs = concatMap extractDef (zip [0..] stmts)
     extractDef (idx, s) =
-      case extractDefVar (locNode s) of
-        Nothing -> []
-        Just v  -> [DefSite v bid idx (Just (locLine s)) (defKind (locNode s)) (isPartialDef (locNode s))]
+      [ DefSite v bid idx (Just (locLine s)) (defKind (locNode s)) (isPartialDef (locNode s))
+      | v <- extractDefVar (locNode s)
+      ]
 
     localUses = concatMap extractUse (zip [0..] stmts)
     extractUse (idx, s) =

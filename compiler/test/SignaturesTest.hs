@@ -169,6 +169,21 @@ tests = testGroup "PB.Explain.Signatures"
            ("expected the region defining \"x\" to still report it as live-out even though that "
              <> "same region also reads \"x\" itself, got " <> show (Map.elems sigs))
            (any hasXOutput (Map.elems sigs))
+
+  , testCase "a SELECT-INTO-shaped def (ECall composed with EAssignWithRhs) is not promoted into the region's free-input signature" $
+      -- Mirrors the real bug: PB.Compile.FromSSA compiles a BsRaw
+      -- `SELECT ... INTO :ls_var FROM ...` as its short-named ECall effect
+      -- composed with an EAssignWithRhs def for ls_var. A later read of
+      -- ls_var in the same region must not look like a free external input.
+      let term = EAssignWithRhs "y" (var "y") (var "ls_var") 2 Nothing
+               . EAssignWithRhs "ls_var" (var "ls_var") (ExRaw []) 1 Nothing
+               . ECall "select" [] 1 Set.empty :: Eff () ()
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty (extractEffTable term)
+      in case Map.elems sigs of
+           [sig] -> assertBool
+             ("\"ls_var\" must not be a free input, got " <> show (map vbName (sigInputs sig)))
+             (not (any (\vb -> nameOf vb == "ls_var") (sigInputs sig)))
+           other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
   ]
   where
     nameOf :: VarBinding -> Text

@@ -2,7 +2,7 @@ module EffTermTest (tests) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
-import PB.AST.Ident        (mkIdent)
+import PB.AST.Ident        (Ident, IdentProvenance (..), mkIdent, mkIdentAt, identSpan)
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Type         (PbType (..))
@@ -27,6 +27,7 @@ import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (mkLogicalLine)
 import Control.Monad.State.Strict (runStateT)
+import Data.List.NonEmpty  (NonEmpty (..))
 import qualified Control.Exception as CE
 import GHC.Conc             (getAllocationCounter, setAllocationCounter)
 import Data.Int              (Int64)
@@ -161,6 +162,38 @@ firstEffTags (EffTerm spine table) = go spine
     go :: Eff x y -> Maybe (Set.Set EffectTag)
     go (ECall _ _ _ tags) = Just tags
     go (ESuspend _ _ _ tags) = Just tags
+    go (EComp f g) = go f <|> go g
+    go (EFanIn f g) = go f <|> go g
+    go (EBranch _ f g _) = go f <|> go g
+    go (ELoop f _) = go f
+    go (ELetRef bid) = Map.lookup bid table >>= go
+    go _ = Nothing
+
+-- | The 'Text' name of the first 'ECall'\/'ESuspend' node found in an
+-- 'EffTerm' (depth-first) -- used to assert a 'BsRaw'-derived call's own
+-- display name is a short tag, never the full raw statement text.
+firstEffCallName :: EffTerm a b -> Maybe Text
+firstEffCallName (EffTerm spine table) = go spine
+  where
+    go :: Eff x y -> Maybe Text
+    go (ECall n _ _ _) = Just n
+    go (ESuspend n _ _ _) = Just n
+    go (EComp f g) = go f <|> go g
+    go (EFanIn f g) = go f <|> go g
+    go (EBranch _ f g _) = go f <|> go g
+    go (ELoop f _) = go f
+    go (ELetRef bid) = Map.lookup bid table >>= go
+    go _ = Nothing
+
+-- | The root 'Ident' of a named 'EAssignWithRhs' node's own (unsubscripted)
+-- LHS 'Expr' (depth-first first match) -- used to assert an INTO-target def
+-- reuses a real parse-time Ident from 'ScopedTypeEnv' rather than minting a
+-- fresh 'Synthetic' one.
+effAssignLhsIdent :: Text -> EffTerm a b -> Maybe Ident
+effAssignLhsIdent n (EffTerm spine table) = go spine
+  where
+    go :: Eff x y -> Maybe Ident
+    go (EAssignWithRhs t (ExLvalue (Lvalue (LvSegment i Nothing : _))) _ _ _) | t == n = Just i
     go (EComp f g) = go f <|> go g
     go (EFanIn f g) = go f <|> go g
     go (EBranch _ f g _) = go f <|> go g
@@ -398,6 +431,56 @@ tests = testGroup "EffTerm"
         let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "some unclassified statement") (ExInt "0") 1] (SsaReturn 1 Nothing)
             result = compileSsaToEff emptyEnv Set.empty sa
         in firstEffTags result @?= Just Set.empty
+    ]
+
+  , testGroup "BsRaw SELECT INTO host-var defs + short callee name"
+    -- BACKLOG.md: a BsRaw-derived ECall/ESuspend's Text field used to carry
+    -- the entire raw statement (garbled pseudocode render), and a SELECT
+    -- INTO target was never recorded as a def (misclassified as a free
+    -- region input by PB.Explain.Signatures). Both traced to one shared gap
+    -- in how BsRaw's raw text gets read; fixed by giving the call a short
+    -- display name and composing one EAssignWithRhs def per INTO target
+    -- after the call effect.
+    [ testCase "a plain SELECT (no INTO) gets a short display name, not the full raw text" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "select * from foo") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffCallName result @?= Just "select"
+
+    , testCase "a SELECT ... INTO :ls_var FROM ... compiles to a short-named ECall plus one EAssignWithRhs def for ls_var" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "select descidikot into :ls_var from misth_zpidikot") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in do firstEffCallName result @?= Just "select"
+              assertBool "expected an EAssignWithRhs def for ls_var" (hasEffAssign "ls_var" result)
+
+    , testCase "a multi-target SELECT ... INTO :x, :y FROM ... produces a def for each target" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "select a, b into :x, :y from t") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in do assertBool "expected a def for x" (hasEffAssign "x" result)
+              assertBool "expected a def for y" (hasEffAssign "y" result)
+
+    , testCase "an unclassified/unrecognized raw statement's display name is a non-empty placeholder, never the raw text" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "some unclassified statement") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstEffCallName result @?= Just "raw_stmt"
+
+    , testCase "an INTO target with no ScopedTypeEnv entry still produces a def, via a Synthetic Ident fallback" $
+        let sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "select x into :ls_untracked from t") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in case effAssignLhsIdent "ls_untracked" result of
+             Just i -> case identSpan i of
+               Synthetic _ -> pure ()
+               other -> assertFailure ("expected Synthetic, got " <> show other)
+             Nothing -> assertFailure "expected an EAssignWithRhs def for ls_untracked"
+
+    , testCase "an INTO target with a real ScopedTypeEnv entry reuses its real (FromSource) Ident, not a fresh Synthetic one" $
+        let realSpan = SourceSpan 3 5 3 12
+            realIdent = mkIdentAt realSpan "ls_tracked"
+            env = emptyEnv { steLocal = Map.singleton realIdent (PtPrimitive "string") }
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaRaw "select x into :ls_tracked from t") (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff env Set.empty sa
+        in case effAssignLhsIdent "ls_tracked" result of
+             Just i -> identSpan i @?= FromSource (realSpan :| [])
+             Nothing -> assertFailure "expected an EAssignWithRhs def for ls_tracked"
     ]
 
   , testGroup "Interp"

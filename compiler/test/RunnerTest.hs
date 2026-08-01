@@ -830,17 +830,20 @@ tests = testGroup "Pipeline.Runner"
         -- Real-corpus regression: a var read only inside an embedded SQL
         -- WHERE clause (":ldt_today") was invisible to Dataflow's
         -- extractUseVars (BsRaw carries unparsed SQL text), so DeadVars
-        -- flagged it NeverRead even though it's genuinely used.
+        -- flagged it NeverRead even though it's genuinely used. ll_count is
+        -- the statement's own INTO target -- a def, not a use -- so it
+        -- needs a real read afterward (the return) to stay live, same as
+        -- any other local.
         let src = T.unlines
               [ "global type w_test from window"
               , "end type"
               , ""
-              , "public function integer uf_test ()"
+              , "public function long uf_test ()"
               , "date ldt_today"
               , "long ll_count"
               , "ldt_today = today()"
               , "select count(kodypal) into :ll_count from misth_ypal where exeldate <= :ldt_today;"
-              , "return 1"
+              , "return ll_count"
               , "end function"
               ]
         case parsePowerScriptFile src of

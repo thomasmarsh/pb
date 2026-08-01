@@ -14,6 +14,7 @@ module PB.Analysis.TypeEnv
   , procEnv
   , lookupScopedVar
   , lookupScopedVarOrSelf
+  , lookupScopedIdent
   , lookupInstanceVarOwner
   , ancestorChain
   , extractNestedTypeDecls
@@ -29,6 +30,7 @@ import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
 import PB.Analysis.ControlHierarchy (ControlIndex)
+import qualified Data.List       as L
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 
@@ -289,6 +291,21 @@ lookupScopedVar name env =
   Map.lookup name (steLocal env)
   <|> Map.lookup name (steInstance env)
   <|> Map.lookup name (steGlobal env)
+
+-- | Recover the real, already-minted 'Ident' backing a scoped variable,
+-- given only a canonical-equal search key (built via 'mkIdentSynthetic' by
+-- a caller with no real span in hand, e.g. a host-variable name extracted
+-- from unparsed 'PB.AST.BodyStmt.BsRaw' text). Unlike 'lookupScopedVar'
+-- (which only returns the variable's 'PbType'), this returns the map's own
+-- key -- the real, parse-time-minted 'Ident' with its original casing and
+-- span -- so a caller never mints a fresh one when a real one already
+-- exists in scope. Same @steLocal > steInstance > steGlobal@ precedence as
+-- 'lookupScopedVar'.
+lookupScopedIdent :: Ident -> ScopedTypeEnv -> Maybe Ident
+lookupScopedIdent name env =
+  findByCanon (steLocal env) <|> findByCanon (steInstance env) <|> findByCanon (steGlobal env)
+  where
+    findByCanon m = L.find ((== identCanon name) . identCanon) (Map.keys m)
 
 -- | Like 'lookupScopedVar', but resolves the PowerScript keywords @this@
 -- (the enclosing object's own type) and @super@ (its immediate ancestor,

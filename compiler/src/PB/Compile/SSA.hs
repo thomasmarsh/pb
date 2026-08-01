@@ -31,6 +31,7 @@ module PB.Compile.SSA
   , SsaProc (..)
     -- * Construction
   , buildSsa
+  , noSubscriptLhs
   ) where
 
 import PB.Prelude

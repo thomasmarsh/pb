@@ -8,18 +8,21 @@ module PB.Compile.FromSSA
 
 import PB.Prelude hiding (id, (.), lookup)
 import PB.AST.Expr (Expr (..), Lvalue (..), BinOp (BopEq))
-import PB.AST.Ident (identCanon, identOrig)
+import PB.AST.Ident (Ident, identCanon, identOrig, mkIdentSynthetic)
+import PB.AST.Type (PbType)
 import PB.Compile.IR (Category (..), Eff (..), EffTerm (..), Pure (..), branchEff)
 import PB.Compile.LoopAnalysis (CompileCtx (..), computeMergePoints, ssaValToExpr,
                               computeLoopHeaders, computeAllLoopExits, isLoopExit)
 import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), classifyExpr, classifyEffects,
                                  effectName, calleeName, isTriggerEvent, segName)
-import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVarOrSelf, lookupScopedIdent)
 import PB.Analysis.Taint (classifyOperation, writeOps, execOps)
+import PB.Analysis.Dataflow (hasIntoClause, intoTargetSpan, extractSqlHostVars)
 import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
-                         SsaTerm (..), SsaProc (..))
+                         SsaTerm (..), SsaProc (..), noSubscriptLhs)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import Unsafe.Coerce (unsafeCoerce)
 
 -- | Parallel to 'compileSsa': compile an SSA procedure into an 'EffTerm'.
@@ -231,10 +234,13 @@ compileAssignToEff ctx (SsaAssign sv rhs lhs ln)
       SsaNot _    -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
       SsaNull     -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
       SsaRaw txt  ->
-        let tags = sqlStmtEffectTags txt
-        in if Set.member Suspends tags
-           then ESuspend txt [] ln tags
-           else ECall txt [] ln tags
+        let tags    = sqlStmtEffectTags txt
+            name    = sqlRawDisplayName txt
+            callEff = if Set.member Suspends tags
+                      then ESuspend name [] ln tags
+                      else ECall name [] ln tags
+            defEff (v, ty) = EAssignWithRhs (identOrig v) (noSubscriptLhs v) (ExRaw []) ln ty
+        in foldl' (\acc d -> defEff d . acc) callEff (intoTargetIdents (ccEnv ctx) txt)
   | otherwise = EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
   where
     declaredType = lookupScopedVarOrSelf (svName sv) (ccEnv ctx)
@@ -277,3 +283,34 @@ sqlStmtEffectTags txt = case classifyOperation txt of
     | op `elem` ["CONNECT", "DISCONNECT"]             -> Set.singleton Suspends
     | op `elem` ["DECLARE", "OPEN", "FETCH", "CLOSE"] -> Set.singleton Suspends
     | otherwise                                       -> Set.empty
+
+-- | A short, human-readable display name for a raw SQL\/statement 'BsRaw'
+-- text -- the SQL verb, lowercased, or a fixed placeholder for anything
+-- 'classifyOperation' doesn't recognize. Used as the 'ECall'\/'ESuspend'
+-- callee-name field instead of the entire raw statement text, which
+-- otherwise renders as garbled pseudocode (a confirmed real-corpus bug,
+-- not just latent risk -- see BACKLOG.md).
+sqlRawDisplayName :: Text -> Text
+sqlRawDisplayName txt = case classifyOperation txt of
+  "" -> "raw_stmt"
+  op -> T.toLower op
+
+-- | The INTO-target host variables of a raw SQL statement (a @SELECT ...
+-- INTO :var FROM ...@), each paired with its real, already-minted 'Ident'
+-- recovered from 'ScopedTypeEnv' when the variable is in scope (a
+-- local\/param\/instance\/global var declared elsewhere in the same
+-- procedure -- the overwhelmingly common real-world shape for a
+-- PowerScript host variable, per 'lookupScopedIdent'), or a 'Synthetic'
+-- fallback 'Ident' when it genuinely isn't tracked (never re-minted from a
+-- real span that doesn't exist -- see the ident-minting skill). @[]@ when
+-- the statement has no INTO clause.
+intoTargetIdents :: ScopedTypeEnv -> Text -> [(Ident, Maybe PbType)]
+intoTargetIdents env txt
+  | hasIntoClause txt = [ resolve v | v <- extractSqlHostVars (intoTargetSpan txt) ]
+  | otherwise         = []
+  where
+    resolve v =
+      let key = mkIdentSynthetic "PB.Compile.FromSSA: BsRaw INTO-target host-var lookup key" v
+      in case lookupScopedIdent key env of
+           Just real -> (real, lookupScopedVarOrSelf real env)
+           Nothing   -> (mkIdentSynthetic "PB.Compile.FromSSA: BsRaw INTO-target host-var not in ScopedTypeEnv" v, Nothing)

@@ -202,15 +202,28 @@ tests = testGroup "Dataflow"
           bfGen  bf @?= Set.singleton "sqlca"
           bfKill bf @?= Set.singleton "sqlca"
 
-    , testCase "BsRaw embedded SQL creates a use per :host_var" $
+    , testCase "BsRaw embedded SQL: INTO target is a def, other host vars stay uses" $
         let blk = mkBlock "b0"
               [ at 1 (BsRaw "select count(kodypal) into :ll_count from misth_ypal \
                              \where kodxrisi = :gs_kodxrisi and exeldate <= :ldt_today") ]
             bf  = extractDefsUses blk
         in do
-          length (bfDefs bf) @?= 0
-          Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["ll_count", "gs_kodxrisi", "ldt_today"]
+          map dsVar (bfDefs bf) @?= ["ll_count"]
+          all (\d -> dsKind d == "sql_into") (bfDefs bf) @?= True
+          Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["gs_kodxrisi", "ldt_today"]
           all (\u -> usKind u == "sql_host_var") (bfUses bf) @?= True
+
+    , testCase "BsRaw embedded SQL: a multi-target SELECT INTO creates a def for each target" $
+        let blk = mkBlock "b0" [ at 1 (BsRaw "select a, b into :x, :y from t") ]
+            bf  = extractDefsUses blk
+        in Set.fromList (map dsVar (bfDefs bf)) @?= Set.fromList ["x", "y"]
+
+    , testCase "BsRaw without an INTO clause creates no defs (host vars are all uses)" $
+        let blk = mkBlock "b0" [ at 1 (BsRaw "update foo set bar = :ls_val where baz = :ls_key") ]
+            bf  = extractDefsUses blk
+        in do
+          length (bfDefs bf) @?= 0
+          Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["ls_val", "ls_key"]
 
     , testCase "BsAssign with a subscript index on the RHS creates a use of the index var" $
         -- Generalization of the LHS-subscript fix above (Plan 174 T0-1
