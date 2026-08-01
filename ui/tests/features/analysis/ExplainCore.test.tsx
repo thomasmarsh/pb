@@ -84,10 +84,23 @@ describe("ExplainCore", () => {
     expect(scrollSpy).toHaveBeenCalled();
   });
 
-  it("renders a region-ref as a call (name(args)), not the raw '-> region@N' backend text", () => {
+  it("renders a region-ref as a call (name(args)) using region@N, not region_N", () => {
     const { container } = setup();
     const chip = container.querySelector(".explain-stmt--region-ref")!;
-    expect(chip.textContent).toBe("region_3()");
+    expect(chip.textContent).toBe("region@3()");
+  });
+
+  it("renders a closing '}' row in each region card whose inferred sig was emitted", () => {
+    const { container } = setup();
+    // The fixture has both region_0 (root, with rootSig) and region_1 (with a
+    // ref sig) — both should gain a trailing '}' matching the opened header.
+    const cards = container.querySelectorAll(".explain-region-card");
+    expect(cards.length).toBe(2);
+    for (const card of cards) {
+      const headers = [...card.querySelectorAll(".explain-region-header")];
+      const lastHeader = headers[headers.length - 1];
+      expect(lastHeader?.textContent).toBe("}");
+    }
   });
 
   it("clicking a region-ref chip flashes its target region card", () => {

@@ -1,12 +1,15 @@
 // tests/features/analysis/explainLayout.test.ts — Pure PStmt normalization
-// and region-DAG-walk tests (Plan 222 Phase 4).
+// and region-DAG-walk tests (Plan 222 Phase 4, Plan 225 Phase 5).
 
 import { describe, it, expect } from "vitest";
 import {
   normalizeStmt, sourceLinesForStmt, collectRegionCards,
   formatInferredSignature, formatDeclaredSig, regionDisplayLabel, formatRegionCallLabel,
+  capabilitiesOf, CAPABILITY_LABEL,
 } from "@pb/platform";
-import type { PStmt, Pseudocode, InferredSignature, DeclaredSig } from "@pb/platform";
+import type {
+  PStmt, Pseudocode, InferredSignature, DeclaredSig, EffectTagFull,
+} from "@pb/platform";
 
 const SIG: InferredSignature = {
   inputs: [{ name: "li_width", type: { tag: "PtPrimitive", contents: "integer" } }],
@@ -107,20 +110,54 @@ describe("collectRegionCards", () => {
   });
 });
 
-describe("formatInferredSignature", () => {
-  it("matches Render/Text.hs's renderInferredSig shape: name(ins) -> (outs)  [effects]", () => {
-    expect(formatInferredSignature("region_3", SIG)).toBe("region_3(li_width: integer) -> ()  [pure]");
+describe("capabilitiesOf", () => {
+  // Hand-typed fixture list (Plan 225 Layer 3.6): the table's key set must
+  // equal the 7 EffectTag values PB.Analysis.CallClassify enumerates. Not
+  // derived from the wire EffectTag (a 4-tag subset) so a Haskell-side
+  // vocabulary change is caught here rather than silently drifting.
+  const ALL_EFFECT_TAGS: EffectTagFull[] = [
+    "ReadsDb", "WritesDb", "WritesUi", "Suspends",
+    "ReadsControlState", "WritesControlState", "WritesInstanceState",
+  ];
+
+  it("CAPABILITY_LABEL's key set matches the 7 EffectTag values PB.Analysis.CallClassify enumerates", () => {
+    expect(Object.keys(CAPABILITY_LABEL).sort()).toEqual([...ALL_EFFECT_TAGS].sort());
   });
 
-  it("sorts effect tags ascending, matching Set.toAscList", () => {
+  it("yields an empty array for a pure effect list", () => {
+    expect(capabilitiesOf([])).toEqual([]);
+  });
+
+  it("dedupes multiple effects of the same capability into a single label", () => {
+    expect(capabilitiesOf(["ReadsDb", "WritesDb"])).toEqual(["DB"]);
+  });
+
+  it("returns capability labels sorted ascending, matching PB.Analysis.CallClassify's Set.toAscList", () => {
+    expect(capabilitiesOf(["WritesUi", "ReadsDb", "Suspends"])).toEqual(["Async", "DB", "UI"]);
+  });
+});
+
+describe("formatInferredSignature", () => {
+  it("a pure region's signature has no ability prefix and a capitalized primitive input type", () => {
+    expect(formatInferredSignature("region_3", SIG)).toBe("function region_3(li_width: Integer) -> () {");
+  });
+
+  it("an effectful region's signature shows a sorted, deduplicated capability prefix", () => {
     const sig: InferredSignature = { inputs: [], outputs: [], effects: ["WritesUi", "ReadsDb"] };
-    expect(formatInferredSignature("r", sig)).toBe("r() -> ()  [ReadsDb, WritesUi]");
+    expect(formatInferredSignature("r", sig)).toBe("function r() -> '{DB, UI} () {");
+  });
+
+  it("a single-output signature's return type is bare; a multi-output signature's return type is a tuple", () => {
+    const single: InferredSignature = { inputs: [], outputs: [{ name: "x", type: null }], effects: [] };
+    const multi: InferredSignature = { inputs: [], outputs: [{ name: "x", type: null }, { name: "y", type: null }], effects: [] };
+    expect(formatInferredSignature("f", single)).toBe("function f() -> x {");
+    expect(formatInferredSignature("f", multi)).toBe("function f() -> (x, y) {");
   });
 });
 
 describe("regionDisplayLabel", () => {
-  it("formats a cut-region label as an identifier, not region@line", () => {
-    expect(regionDisplayLabel("region_3", [10, 14])).toBe("region_10");
+  it("uses the region@N convention, matching the backend's Render/Text.hs regionLabel", () => {
+    expect(regionDisplayLabel("region_3", [10, 14])).toBe("region@10");
   });
 
   it("falls back to the raw regionId when there's no line range (the root region)", () => {
@@ -129,17 +166,17 @@ describe("regionDisplayLabel", () => {
 });
 
 describe("formatRegionCallLabel", () => {
-  it("renders a region-ref as a call: name(inputArgNames)", () => {
-    expect(formatRegionCallLabel("region_3", [10, 14], SIG)).toBe("region_10(li_width)");
+  it("renders a region-ref as a call: name(inputArgNames), using region@N", () => {
+    expect(formatRegionCallLabel("region_3", [10, 14], SIG)).toBe("region@10(li_width)");
   });
 
   it("renders an empty arg list when the signature has no inputs", () => {
     const sig: InferredSignature = { inputs: [], outputs: [], effects: [] };
-    expect(formatRegionCallLabel("region_3", [10, 14], sig)).toBe("region_10()");
+    expect(formatRegionCallLabel("region_3", [10, 14], sig)).toBe("region@10()");
   });
 
   it("renders an empty arg list when the signature is null", () => {
-    expect(formatRegionCallLabel("region_3", [10, 14], null)).toBe("region_10()");
+    expect(formatRegionCallLabel("region_3", [10, 14], null)).toBe("region@10()");
   });
 
   it("uses the raw regionId when there's no line range", () => {

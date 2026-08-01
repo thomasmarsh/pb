@@ -120,7 +120,7 @@ function RegionCardView(props: {
       classList={{ "explain-region-card--flash": props.flashed }}
     >
       <Show when={props.declaredSig}>
-        <div class="explain-region-header explain-region-header--declared">declared {props.declaredSig}</div>
+        <div class="explain-region-header explain-region-header--declared">declared: {props.declaredSig}</div>
       </Show>
       <div class="explain-region-header">{header()}</div>
       <div class="explain-region-body">
@@ -128,6 +128,9 @@ function RegionCardView(props: {
           {(stmt) => <StmtRow stmt={stmt} depth={0} isActive={props.isActive} onHover={props.onHover} onPin={props.onPin} onJump={props.onJump} />}
         </For>
       </div>
+      <Show when={props.card.sig}>
+        <div class="explain-region-header explain-region-header--closing">{'}'}</div>
+      </Show>
     </div>
   );
 }

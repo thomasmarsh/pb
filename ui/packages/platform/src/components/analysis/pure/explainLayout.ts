@@ -16,6 +16,38 @@ import type {
   Param, DeclaredSig,
 } from "../../../types/api.js";
 
+// PB.Analysis.CallClassify's full 7-constructor EffectTag vocabulary. The
+// wire EffectTag in api.ts is a 4-tag subset; the capability grouping is a
+// display-side concept that must cover the same 7 tags as the Haskell side
+// so a future wire expansion is non-breaking and the parity test can
+// assert against the full vocabulary.
+export type EffectTagFull =
+  | "ReadsDb"
+  | "WritesDb"
+  | "WritesUi"
+  | "Suspends"
+  | "ReadsControlState"
+  | "WritesControlState"
+  | "WritesInstanceState";
+
+export const CAPABILITY_LABEL: Record<EffectTagFull, string> = {
+  ReadsDb: "DB",
+  WritesDb: "DB",
+  WritesUi: "UI",
+  Suspends: "Async",
+  ReadsControlState: "Control",
+  WritesControlState: "Control",
+  WritesInstanceState: "State",
+};
+
+// Dedupe and sort capability labels, matching PB.Analysis.CallClassify's
+// Set.toAscList (Plan 225 Layer 3.6). The wire EffectTag is a 4-tag subset
+// of EffectTagFull, but every wire-side tag has a CAPABILITY_LABEL entry,
+// so no entry is undefined at runtime.
+export function capabilitiesOf(effects: EffectTag[]): string[] {
+  return [...new Set(effects.map((e) => CAPABILITY_LABEL[e]))].sort();
+}
+
 // ── Statement normalization ────────────────────────────────────────────────
 
 export interface RegionRefInfo {
@@ -136,30 +168,36 @@ export function collectRegionCards(pc: Pseudocode): RegionCard[] {
 
 export function formatPbType(t: PbType): string {
   switch (t.tag) {
-    case "PtPrimitive": return t.contents;
+    case "PtPrimitive": return capitalizeFirst(t.contents);
     case "PtUserDefined": return t.contents;
     case "PtAny": return "any";
     case "PtDecimalPrec": return `decimal{${t.contents}}`;
   }
 }
 
+function capitalizeFirst(s: string): string {
+  return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1);
+}
+
 export function formatVarBinding(vb: VarBinding): string {
   return vb.type ? `${vb.name}: ${formatPbType(vb.type)}` : vb.name;
 }
 
-export function formatEffects(effects: EffectTag[]): string {
-  if (effects.length === 0) return "pure";
-  return [...effects].sort().join(", ");
+function formatOutputType(outputs: VarBinding[]): string {
+  if (outputs.length === 1) return formatVarBinding(outputs[0]!);
+  return `(${outputs.map(formatVarBinding).join(", ")})`;
 }
 
 export function formatInferredSignature(name: string, sig: InferredSignature): string {
   const ins = sig.inputs.map(formatVarBinding).join(", ");
-  const outs = sig.outputs.map(formatVarBinding).join(", ");
-  return `${name}(${ins}) -> (${outs})  [${formatEffects(sig.effects)}]`;
+  const outType = formatOutputType(sig.outputs);
+  const ability = capabilitiesOf(sig.effects);
+  const abilityPrefix = ability.length > 0 ? `'{${ability.join(", ")}} ` : "";
+  return `function ${name}(${ins}) -> ${abilityPrefix}${outType} {`;
 }
 
 export function regionDisplayLabel(regionId: string, lineRange: [number, number] | null): string {
-  return lineRange ? `region_${lineRange[0]}` : regionId;
+  return lineRange ? `region@${lineRange[0]}` : regionId;
 }
 
 // A region-ref rendered as a call site (name + input arg names) rather than

@@ -184,17 +184,19 @@ export {
   collectRegionCards,
   formatPbType,
   formatVarBinding,
-  formatEffects,
   formatInferredSignature,
   regionDisplayLabel,
   formatRegionCallLabel,
   formatParams,
   formatDeclaredSig,
+  capabilitiesOf,
+  CAPABILITY_LABEL,
 } from "./components/analysis/pure/explainLayout.js";
 export type {
   NormalizedStmt,
   RegionRefInfo,
   RegionCard,
+  EffectTagFull,
 } from "./components/analysis/pure/explainLayout.js";
 
 // Controls (PB window runtime controls)
