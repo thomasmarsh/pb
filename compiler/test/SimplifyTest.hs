@@ -47,54 +47,54 @@ tests :: TestTree
 tests = testGroup "PB.Explain.Simplify"
   [ testGroup "dropDeadStores"
     [ testCase "a dead store immediately overwritten before any read is dropped" $
-        let stmts = [ PAssign "x" Nothing (ExInt "1") 1, PAssign "x" Nothing (ExInt "2") 2, PReturn (var "x") 3 ]
-        in dropDeadStores (safeVars ["x"]) stmts @?= [ PAssign "x" Nothing (ExInt "2") 2, PReturn (var "x") 3 ]
+        let stmts = [ PAssign "x" Nothing Nothing (ExInt "1") 1, PAssign "x" Nothing Nothing (ExInt "2") 2, PReturn (var "x") 3 ]
+        in dropDeadStores (safeVars ["x"]) stmts @?= [ PAssign "x" Nothing Nothing (ExInt "2") 2, PReturn (var "x") 3 ]
 
     , testCase "a store read before being overwritten is kept" $
-        let stmts = [ PAssign "x" Nothing (ExInt "1") 1, PReturn (var "x") 2
-                    , PAssign "x" Nothing (ExInt "2") 3, PReturn (var "x") 4
+        let stmts = [ PAssign "x" Nothing Nothing (ExInt "1") 1, PReturn (var "x") 2
+                    , PAssign "x" Nothing Nothing (ExInt "2") 3, PReturn (var "x") 4
                     ]
         in dropDeadStores (safeVars ["x"]) stmts @?= stmts
 
     , testCase "a store read inside the overwriting statement's own RHS is kept (self-referential update, e.g. x = x + 1)" $
-        let stmts = [ PAssign "x" Nothing (ExInt "1") 1
-                    , PAssign "x" Nothing (ExBinOp (var "x") BopAdd (ExInt "1")) 2
+        let stmts = [ PAssign "x" Nothing Nothing (ExInt "1") 1
+                    , PAssign "x" Nothing Nothing (ExBinOp (var "x") BopAdd (ExInt "1")) 2
                     , PReturn (var "x") 3
                     ]
         in dropDeadStores (safeVars ["x"]) stmts @?= stmts
 
     , testCase "a store read inside an intervening PCall's arguments is kept" $
-        let stmts = [ PAssign "x" Nothing (ExInt "1") 1
+        let stmts = [ PAssign "x" Nothing Nothing (ExInt "1") 1
                     , PCall "foo" Nothing [var "x"] 2
-                    , PAssign "x" Nothing (ExInt "2") 3
+                    , PAssign "x" Nothing Nothing (ExInt "2") 3
                     , PReturn (var "x") 4
                     ]
         in dropDeadStores (safeVars ["x"]) stmts @?= stmts
 
     , testCase "dropDeadStores itself trusts whatever safe set it's given (ref-exclusion is simplifyPseudocode's job)" $
-        let stmts = [ PAssign "adw" Nothing (ExInt "1") 1 ]
+        let stmts = [ PAssign "adw" Nothing Nothing (ExInt "1") 1 ]
         in dropDeadStores identSetEmpty stmts @?= stmts
 
     , testCase "a store to a name outside the locals/params set is never dropped" $
-        let stmts = [ PAssign "ib_flag" Nothing (ExInt "1") 1, PAssign "ib_flag" Nothing (ExInt "2") 2 ]
+        let stmts = [ PAssign "ib_flag" Nothing Nothing (ExInt "1") 1, PAssign "ib_flag" Nothing Nothing (ExInt "2") 2 ]
         in dropDeadStores (safeVars ["other_var"]) stmts @?= stmts
 
     , testCase "a dead store inside a branch arm is dropped when redefined within the same arm" $
         let stmts = [ PBranch (var "cond")
-                        [ PAssign "x" Nothing (ExInt "1") 1, PAssign "x" Nothing (ExInt "2") 2 ]
+                        [ PAssign "x" Nothing Nothing (ExInt "1") 1, PAssign "x" Nothing Nothing (ExInt "2") 2 ]
                         []
                         1
                     , PReturn (var "x") 3
                     ]
         in dropDeadStores (safeVars ["x"]) stmts @?=
-             [ PBranch (var "cond") [ PAssign "x" Nothing (ExInt "2") 2 ] [] 1, PReturn (var "x") 3 ]
+             [ PBranch (var "cond") [ PAssign "x" Nothing Nothing (ExInt "2") 2 ] [] 1, PReturn (var "x") 3 ]
 
     , testCase "a store inside a branch arm with no redefinition inside the arm is kept when read after the branch closes" $
-        let stmts = [ PBranch (var "cond") [ PAssign "x" Nothing (ExInt "1") 1 ] [] 1, PReturn (var "x") 2 ]
+        let stmts = [ PBranch (var "cond") [ PAssign "x" Nothing Nothing (ExInt "1") 1 ] [] 1, PReturn (var "x") 2 ]
         in dropDeadStores (safeVars ["x"]) stmts @?= stmts
 
     , testCase "a store inside a branch arm is dropped when nothing anywhere in the given list reads it" $
-        let stmts = [ PBranch (var "cond") [ PAssign "x" Nothing (ExInt "1") 1 ] [] 1 ]
+        let stmts = [ PBranch (var "cond") [ PAssign "x" Nothing Nothing (ExInt "1") 1 ] [] 1 ]
         in dropDeadStores (safeVars ["x"]) stmts @?= [ PBranch (var "cond") [] [] 1 ]
     ]
 
@@ -121,7 +121,7 @@ tests = testGroup "PB.Explain.Simplify"
           simplified = simplifyPseudocode (safeVars ["x"]) pc
           nonRootRegions = Map.delete (pcRootRegion pc) (pcRegions simplified)
       in case Map.elems nonRootRegions of
-           [stmts] -> stmts @?= [ PAssign "x" Nothing (ExInt "1") 1 ]
+           [stmts] -> stmts @?= [ PAssign "x" (Just (var "x")) Nothing (ExInt "1") 1 ]
            other   -> assertFailure ("expected exactly one non-root region, got " <> show other)
 
   , testCase "simplifyPseudocode never drops a store to a declared ref-mode parameter, even if the caller's locals includes it" $
@@ -138,7 +138,7 @@ tests = testGroup "PB.Explain.Simplify"
           -- name in locals, relying on simplifyPseudocode to still
           -- exclude it via pcDeclaredSig.
           simplified = simplifyPseudocode (safeVars ["al_x"]) pc
-      in Map.lookup (pcRootRegion pc) (pcRegions simplified) @?= Just [ PAssign "al_x" Nothing (ExInt "1") 1 ]
+      in Map.lookup (pcRootRegion pc) (pcRegions simplified) @?= Just [ PAssign "al_x" (Just (var "al_x")) Nothing (ExInt "1") 1 ]
 
   , testProperty "simplifyPseudocode is idempotent" $ property $ do
       stmts <- forAll genStmts
@@ -174,7 +174,7 @@ genStmt depth
 
 genLeaf :: Gen PStmt
 genLeaf = Gen.choice
-  [ PAssign <$> genVar <*> pure Nothing <*> genExpr <*> genLine
+  [ PAssign <$> genVar <*> pure Nothing <*> pure Nothing <*> genExpr <*> genLine
   , PReturn <$> genExpr <*> genLine
   , PCall <$> pure "someproc" <*> pure Nothing <*> Gen.list (Range.linear 0 2) genExpr <*> genLine
   ]

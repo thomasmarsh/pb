@@ -12,7 +12,7 @@ import PB.Explain.Regions (defaultComplexityThreshold)
 import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
 import PB.Explain.Render.Text (renderText, renderStmtLine)
-import PB.Lexing.Token (SourceSpan (..))
+import PB.Lexing.Token (SourceSpan (..), Token (..), TokenKind (..))
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -27,6 +27,9 @@ var name = ExLvalue (Lvalue [LvSegment (ident name) Nothing])
 
 ident :: Text -> Ident
 ident = mkIdentSynthetic "RenderTextTest fixture"
+
+mkTok :: TokenKind -> Text -> Token
+mkTok k t = Token k t (SourceSpan 1 1 1 1)
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty Map.empty "" Map.empty
@@ -151,7 +154,18 @@ tests = testGroup "PB.Explain.Render.Text"
 
   , testGroup "renderStmtLine"
     [ testCase "renders a PAssign with its declared type, no indent or backlink" $
-        renderStmtLine (PAssign "x" (Just (PtPrimitive "integer")) (ExInt "1") 5) @?= "x: integer = 1"
+        renderStmtLine (PAssign "x" Nothing (Just (PtPrimitive "integer")) (ExInt "1") 5) @?= "x: integer = 1"
+
+    , testCase "renders a PAssign's full LHS Expr (a DataWindow property write), not just the root var name" $
+        let lhs = ExLvalue (Lvalue
+              [ LvSegment (ident "adw") Nothing
+              , LvSegment (ident "object") Nothing
+              , LvSegment (ident "kodypal") (Just [mkTok TkIdent "row"])
+              ])
+        in renderStmtLine (PAssign "adw" (Just lhs) Nothing (var "gsc_misth_ypal") 8) @?= "adw.object.kodypal[row] = gsc_misth_ypal"
+
+    , testCase "falls back to the plain var name when no LHS Expr is present (e.g. LAssign, no rhs)" $
+        renderStmtLine (PAssign "x" Nothing Nothing (ExRaw []) 5) @?= "x = "
 
     , testCase "renders a PCall with no indent or backlink" $
         renderStmtLine (PCall "foo" Nothing [var "a", ExInt "2"] 3) @?= "foo(a, 2)"

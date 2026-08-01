@@ -10,6 +10,7 @@ import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
 import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
+import PB.Lexing.Token     (SourceSpan (..), Token (..), TokenKind (..))
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -23,6 +24,20 @@ var name = ExLvalue (Lvalue [LvSegment (ident name) Nothing])
 
 ident :: Text -> Ident
 ident = mkIdentSynthetic "PseudocodeTest fixture"
+
+mkTok :: TokenKind -> Text -> Token
+mkTok k t = Token k t (SourceSpan 1 1 1 1)
+
+-- | @adw.object.kodypal[row]@ -- a DataWindow property write with a member
+-- chain and a subscript on the last segment, the exact shape
+-- 'PB.Grammar.Body.parseLvalue' produces for corpus code like
+-- @adw.object.kodypal[row] = gsc_misth_ypal.kodypal@.
+dwPropertyLhs :: Expr
+dwPropertyLhs = ExLvalue (Lvalue
+  [ LvSegment (ident "adw") Nothing
+  , LvSegment (ident "object") Nothing
+  , LvSegment (ident "kodypal") (Just [mkTok TkIdent "row"])
+  ])
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty Map.empty "" Map.empty
@@ -55,7 +70,12 @@ tests = testGroup "PB.Explain.Pseudocode"
   [ testCase "EAssign lowers to PAssign carrying its source line and declared type" $
       let term = EAssignWithRhs "x" (var "x") (ExInt "1") 5 (Just (PtPrimitive "integer")) :: Eff () ()
           pc = build defaultComplexityThreshold term
-      in rootStmts pc @?= [PAssign "x" (Just (PtPrimitive "integer")) (ExInt "1") 5]
+      in rootStmts pc @?= [PAssign "x" (Just (var "x")) (Just (PtPrimitive "integer")) (ExInt "1") 5]
+
+  , testCase "a member/indexed LHS (adw.object.kodypal[row] = ...) carries its full LHS Expr into PAssign, not just the root var name" $
+      let term = EAssignWithRhs "adw" dwPropertyLhs (var "gsc_misth_ypal") 8 Nothing :: Eff () ()
+          pc = build defaultComplexityThreshold term
+      in rootStmts pc @?= [PAssign "adw" (Just dwPropertyLhs) Nothing (var "gsc_misth_ypal") 8]
 
   , testCase "EBranch lowers to PBranch with both arms present" $
       let term = branchEff (var "cond")
@@ -64,8 +84,8 @@ tests = testGroup "PB.Explain.Pseudocode"
           pc = build defaultComplexityThreshold term
       in rootStmts pc @?=
            [ PBranch (var "cond")
-               [PAssign "a" Nothing (ExInt "1") 2]
-               [PAssign "b" Nothing (ExInt "2") 3]
+               [PAssign "a" (Just (var "a")) Nothing (ExInt "1") 2]
+               [PAssign "b" (Just (var "b")) Nothing (ExInt "2") 3]
                1
            ]
 
@@ -75,7 +95,7 @@ tests = testGroup "PB.Explain.Pseudocode"
           term = ELoop loopBody 1 :: Eff () ()
           pc = build defaultComplexityThreshold term
       in rootStmts pc @?=
-           [ PLoop [PAssign "i" Nothing (ExBinOp (var "i") BopAdd (ExInt "1")) 2] 1 ]
+           [ PLoop [PAssign "i" (Just (var "i")) Nothing (ExBinOp (var "i") BopAdd (ExInt "1")) 2] 1 ]
 
   , testCase "a cut RegionId lowers to PRegionRef carrying its InferredSignature" $
       let arm = EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing :: Eff () ()
@@ -87,7 +107,7 @@ tests = testGroup "PB.Explain.Pseudocode"
              msig @?= Map.lookup rid sigs
              assertBool "expected a Just signature for the cut region" (isJust msig)
              Map.lookup rid (pcRegions pc)
-               @?= Just [PBranch (var "cond") [PAssign "a" Nothing (ExInt "1") 2] [PAssign "a" Nothing (ExInt "1") 2] 1]
+               @?= Just [PBranch (var "cond") [PAssign "a" (Just (var "a")) Nothing (ExInt "1") 2] [PAssign "a" (Just (var "a")) Nothing (ExInt "1") 2] 1]
              lns @?= Just (1, 2)
            other -> assertFailure ("expected exactly 1 PRegionRef at root, got " <> show other)
 
@@ -100,7 +120,7 @@ tests = testGroup "PB.Explain.Pseudocode"
       in case rootStmts pc of
            [PRegionRef rid1 _ _, PRegionRef rid2 _ _] -> do
              rid1 @?= rid2
-             Map.lookup rid1 (pcRegions pc) @?= Just [PAssign "x" Nothing (ExInt "1") 1]
+             Map.lookup rid1 (pcRegions pc) @?= Just [PAssign "x" (Just (var "x")) Nothing (ExInt "1") 1]
              length (Map.toList (pcRegions pc)) @?= 2  -- root + the one shared block, not 3
            other -> assertFailure ("expected exactly 2 PRegionRef entries at root, got " <> show other)
 

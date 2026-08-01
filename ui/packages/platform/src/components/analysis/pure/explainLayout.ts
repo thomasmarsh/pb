@@ -35,7 +35,7 @@ export type NormalizedStmt =
 export function normalizeStmt(stmt: PStmt): NormalizedStmt {
   switch (stmt.tag) {
     case "PAssign":
-      return { kind: "assign", line: stmt.contents[3], text: stmt.stmtText };
+      return { kind: "assign", line: stmt.contents[4], text: stmt.stmtText };
     case "PCall":
       return { kind: "call", line: stmt.contents[3], text: stmt.stmtText };
     case "PReturn":

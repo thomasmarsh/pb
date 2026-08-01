@@ -134,8 +134,8 @@ renderArgs = T.intercalate ", " . map unparseExpr
 -- materialized node carries its own pre-rendered display text, and a UI
 -- consumer never re-derives 'Expr' -> 'Text' a third way.
 renderStmtLine :: PStmt -> Text
-renderStmtLine (PAssign var mty rhs _) =
-  var <> maybe "" ((": " <>) . renderPbType) mty <> " = " <> unparseExpr rhs
+renderStmtLine (PAssign var mlhs mty rhs _) =
+  maybe var unparseExpr mlhs <> maybe "" ((": " <>) . renderPbType) mty <> " = " <> unparseExpr rhs
 renderStmtLine (PCall name _msig args _) =
   name <> "(" <> renderArgs args <> ")"
 renderStmtLine (PBranch cond _ _ _) =
@@ -145,7 +145,7 @@ renderStmtLine (PReturn e _) = "return " <> unparseExpr e
 renderStmtLine (PRegionRef rid lns _msig) = "-> " <> regionLabel rid lns
 
 renderStmt :: Int -> PStmt -> [Text]
-renderStmt ind stmt@(PAssign _ _ _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
+renderStmt ind stmt@(PAssign _ _ _ _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
 renderStmt ind stmt@(PCall _ _ _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
 renderStmt ind stmt@(PBranch _ t f ln) =
   [indent ind (renderStmtLine stmt <> backlink ln)]

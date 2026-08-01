@@ -34,7 +34,7 @@ import PB.Explain.Regions (EffLeaf (..), RegionId, Region (..), RegionOps (..), 
 import PB.Explain.Signatures (InferredSignature, ResolvedCallSiteMap, lookupDeclaredSig)
 
 data PStmt
-  = PAssign Text (Maybe PbType) Expr Int
+  = PAssign Text (Maybe Expr) (Maybe PbType) Expr Int
   | PCall Text (Maybe (Either FnSig SubSig)) [Expr] Int
   | PBranch Expr [PStmt] [PStmt] Int
   | PLoop [PStmt] Int
@@ -75,8 +75,8 @@ resolveCallSite env sigMap selfProc callSiteMap ln =
 leafToStmt
   :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig))
   -> Text -> ResolvedCallSiteMap -> EffLeaf -> [PStmt]
-leafToStmt _env _sigMap _selfProc _callSiteMap (LAssign var ln ty) = [PAssign var ty (ExRaw []) ln]
-leafToStmt _env _sigMap _selfProc _callSiteMap (LAssignWithRhs var _lhsE rhsE ln ty) = [PAssign var ty rhsE ln]
+leafToStmt _env _sigMap _selfProc _callSiteMap (LAssign var ln ty) = [PAssign var Nothing ty (ExRaw []) ln]
+leafToStmt _env _sigMap _selfProc _callSiteMap (LAssignWithRhs var lhsE rhsE ln ty) = [PAssign var (Just lhsE) ty rhsE ln]
 leafToStmt env sigMap selfProc callSiteMap (LCall name args ln _tags) =
   [PCall name (resolveCallSite env sigMap selfProc callSiteMap ln) args ln]
 leafToStmt env sigMap selfProc callSiteMap (LSuspend name args ln _tags) =

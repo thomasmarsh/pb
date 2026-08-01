@@ -798,7 +798,7 @@ export interface InferredSignature {
 }
 
 export type PStmt =
-  | { tag: "PAssign"; contents: [string, PbType | null, unknown, number]; stmtText: string }
+  | { tag: "PAssign"; contents: [string, unknown, PbType | null, unknown, number]; stmtText: string }
   | { tag: "PCall"; contents: [string, unknown, unknown[], number]; stmtText: string }
   | { tag: "PBranch"; contents: [unknown, PStmt[], PStmt[], number]; stmtText: string }
   | { tag: "PLoop"; contents: [PStmt[], number]; stmtText: string }

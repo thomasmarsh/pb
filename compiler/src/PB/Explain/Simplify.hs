@@ -57,7 +57,11 @@ dropDeadStoresWithLiveOut :: IdentSet -> Set.Set Ident -> [PStmt] -> ([PStmt], S
 dropDeadStoresWithLiveOut safe liveOut = foldr step ([], liveOut)
   where
     step stmt (acc, live) = case stmt of
-      PAssign var _ rhs _
+      -- The full dotted/indexed LHS Expr (present for a member/indexed
+      -- write like @adw.object.kodypal[row]@) is display-only here --
+      -- liveness always keys on the assignment's root identifier (@var@),
+      -- since that's what @safe@\/@locals@\/@sigOutputs@ are keyed on too.
+      PAssign var _ _ rhs _
         | v `identSetMember` safe, not (v `Set.member` live) -> (acc, live)
         | otherwise -> (stmt : acc, Set.delete v live `Set.union` walkExprIdents rhs)
         where v = bridgeIdent var

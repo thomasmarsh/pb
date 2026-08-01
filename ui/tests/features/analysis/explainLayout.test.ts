@@ -16,7 +16,7 @@ const SIG: InferredSignature = {
 
 describe("normalizeStmt", () => {
   it("normalizes a PAssign to its named line/text fields", () => {
-    const stmt: PStmt = { tag: "PAssign", contents: ["ls_x", null, null, 7], stmtText: "ls_x = 1" };
+    const stmt: PStmt = { tag: "PAssign", contents: ["ls_x", null, null, null, 7], stmtText: "ls_x = 1" };
     expect(normalizeStmt(stmt)).toEqual({ kind: "assign", line: 7, text: "ls_x = 1" });
   });
 

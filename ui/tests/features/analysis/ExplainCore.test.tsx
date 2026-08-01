@@ -14,7 +14,7 @@ const PSEUDOCODE: ExplainPseudocodeResponse = {
   rootSig: { inputs: [], outputs: [], effects: [] },
   regions: {
     region_0: [
-      { tag: "PAssign", contents: ["ls_x", null, null, 1], stmtText: "ls_x = 1" },
+      { tag: "PAssign", contents: ["ls_x", null, null, null, 1], stmtText: "ls_x = 1" },
       { tag: "PRegionRef", contents: ["region_1", [3, 4], { inputs: [], outputs: [], effects: [] }], stmtText: "-> region_1" },
     ],
     region_1: [
