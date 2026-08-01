@@ -57,6 +57,26 @@ describe("explain reducer", () => {
     );
   });
 
+  it("is a no-op when data for the key is already loaded — never refetches a cached key", () => {
+    const state = {
+      ...initialState(),
+      explainPseudocodes: {
+        "w_obj::uf_save": { object: "w_obj", proc: "uf_save", data: PSEUDOCODE },
+      },
+    };
+    const env: AppEnv = {
+      ...mockEnv,
+      getExplainPseudocode: () => { throw new Error("must not refetch an already-loaded key"); },
+    };
+    const ts = createTestStore(reducer, env, state);
+    ts.send(
+      { tag: "explain", action: { tag: "request", key: "w_obj::uf_save", object: "w_obj", proc: "uf_save" } },
+      () => {},
+    );
+    expect(ts.getState().explainPseudocodes["w_obj::uf_save"]?.data).toEqual(PSEUDOCODE);
+    ts.assertDrained();
+  });
+
   it("stores the error message on the keyed entry when the fetch fails", async () => {
     const env: AppEnv = {
       ...mockEnv,

@@ -15,6 +15,7 @@ import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 import { WiringCore } from "../analysis/WiringCore.js";
 import { FootprintPanel } from "../analysis/FootprintPanel.js";
+import { ExplainCore } from "../analysis/ExplainCore.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -115,6 +116,7 @@ function ProcedureDetailContent(props: {
   const [showCallees, setShowCallees] = createSignal(false);
   const [showSql, setShowSql] = createSignal(false);
   const [showTaint, setShowTaint] = createSignal(false);
+  const [showExplain, setShowExplain] = createSignal(false);
   const [showCfg, setShowCfg] = createSignal(false);
   const [showFootprint, setShowFootprint] = createSignal(false);
   const [diagramView, setDiagramView] = createSignal<"cfg" | "wiring">("cfg");
@@ -129,6 +131,7 @@ function ProcedureDetailContent(props: {
     ...(sqlCount() > 0 ? [{ label: "SQL", count: sqlCount(), active: showSql(), onClick: () => setShowSql((v) => !v) } as SummaryItem] : []),
     ...(p.cyclomatic != null ? [{ label: `CC: ${p.cyclomatic}` } as SummaryItem] : []),
     { label: "Taint", active: showTaint(), onClick: () => setShowTaint((v) => !v) },
+    { label: "Explain", active: showExplain(), onClick: () => setShowExplain((v) => !v) },
     { label: "CFG", active: showCfg(), onClick: () => setShowCfg((v) => !v) },
     { label: "Footprint", active: showFootprint(), onClick: () => setShowFootprint((v) => !v) },
   ];
@@ -139,6 +142,7 @@ function ProcedureDetailContent(props: {
       setShowCallees(false);
       setShowSql(false);
       setShowTaint(false);
+      setShowExplain(false);
       setShowCfg(false);
       setShowFootprint(false);
     }
@@ -239,6 +243,25 @@ function ProcedureDetailContent(props: {
         <Show when={showTaint()}>
           <ContextualPanel title="Taint Paths" onClose={() => setShowTaint(false)}>
             <ProcTaintCard objectName={props.objectName} procName={p.name} store={store} />
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showExplain()}>
+          <ContextualPanel title="Explain" onClose={() => setShowExplain(false)}>
+            <div style={{ height: "420px", display: "flex", "flex-direction": "column" }}>
+              <ExplainCore
+                object={p.object}
+                proc={p.name}
+                store={store}
+                onGoto={() =>
+                  store.dispatch({
+                    tag: "nav",
+                    action: { tag: "navigate", route: { view: "explainView", object: p.object, proc: p.name } },
+                  })
+                }
+                gotoLabel="Full Explain"
+              />
+            </div>
           </ContextualPanel>
         </Show>
 

@@ -175,8 +175,7 @@ export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect
     const { action: ea } = action;
     switch (ea.tag) {
     case "request": {
-      const existing = draft.explainPseudocodes[ea.key];
-      if (existing && existing.data === null) return null;
+      if (draft.explainPseudocodes[ea.key]) return null;
       draft.explainPseudocodes[ea.key] = { object: ea.object, proc: ea.proc, data: null };
       return env.getExplainPseudocode(ea.object, ea.proc)
         .map((data): AppAction => ({ tag: "explain", action: { tag: "loaded", key: ea.key, data } }))

@@ -10,6 +10,7 @@ import {
   SourceView,
   collectRegionCards, sourceLinesForStmt,
   formatInferredSignature, formatDeclaredSig, regionDisplayLabel,
+  highlightPowerScript,
   type NormalizedStmt, type RegionCard,
 } from "@pb/platform";
 import type { AppState } from "../../../state.js";
@@ -49,7 +50,7 @@ function StmtRow(props: {
             onMouseLeave={() => props.onHover(null)}
             onClick={() => props.onPin(props.stmt)}
           >
-            {props.stmt.text}
+            <code innerHTML={highlightPowerScript(props.stmt.text)} />
           </div>
         }
       >
@@ -64,7 +65,7 @@ function StmtRow(props: {
             if (props.stmt.kind === "regionRef") props.onJump(props.stmt.regionId);
           }}
         >
-          {props.stmt.text}
+          <code innerHTML={highlightPowerScript(props.stmt.text)} />
         </div>
       </Show>
       <Show when={props.stmt.kind === "branch"}>
