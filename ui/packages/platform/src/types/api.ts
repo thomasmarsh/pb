@@ -798,7 +798,22 @@ export interface ExploreProcDetail {
 // positions in PStmt's `contents` stay `unknown`; only `stmtText` (pre-rendered
 // by PB.Explain.Render.Text.renderStmtLine) is displayed.
 
-export type EffectTag = "ReadsDb" | "WritesDb" | "WritesUi" | "Suspends";
+// Plan 226 Layer 2: widened from 4 tags to the full 7-constructor vocabulary
+// that PB.Analysis.CallClassify.EffectTag already serializes via
+// PB.Pipeline.Serialise's genericToJSON instance. The TEXT column
+// proc_pseudocode.pseudocode_json already carried all 7 tags on the wire —
+// the 4-tag declaration here was a TS-side type filter, not a wire-shape
+// constraint, and the live UI needs the 3 missing tags (ReadsControlState,
+// WritesControlState, WritesInstanceState) to render their CAPABILITY_LABEL
+// entries as ability prefixes.
+export type EffectTag =
+  | "ReadsDb"
+  | "WritesDb"
+  | "WritesUi"
+  | "Suspends"
+  | "ReadsControlState"
+  | "WritesControlState"
+  | "WritesInstanceState";
 
 export type PbType =
   | { tag: "PtPrimitive"; contents: string }

@@ -17,10 +17,9 @@ import type {
 } from "../../../types/api.js";
 
 // PB.Analysis.CallClassify's full 7-constructor EffectTag vocabulary. The
-// wire EffectTag in api.ts is a 4-tag subset; the capability grouping is a
-// display-side concept that must cover the same 7 tags as the Haskell side
-// so a future wire expansion is non-breaking and the parity test can
-// assert against the full vocabulary.
+// wire EffectTag in api.ts is now the same 7-tag union as of Plan 226 Layer
+// 2 — kept here as a stable re-export for the parity test and any consumer
+// that wants the full vocabulary by name.
 export type EffectTagFull =
   | "ReadsDb"
   | "WritesDb"
@@ -41,8 +40,8 @@ export const CAPABILITY_LABEL: Record<EffectTagFull, string> = {
 };
 
 // Dedupe and sort capability labels, matching PB.Analysis.CallClassify's
-// Set.toAscList (Plan 225 Layer 3.6). The wire EffectTag is a 4-tag subset
-// of EffectTagFull, but every wire-side tag has a CAPABILITY_LABEL entry,
+// Set.toAscList (Plan 225 Layer 3.6). Every tag in the wire EffectTag
+// (now the same 7-tag union as EffectTagFull) has a CAPABILITY_LABEL entry,
 // so no entry is undefined at runtime.
 export function capabilitiesOf(effects: EffectTag[]): string[] {
   return [...new Set(effects.map((e) => CAPABILITY_LABEL[e]))].sort();

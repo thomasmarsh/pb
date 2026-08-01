@@ -178,6 +178,38 @@ describe("formatInferredSignature", () => {
   });
 });
 
+// Plan 226 Layer 2 — the wire-side EffectTag is 7 tags (PB.Analysis.CallClassify's
+// full vocabulary, already serialized by PB.Pipeline.Serialise's genericToJSON
+// instance on the 7-constructor ADT). formatInferredSignature must render an
+// ability prefix for every wire tag, not just the 4-tag subset api.ts:801 used
+// to declare.
+describe("formatInferredSignature with 7-tag effects (Plan 226 Layer 2)", () => {
+  it("emits '{Control}' for ReadsControlState", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: ["ReadsControlState"] };
+    expect(formatInferredSignature("r", sig)).toBe("function r() -> '{Control} () {");
+  });
+
+  it("emits '{Control}' for WritesControlState", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: ["WritesControlState"] };
+    expect(formatInferredSignature("r", sig)).toBe("function r() -> '{Control} () {");
+  });
+
+  it("emits '{State}' for WritesInstanceState", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: ["WritesInstanceState"] };
+    expect(formatInferredSignature("r", sig)).toBe("function r() -> '{State} () {");
+  });
+
+  it("dedupes ReadsControlState + WritesControlState to a single 'Control' label", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: ["ReadsControlState", "WritesControlState"] };
+    expect(formatInferredSignature("r", sig)).toBe("function r() -> '{Control} () {");
+  });
+
+  it("sorts 7-tag effects mixed with 4-tag effects correctly", () => {
+    const sig: InferredSignature = { inputs: [], outputs: [], effects: ["ReadsControlState", "WritesUi", "ReadsDb", "WritesInstanceState"] };
+    expect(formatInferredSignature("r", sig)).toBe("function r() -> '{Control, DB, State, UI} () {");
+  });
+});
+
 describe("regionDisplayLabel", () => {
   it("uses the region@N convention, matching the backend's Render/Text.hs regionLabel", () => {
     expect(regionDisplayLabel("region_3", [10, 14])).toBe("region@10");

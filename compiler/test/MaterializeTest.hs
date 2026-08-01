@@ -78,6 +78,7 @@ tests = testGroup "Materialize"
     , testCase "two objects declaring the same bare proc name each materialize their own object's resolved effects, not a name-only union" testMaterializeProcPseudocodeNameCollision
     , testCase "a materialized row's pseudocode_json reflects simplifyPseudocode's output, not raw buildPseudocode" testMaterializeProcPseudocodeSimplified
     , testCase "each PStmt in a materialized row carries its pre-rendered stmtText, including nested branch children" testMaterializeProcPseudocodeStmtText
+    , testCase "a 7-tag EffectTag (ReadsControlState) flows through to pseudocode_json.rootSig.effects unchanged, proving the wire shape already carries the full 7-tag vocabulary" testMaterializeProcPseudocodeSevenTagShape
     ]
   ]
 
@@ -429,3 +430,25 @@ testMaterializeProcPseudocodeStmtText = withHandle inMemory $ \conn -> do
 
 var :: Text -> Expr
 var name = ExLvalue (Lvalue [LvSegment (ident name) Nothing])
+
+-- | Plan 226 Layer 2 regression guard: a control-state read's 'ReadsControlState'
+-- tag must reach the wire JSON unchanged. 'PB.Pipeline.Serialise''s 'ToJSON
+-- EffectTag' instance uses 'genericToJSON', so the 7-constructor ADT serializes
+-- all 7 constructor names — this test pins that the 3 control/instance-state
+-- tags are not filtered server-side at materialization time, and is the
+-- regression guard for the 4→7 wire-side tag widening the live UI needs.
+-- The companion TS-side test in @ui\/tests\/features\/analysis\/explainLayout.test.ts@
+-- asserts the UI renders the resulting tag's 'CAPABILITY_LABEL' entry as an
+-- ability prefix.
+testMaterializeProcPseudocodeSevenTagShape :: IO ()
+testMaterializeProcPseudocodeSevenTagShape = withHandle inMemory $ \conn -> do
+  initSchema conn
+  let term = extractEffTable (ECall "helper" [] 1 Set.empty :: Eff () ())
+      sigMap = sigMapWith "w_a" "helper"
+      procEffects = Map.singleton ("w_a", "helper") (Set.singleton ReadsControlState)
+      callRows = [callRow "w_a" "ue_clicked" 1 "w_a" "helper"]
+  materializeProcPseudocode sigMap procEffects callRows [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
+  [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
+  let effects = field' "effects" (field' "rootSig" (decodeJson raw))
+  assertEqual "rootSig.effects carries the 7-tag ReadsControlState through the JSON wire shape unchanged"
+    (Array (pure (String "ReadsControlState"))) effects
