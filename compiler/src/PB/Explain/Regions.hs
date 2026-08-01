@@ -20,6 +20,7 @@
 module PB.Explain.Regions
   ( RegionId
   , regionIdLabel
+  , regionLabel
   , Region (..)
   , EffLeaf (..)
   , RegionOps (..)
@@ -53,6 +54,16 @@ newtype RegionId = RegionId Text
 -- Never parsed back or relied on for identity — use 'Eq'/'Ord' for that.
 regionIdLabel :: RegionId -> Text
 regionIdLabel (RegionId t) = t
+
+-- | A real line range prints as @region\@\<line\>@; a genuinely leaf-free
+-- region (no line info at all) falls back to 'regionIdLabel' so two such
+-- regions in the same output are still visually distinguishable, not both
+-- printed as an identical, ambiguous label. Shared by every renderer over
+-- 'PB.Explain.Pseudocode.Pseudocode' so the @region\@N@ convention can't
+-- drift between them.
+regionLabel :: RegionId -> Maybe (Int, Int) -> Text
+regionLabel _   (Just (startLine, _)) = "region@" <> T.pack (show startLine)
+regionLabel rid Nothing               = regionIdLabel rid
 
 data Region = Region
   { regionId         :: RegionId

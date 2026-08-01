@@ -9,7 +9,7 @@ import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
 import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
-import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
+import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), RegionEntry (..), buildPseudocode, pseudocodeRegions)
 import PB.Lexing.Token     (SourceSpan (..), Token (..), TokenKind (..))
 
 import qualified Data.Map.Strict as Map
@@ -159,4 +159,30 @@ tests = testGroup "PB.Explain.Pseudocode"
       in do
            assertBool "expected the sigs map to carry an entry for the root region" (isJust (Map.lookup (pcRootRegion pc) sigs))
            pcRootSig pc @?= Map.lookup (pcRootRegion pc) sigs
+  , testGroup "pseudocodeRegions"
+    [ testCase "returns the root region first regardless of encounter order" $
+        let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 Nothing :: Eff () ()
+            term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing . ELetRef "blk1" :: Eff () ()
+            effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
+            pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
+        in case pseudocodeRegions pc of
+             (first : _) -> reId first @?= pcRootRegion pc
+             []          -> assertFailure "expected at least the root entry"
+
+    , testCase "de-duplicates a region referenced twice to a single entry" $
+        let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
+            term = EComp (ELetRef "blk1") (ELetRef "blk1") :: Eff () ()
+            effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
+            pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
+        in length (pseudocodeRegions pc) @?= 2  -- root + the one shared block, not 3
+
+    , testCase "walks into nested PBranch/PLoop bodies to find every referenced region" $
+        let grandchild = EAssignWithRhs "z" (var "z") (ExInt "9") 20 Nothing :: Eff () ()
+            trueArm = EAssignWithRhs "y" (var "y") (var "z") 11 Nothing . ELetRef "gc" :: Eff () ()
+            falseArm = EAssignWithRhs "y" (var "y") (ExInt "0") 12 Nothing :: Eff () ()
+            term = branchEff (var "cond") trueArm falseArm 10 :: Eff () ()
+            effTerm = EffTerm term (Map.fromList [("gc", grandchild)])
+            pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
+        in length (pseudocodeRegions pc) @?= 2  -- root + the nested grandchild
+    ]
   ]

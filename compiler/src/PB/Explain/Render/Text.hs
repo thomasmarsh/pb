@@ -19,10 +19,10 @@
 module PB.Explain.Render.Text
   ( renderText
   , renderStmtLine
+  , renderDeclaredSig
   ) where
 
 import PB.Prelude
-import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import PB.AST.Expr (Expr)
@@ -30,16 +30,20 @@ import PB.AST.Ident (identOrig)
 import PB.AST.SourceFile (FnSig (..), SubSig (..), renderParams)
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (EffectTag)
-import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..))
-import PB.Explain.Regions (RegionId, regionIdLabel)
+import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), RegionEntry (..), pseudocodeRegions)
+import PB.Explain.Regions (RegionId, regionLabel)
 import PB.Explain.Signatures (InferredSignature (..), VarBinding (..))
 import PB.Grammar.Unparse (unparseExpr)
 
 renderText :: Pseudocode -> Text
-renderText pc = T.intercalate "\n\n" (rootBlock : renderRefs pc (Set.singleton (pcRootRegion pc)) (collectRefs rootStmts))
-  where
-    rootStmts = Map.findWithDefault [] (pcRootRegion pc) (pcRegions pc)
-    rootBlock = T.intercalate "\n" (rootHeader pc <> concatMap (renderStmt 1) rootStmts)
+renderText pc = T.intercalate "\n\n" (map (renderEntry pc) (pseudocodeRegions pc))
+
+renderEntry :: Pseudocode -> RegionEntry -> Text
+renderEntry pc entry
+  | reId entry == pcRootRegion pc =
+      T.intercalate "\n" (rootHeader pc <> concatMap (renderStmt 1) (reStmts entry))
+  | otherwise =
+      T.intercalate "\n" (regionHeader (reId entry) (reLines entry) (reSig entry) : concatMap (renderStmt 1) (reStmts entry))
 
 -- | Both facts are shown whenever both exist -- they describe different
 -- things (the procedure's own declared syntax vs. its region's inferred
@@ -55,37 +59,6 @@ rootHeader pc = catMaybes
     rootLabel = maybe "root" declaredName (pcDeclaredSig pc)
     declaredName (Left fnsig)  = identOrig (fnsName fnsig)
     declaredName (Right subsig) = identOrig (ssName subsig)
-
-renderRefs :: Pseudocode -> Set.Set RegionId -> [(RegionId, Maybe (Int, Int), Maybe InferredSignature)] -> [Text]
-renderRefs _pc _seen [] = []
-renderRefs pc seen ((rid, lns, msig) : rest)
-  | rid `Set.member` seen = renderRefs pc seen rest
-  | otherwise =
-      let stmts = Map.findWithDefault [] rid (pcRegions pc)
-          header = regionHeader rid lns msig
-          block  = T.intercalate "\n" (header : concatMap (renderStmt 1) stmts)
-      in block : renderRefs pc (Set.insert rid seen) (rest <> collectRefs stmts)
-
--- | Every 'PRegionRef' reachable from a statement list, recursing into
--- 'PBranch'\/'PLoop' bodies (a cut can happen inside either arm\/body, its
--- own independent straight-line run). Does not recurse into a referenced
--- region's own body -- 'renderRefs' does that once, from 'pcRegions',
--- after checking the dedup set.
-collectRefs :: [PStmt] -> [(RegionId, Maybe (Int, Int), Maybe InferredSignature)]
-collectRefs = concatMap go
-  where
-    go (PRegionRef rid lns msig) = [(rid, lns, msig)]
-    go (PBranch _ t f _)         = collectRefs t <> collectRefs f
-    go (PLoop body _)            = collectRefs body
-    go _                         = []
-
--- | A real line range prints as @region\@\<line\>@; a genuinely leaf-free
--- region (no line info at all) falls back to 'regionIdLabel' so two such
--- regions in the same output are still visually distinguishable, not both
--- printed as an identical, ambiguous label.
-regionLabel :: RegionId -> Maybe (Int, Int) -> Text
-regionLabel _   (Just (startLine, _)) = "region@" <> T.pack (show startLine)
-regionLabel rid Nothing               = regionIdLabel rid
 
 regionHeader :: RegionId -> Maybe (Int, Int) -> Maybe InferredSignature -> Text
 regionHeader rid lns Nothing    = regionLabel rid lns

@@ -18,11 +18,14 @@
 module PB.Explain.Pseudocode
   ( PStmt (..)
   , Pseudocode (..)
+  , RegionEntry (..)
+  , pseudocodeRegions
   , buildPseudocode
   ) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import PB.AST.Expr (Expr (..))
 import PB.AST.Ident (Ident, IdentMap, identOrig)
@@ -48,6 +51,48 @@ data Pseudocode = Pseudocode
   , pcRootSig     :: Maybe InferredSignature
   , pcRegions     :: Map.Map RegionId [PStmt]
   } deriving (Eq, Show, Generic)
+
+-- | One region block in root-first, encounter-order, de-duplicated display
+-- order -- the same enumeration every renderer over 'Pseudocode' needs
+-- ('PB.Explain.Render.Text', 'PB.Explain.Render.Struct'): walk 'PStmt'
+-- lists recursively (including nested 'PBranch'\/'PLoop' bodies), find
+-- every referenced 'RegionId', and emit each one once. A region's own
+-- label\/line-range\/signature always comes from the denormalized fields
+-- already carried on the 'PRegionRef' that first refers to it (the root
+-- entry's 'reLines' is 'Nothing' since 'Pseudocode' carries no line range
+-- for its own root region).
+data RegionEntry = RegionEntry
+  { reId    :: RegionId
+  , reStmts :: [PStmt]
+  , reLines :: Maybe (Int, Int)
+  , reSig   :: Maybe InferredSignature
+  } deriving (Eq, Show, Generic)
+
+pseudocodeRegions :: Pseudocode -> [RegionEntry]
+pseudocodeRegions pc = rootEntry : go (Set.singleton rootId) (collectRegionRefs rootStmts)
+  where
+    rootId = pcRootRegion pc
+    rootStmts = Map.findWithDefault [] rootId (pcRegions pc)
+    rootEntry = RegionEntry rootId rootStmts Nothing (pcRootSig pc)
+    go _seen [] = []
+    go seen ((rid, lns, msig) : rest)
+      | rid `Set.member` seen = go seen rest
+      | otherwise =
+          let stmts = Map.findWithDefault [] rid (pcRegions pc)
+          in RegionEntry rid stmts lns msig : go (Set.insert rid seen) (rest <> collectRegionRefs stmts)
+
+-- | Every 'PRegionRef' reachable from a statement list, recursing into
+-- 'PBranch'\/'PLoop' bodies (a cut can happen inside either arm\/body, its
+-- own independent straight-line run). Does not recurse into a referenced
+-- region's own body -- 'pseudocodeRegions' does that once, from
+-- 'pcRegions', after checking the dedup set.
+collectRegionRefs :: [PStmt] -> [(RegionId, Maybe (Int, Int), Maybe InferredSignature)]
+collectRegionRefs = concatMap go
+  where
+    go (PRegionRef rid lns msig) = [(rid, lns, msig)]
+    go (PBranch _ t f _)         = collectRegionRefs t <> collectRegionRefs f
+    go (PLoop body _)            = collectRegionRefs body
+    go _                         = []
 
 -- | Resolve a call site's declared signature by keying @(selfObj, selfProc,
 -- callLine)@ into @callSiteMap@ ('PB.Explain.Signatures.ResolvedCallSiteMap')
