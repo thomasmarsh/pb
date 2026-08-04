@@ -17,7 +17,7 @@ module PB.Explain.Render.Text
 
 import PB.Prelude
 import qualified Data.Text as T
-import PB.AST.Expr (Expr)
+import PB.AST.Expr (Expr (ExNull))
 import PB.AST.Type (renderPbType)
 import PB.Explain.Pseudocode (PStmt (..))
 import PB.Explain.Regions (regionLabel)
@@ -39,5 +39,6 @@ renderStmtLine (PCall name _msig args _) =
 renderStmtLine (PBranch cond _ _ _) =
   "if (" <> unparseExpr cond <> ") {"
 renderStmtLine (PLoop _ _) = "loop {"
+renderStmtLine (PReturn ExNull _) = "return"
 renderStmtLine (PReturn e _) = "return " <> unparseExpr e
 renderStmtLine (PRegionRef rid lns _msig) = "return " <> regionLabel rid lns

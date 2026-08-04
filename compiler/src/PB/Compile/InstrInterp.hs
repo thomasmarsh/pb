@@ -34,11 +34,10 @@ import PB.Compile.ValueModel (Value (..), TraceEvent (..), MockResponses, evalEx
 --
 -- Mirrors 'PB.Compile.Interp.runEff'\'s behavior exactly, including what
 -- it does *not* do: reaching 'InstrReturn' ends the walk without emitting a
--- 'TeReturn' (no 'Eff' constructor 'runEff' interprets ever emits one
--- either — a valueless, non-loop 'SsaReturn' still compiles to a structural
--- identity\/exit-goto; a 'SsaReturn' carrying a value, or any 'SsaReturn'
--- inside a loop, compiles to a real 'EReturn' terminal instead), so the two
--- traces stay comparable.
+-- 'TeReturn' (every 'SsaReturn' shape — valueless or value-carrying, loop or
+-- non-loop — compiles to a real 'EReturn' terminal, and 'PB.Compile.Interp's
+-- 'ret' unwinds via an exception before any trace event is recorded), so the
+-- two traces stay comparable.
 --
 -- Also returns a 'TraceOutcome' disclosing *why* the walk stopped: reaching a
 -- true terminal node ('NaturalHalt') versus exhausting @maxSteps@

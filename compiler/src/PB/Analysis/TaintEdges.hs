@@ -73,10 +73,10 @@ instance Effectful TaintEdges where
   splitValue  = TaintEdges Set.empty Set.empty
   -- The one instance that CONSUMES the 'ret' payload: every free
   -- identifier of the returned expression is a var this procedure's
-  -- return value taints from. 'PB.Compile.FromSSA' compiles a valueless
-  -- @return@ to @EReturn ExNull@\/never emits 'EReturn' at all (a non-loop
-  -- valueless return stays structural identity) -- 'walkExprIdents ExNull'
-  -- is empty, so both shapes contribute no spurious returned var.
+  -- return value taints from. 'PB.Compile.FromSSA' compiles every
+  -- valueless @return@ (loop or non-loop) to @EReturn ExNull@ --
+  -- 'walkExprIdents ExNull' is empty, so it contributes no spurious
+  -- returned var.
   ret e = TaintEdges Set.empty (Set.map identOrig (walkExprIdents e))
   loopK (TaintEdges e r) = TaintEdges e r
   -- No default exists for 'branchK' (PB.Compile.IR's Effectful class has

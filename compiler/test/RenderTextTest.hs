@@ -70,6 +70,9 @@ tests = testGroup "PB.Explain.Render.Text"
     , testCase "renders a PReturn" $
         renderStmtLine (PReturn (var "x") 9) @?= "return x"
 
+    , testCase "renders a valueless PReturn (ExNull sentinel) as a bare 'return', not 'return null'" $
+        renderStmtLine (PReturn ExNull 9) @?= "return"
+
     , testCase "renders a PRegionRef as a tail-call-style return" $
         let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 (Just (PtPrimitive "integer")) Set.empty :: Eff () ()
             term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing Set.empty . ELetRef "blk1" :: Eff () ()

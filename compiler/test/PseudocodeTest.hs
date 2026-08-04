@@ -176,6 +176,33 @@ tests = testGroup "PB.Explain.Pseudocode"
                       ]
       in assertBool ("expected no PBranch with the same RegionId in both then and else arms, found offenders: " <> show offenders) (null offenders)
 
+  , testCase "real-pipeline regression: a bare valueless return inside an if-arm renders its own PReturn leaf (Plan 228, w_gridfind.if_find shape)" $
+      -- Real compiler pipeline (buildSsa -> compileSsaToEff -> buildPseudocode).
+      -- Before Plan 228, a non-loop valueless 'return' compiled to 'J PId'
+      -- (pure structural identity, no Eff leaf), so the true arm's own early
+      -- exit vanished from the rendered pseudocode entirely -- a reader
+      -- would see the arm's other statements and conclude execution falls
+      -- through, the opposite of the source's actual control flow.
+      let lv = Lvalue [LvSegment (ident "ls_x") Nothing]
+          body =
+            [ Located 1 (BsIf (IfStmt (ExBool True)
+                [ Located 2 (BsAssign lv (ExInt "1"))
+                , Located 3 (BsReturn Nothing)
+                ] [] Nothing))
+            , Located 5 (BsAssign lv (ExInt "2"))
+            ]
+          ssaProc = buildSsa emptyEnv "of_early_exit" body
+          effTerm = compileSsaToEff emptyEnv Set.empty ssaProc
+          pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "of_early_exit" noCallSites Nothing noSig effTerm
+      in case rootStmts pc of
+           [PBranch _ t f 1] -> do
+             t @?= [PAssign "ls_x" (Just (var "ls_x")) Nothing (ExInt "1") 2, PReturn ExNull 3]
+             case f of
+               [PRegionRef rid _ _] ->
+                 Map.lookup rid (pcRegions pc) @?= Just [PAssign "ls_x" (Just (var "ls_x")) Nothing (ExInt "2") 5]
+               other -> assertFailure ("expected the false arm to be a single PRegionRef to the post-if code, got " <> show other)
+           other -> assertFailure ("expected a single PBranch whose true arm ends with its own PReturn, got " <> show other)
+
   , testCase "two occurrences of the same ELetRef resolve to the same PRegionRef, not duplicated bodies" $
       let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
           term = EComp (ELetRef "blk1") (ELetRef "blk1") :: Eff () ()

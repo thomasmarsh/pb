@@ -139,12 +139,22 @@ loopHeaderLine proc blockId = case Map.lookup blockId (spBlocks proc) of
 compileTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () ()) -> Map.Map Text (Eff () ())
                  -> Set.Set Text -> Map.Map Text Text
                  -> Maybe Text -> SsaTerm -> (Eff () (), Map.Map Text (Eff () ()), Map.Map Text (Eff () ()))
--- A valueless 'return' stays structural identity (matches the pre-existing
--- treatment of every other non-loop terminator here); a return WITH a
--- value must become a real 'EReturn' terminal so
--- 'PB.Analysis.TaintEdges.ret' can see it -- see
--- doc/plan/182b-move2-intra.md Section 1 point 2.
-compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn _ln Nothing) = (J PId, memo, table)
+-- 'PB.Compile.SSA.cfgTermToSsa'' emits @SsaReturn 0 Nothing@ as its own
+-- structural sentinel (line 0 = "no originating statement") for a block
+-- with no outgoing CFG edges, i.e. a procedure simply falling off its own
+-- end -- not a real source-level @return@, so it stays structural identity
+-- with no leaf at all.
+compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn 0 Nothing) = (J PId, memo, table)
+-- Every other valueless 'return' (a real source line) and every
+-- value-carrying 'return' compile to a real 'EReturn' terminal, mirroring
+-- 'compileLoopTermToEff' below exactly: 'ExNull' is the "no value" sentinel
+-- for the valueless case ('walkExprIdents ExNull' is empty, so
+-- 'PB.Analysis.TaintEdges.ret' contributes no spurious returned var for it,
+-- same as the value-carrying case needs for a different reason -- see
+-- doc/plan/182b-move2-intra.md Section 1 point 2). A real leaf here (not
+-- 'J PId' structural identity) is what lets 'PB.Explain' render a non-loop
+-- early exit at all -- see doc/plan/228-bare-return-fromssa-leaf.md.
+compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn ln Nothing) = (EReturn ExNull ln, memo, table)
 compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn ln (Just v)) = (EReturn (ssaValToExpr v) ln, memo, table)
 compileTermToEff ctx proc memo table headers exits activeLoop (SsaGoto _ln target) =
   compileBlockToEff ctx proc target memo table headers exits activeLoop
