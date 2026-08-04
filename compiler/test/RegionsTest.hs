@@ -107,6 +107,20 @@ tests = testGroup "PB.Explain.Regions"
           r2 = computeRegions 2 effTerm
       in map regionId (regionChildren r1) @?= map regionId (regionChildren r2)
 
+  , testCase "EBranch arms sharing a merge-point ELetRef (if-without-else shape) -> the shared child region is listed once, not once per arm" $
+      -- Mirrors PB.Compile.FromSSA.compileTermToEff's SsaBranch case for an
+      -- if-without-else: both arms fall through to the same 2-predecessor
+      -- merge block, promoted to a single, literally-shared 'ELetRef' value
+      -- (memo-threaded from the true-arm compile into the false-arm
+      -- compile) -- not two structurally-identical copies.
+      let mergeBody = EAssignWithRhs "y" (ExInt "0") (ExInt "9") 5 Nothing :: Eff () ()
+          trueArm   = EComp (ELetRef "merge") (EAssignWithRhs "x" (ExInt "0") (ExInt "1") 2 Nothing) :: Eff () ()
+          falseArm  = ELetRef "merge" :: Eff () ()
+          term      = branchEff (ExBool True) trueArm falseArm 1 :: Eff () ()
+          effTerm   = EffTerm term (Map.fromList [("merge", mergeBody)])
+          region    = computeRegions defaultComplexityThreshold effTerm
+      in length (regionChildren region) @?= 1
+
   , testCase "a chain of nested doubly-referenced ELetRef bindings computes without exponential blowup" $ do
       let (table, spine) = sharedChainTable 24
           effTerm = EffTerm spine table

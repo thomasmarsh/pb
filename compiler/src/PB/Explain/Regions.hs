@@ -264,16 +264,31 @@ walk ops threshold table st eff = case eff of
         subDoneMap = Map.union (Map.delete (regionId aRegion) aMap) (Map.delete (regionId bRegion) bMap)
     pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
   EBranch cond t f ln -> do
-    (tRegion, tAcc, tMap) <- regionOf ops threshold table t
-    (fRegion, fAcc, fMap) <- regionOf ops threshold table f
-    let delta   = regionComplexity tRegion + regionComplexity fRegion - 1
-        lns     = mergeLines (Just (ln, ln)) (mergeLines (regionLines tRegion) (regionLines fRegion))
-        kids    = regionChildren tRegion <> regionChildren fRegion
-        subAcc  = opBranch ops cond ln tAcc fAcc
-        -- see EFanIn's own note: tRegion/fRegion are discarded, keep only
-        -- their children's already-closed map entries.
-        subDoneMap = Map.union (Map.delete (regionId tRegion) tMap) (Map.delete (regionId fRegion) fMap)
-    pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
+    -- An if-without-else's two arms often fall through to the SAME
+    -- 2-predecessor merge block, promoted by 'PB.Compile.FromSSA' to a
+    -- single, literally-shared 'ELetRef' value (its memo is threaded from
+    -- the true-arm compile into the false-arm compile) -- not two
+    -- structurally-identical copies. Walking @t@/@f@ independently via the
+    -- ordinary 'regionOf' would fold that ONE shared reference into BOTH
+    -- arms' own accumulators (a real, corpus-confirmed bug: see
+    -- doc/plan/226-explain-live-ui-regressions.md Layer 3), so the trailing
+    -- reference is peeled off both arms first via 'regionOfExceptTail' and,
+    -- when it's the SAME id on both sides, hoisted to run once after the
+    -- combined 'opBranch' contribution instead.
+    tPending <- regionOfExceptTail ops threshold table t
+    fPending <- regionOfExceptTail ops threshold table f
+    case (tPending, fPending) of
+      ((tSt, Just bid1), (fSt, Just bid2)) | bid1 == bid2 ->
+        let (tRegion, tAcc, tMap) = closeState tSt
+            (fRegion, fAcc, fMap) = closeState fSt
+            (delta, lns, kids, subAcc, subDoneMap) = combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap
+            st1 = addContribution ops threshold delta lns kids subAcc subDoneMap st
+        in walk ops threshold table st1 (ELetRef bid1)
+      _ -> do
+        (tRegion, tAcc, tMap) <- foldPendingRef ops threshold table tPending
+        (fRegion, fAcc, fMap) <- foldPendingRef ops threshold table fPending
+        let (delta, lns, kids, subAcc, subDoneMap) = combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap
+        pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
   ELoop body ln -> do
     (bodyRegion, bodyAcc, bodyMap) <- regionOf ops threshold table body
     let delta   = regionComplexity bodyRegion
@@ -284,6 +299,56 @@ walk ops threshold table st eff = case eff of
         -- children's already-closed map entries.
         subDoneMap = Map.delete (regionId bodyRegion) bodyMap
     pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
+
+-- | The shared "combine two closed arms into one 'RegionOps.opBranch'
+-- contribution" computation behind 'EBranch'\'s two call sites above
+-- (identical whether the shared-tail hoist fired or not).
+combineBranchContribution
+  :: RegionOps acc -> Expr -> Int
+  -> Region -> acc -> Map.Map RegionId acc
+  -> Region -> acc -> Map.Map RegionId acc
+  -> (Int, Maybe (Int, Int), [Region], acc, Map.Map RegionId acc)
+combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap =
+  ( regionComplexity tRegion + regionComplexity fRegion - 1
+  , mergeLines (Just (ln, ln)) (mergeLines (regionLines tRegion) (regionLines fRegion))
+  , regionChildren tRegion <> regionChildren fRegion
+  , opBranch ops cond ln tAcc fAcc
+  -- see EFanIn's own note: tRegion/fRegion are discarded, keep only their
+  -- children's already-closed map entries.
+  , Map.union (Map.delete (regionId tRegion) tMap) (Map.delete (regionId fRegion) fMap)
+  )
+
+-- | Mirrors 'regionOf', except: if @eff@\'s right-spine ends in a bare
+-- 'ELetRef' (the shape a branch arm gets when it falls straight through to
+-- an already-named merge point — see 'PB.Compile.FromSSA.compileTermToEff'\'s
+-- 'SsaBranch' case), that trailing reference is left un-walked and its
+-- binding id returned separately instead of being folded into the
+-- accumulator immediately. Used only by 'EBranch', to detect when both arms
+-- end in the identical reference and hoist it to the enclosing straight-
+-- line run exactly once — see 'foldPendingRef' for completing either
+-- choice once that decision is made.
+regionOfExceptTail
+  :: RegionOps acc -> Int -> Map.Map Text (Eff () ())
+  -> Eff x y -> State (RegionMemo acc) (WalkState acc, Maybe Text)
+regionOfExceptTail ops threshold table = go (initWalkState (opEmpty ops))
+  where
+    go st (ELetRef bid)           = pure (st, Just bid)
+    go st (EComp (ELetRef bid) f) = do
+      st' <- walk ops threshold table st f
+      pure (st', Just bid)
+    go st other = do
+      st' <- walk ops threshold table st other
+      pure (st', Nothing)
+
+-- | Complete a 'regionOfExceptTail' result: fold its pending reference (if
+-- any) back in via the ordinary 'ELetRef' walk case, then close —
+-- reproducing exactly what 'regionOf' alone would have produced.
+foldPendingRef
+  :: RegionOps acc -> Int -> Map.Map Text (Eff () ())
+  -> (WalkState acc, Maybe Text) -> State (RegionMemo acc) (Region, acc, Map.Map RegionId acc)
+foldPendingRef ops threshold table (st, mbid) = do
+  st' <- maybe (pure st) (\bid -> walk ops threshold table st (ELetRef bid)) mbid
+  pure (closeState st')
 
 -- | 'PB.Compile.IR.EffTerm''s 'ELetRef' table only ever stores bodies
 -- shaped @Eff () ()@ (see 'PB.Compile.IR.EffTerm'\'s own definition) — the
