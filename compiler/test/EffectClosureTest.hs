@@ -52,17 +52,17 @@ tests = testGroup "PB.Analysis.EffectClosure"
 
     , testCase "an assignment to an instance-var ident tags WritesInstanceState" $
         foldEffectClosureEff (Set.singleton (ident "ai_count"))
-          (extractEffTable (EAssignWithRhs "ai_count" (var "ai_count") (ExInt "1") 1 Nothing :: Eff () ()))
+          (extractEffTable (EAssignWithRhs "ai_count" (var "ai_count") (ExInt "1") 1 Nothing Set.empty :: Eff () ()))
           @?= Set.singleton WritesInstanceState
 
     , testCase "an assignment to a local/param ident (not in the instance set) contributes no tag" $
         foldEffectClosureEff (Set.singleton (ident "ai_count"))
-          (extractEffTable (EAssignWithRhs "li_local" (var "li_local") (ExInt "1") 1 Nothing :: Eff () ()))
+          (extractEffTable (EAssignWithRhs "li_local" (var "li_local") (ExInt "1") 1 Nothing Set.empty :: Eff () ()))
           @?= Set.empty
 
     , testCase "an assignment when no instance vars are known at all contributes no tag" $
         foldEffectClosureEff Set.empty
-          (extractEffTable (EAssignWithRhs "ai_count" (var "ai_count") (ExInt "1") 1 Nothing :: Eff () ()))
+          (extractEffTable (EAssignWithRhs "ai_count" (var "ai_count") (ExInt "1") 1 Nothing Set.empty :: Eff () ()))
           @?= Set.empty
     ]
 

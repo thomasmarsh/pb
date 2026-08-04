@@ -81,9 +81,11 @@ effectTagsOf :: EffectSetLabel -> Set.Set EffectTag
 effectTagsOf (EffectSetLabel m) = fromMaybe Set.empty m
 
 -- | Direct effect tags for one procedure: the union of every 'ECall'\/
--- 'ESuspend' leaf's own tag set within the compiled 'EffTerm', plus
--- 'WritesInstanceState' for any 'EAssignWithRhs' whose target is one of
--- @instanceVars@ (the enclosing object's own instance-var 'Ident's, e.g.
+-- 'ESuspend' leaf's own tag set within the compiled 'EffTerm', every
+-- 'EAssignWithRhs' leaf's own trailing tag set (an effectful call embedded
+-- in the RHS, e.g. @ll_nrows = idw.rowcount()@), plus 'WritesInstanceState'
+-- for any 'EAssignWithRhs' whose target is one of @instanceVars@ (the
+-- enclosing object's own instance-var 'Ident's, e.g.
 -- 'PB.Analysis.TypeEnv.ScopedTypeEnv''s @steInstance@ keys). Mirrors
 -- 'PB.Analysis.SchFootprint.foldSchFootprintEff''s walk\/memo shape (a
 -- direct fold, not the generic 'PB.Compile.IR.foldFreyd' instance-dispatch
@@ -102,7 +104,7 @@ foldEffectClosureEff instanceVars (EffTerm spine table) = fst (go spine Map.empt
     -- dead in production (see 'PB.Explain.Signatures.defIdent''s identical
     -- note), so there is no real Ident to check here.
     go (EAssign _ _ _)            m = (Set.empty, m)
-    go (EAssignWithRhs _ lhs _ _ _) m = (assignTags lhs, m)
+    go (EAssignWithRhs _ lhs _ _ _ tags) m = (assignTags lhs <> tags, m)
     go (ECall _ _ _ tags)         m = (tags, m)
     go (ESuspend _ _ _ tags)      m = (tags, m)
     go ESplitValue                m = (Set.empty, m)

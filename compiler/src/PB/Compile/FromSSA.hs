@@ -216,33 +216,47 @@ compileAssignsToEff ctx (a:as) = compileAssignsToEff ctx as . compileAssignToEff
 -- ('lookupScopedVarOrSelf') resolves @this@\/@super@ too, matching every
 -- other single-segment type lookup in the codebase; 'Nothing' (an SSA temp
 -- with no scope entry) is not an error, just an untyped assign.
+--
+-- Dispatch is on @rhs@\'s own shape first (not, as previously, gated
+-- entirely behind "is the target discarded"): a call-shaped RHS
+-- ('ExCall'\/'ExMethodCall'\/other 'classifyExpr'-recognized calls) always
+-- computes its 'classifyEffects' tag set via the shared helpers below,
+-- whether the target is the discarded @_@ sentinel (compiles straight to a
+-- bare 'ECall'\/'ESuspend', as before) or a real variable (compiles to
+-- 'EAssignWithRhs', now carrying those same tags instead of silently
+-- dropping them — the fix for the gap where @ll_nrows = idw.rowcount()@
+-- had no way to record that @rowcount@ is 'ReadsControlState').
 compileAssignToEff :: CompileCtx -> SsaAssign -> Eff () ()
-compileAssignToEff ctx (SsaAssign sv rhs lhs ln)
-  | identCanon (svName sv) == "_" = case rhs of
-      SsaConst expr@(ExCall lv parsedArgs) ->
-        compileCallExprToEff ctx sv expr lv parsedArgs ln
-      SsaConst expr@(ExMethodCall _recv _meth parsedArgs) ->
-        case classifyExpr (ccEnv ctx) expr of
-             SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
-             PureCall    -> ECall (calleeName expr) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
-      SsaConst expr ->
-        case classifyExpr (ccEnv ctx) expr of
-          SuspendCall -> ESuspend (effectName expr []) [] ln (classifyEffects (ccEnv ctx) expr)
-          PureCall    -> ECall (calleeName expr) [] ln (classifyEffects (ccEnv ctx) expr)
-      SsaVarRef _ -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
-      SsaBinOp {} -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
-      SsaNot _    -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
-      SsaNull     -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
-      SsaRaw txt  ->
-        let tags    = sqlStmtEffectTags txt
-            name    = sqlRawDisplayName txt
-            callEff = if Set.member Suspends tags
-                      then ESuspend name [] ln tags
-                      else ECall name [] ln tags
-            defEff (v, ty) = EAssignWithRhs (identOrig v) (noSubscriptLhs v) (ExRaw []) ln ty
-        in foldl' (\acc d -> defEff d . acc) callEff (intoTargetIdents (ccEnv ctx) txt)
-  | otherwise = EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType
+compileAssignToEff ctx (SsaAssign sv rhs lhs ln) = case rhs of
+    SsaConst expr@(ExCall lv parsedArgs)
+      | isDiscarded -> compileCallExprToEff ctx sv expr lv parsedArgs ln
+      | otherwise   -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType (classifyEffects (ccEnv ctx) expr)
+    SsaConst expr@(ExMethodCall _recv _meth parsedArgs)
+      | isDiscarded ->
+          case classifyExpr (ccEnv ctx) expr of
+               SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
+               PureCall    -> ECall (calleeName expr) parsedArgs ln (classifyEffects (ccEnv ctx) expr)
+      | otherwise -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType (classifyEffects (ccEnv ctx) expr)
+    SsaConst expr
+      | isDiscarded ->
+          case classifyExpr (ccEnv ctx) expr of
+            SuspendCall -> ESuspend (effectName expr []) [] ln (classifyEffects (ccEnv ctx) expr)
+            PureCall    -> ECall (calleeName expr) [] ln (classifyEffects (ccEnv ctx) expr)
+      | otherwise -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType (classifyEffects (ccEnv ctx) expr)
+    SsaVarRef _ -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType Set.empty
+    SsaBinOp {} -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType Set.empty
+    SsaNot _    -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType Set.empty
+    SsaNull     -> EAssignWithRhs (identOrig (svName sv)) lhs (ssaValToExpr rhs) ln declaredType Set.empty
+    SsaRaw txt  ->
+      let tags    = sqlStmtEffectTags txt
+          name    = sqlRawDisplayName txt
+          callEff = if Set.member Suspends tags
+                    then ESuspend name [] ln tags
+                    else ECall name [] ln tags
+          defEff (v, ty) = EAssignWithRhs (identOrig v) (noSubscriptLhs v) (ExRaw []) ln ty Set.empty
+      in foldl' (\acc d -> defEff d . acc) callEff (intoTargetIdents (ccEnv ctx) txt)
   where
+    isDiscarded = identCanon (svName sv) == "_"
     declaredType = lookupScopedVarOrSelf (svName sv) (ccEnv ctx)
 
 -- | Shared logic for compiling an ExCall expression.

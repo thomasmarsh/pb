@@ -540,7 +540,7 @@ tests = testGroup "SSA"
             ssaProc = buildSsa emptyEnv "proc" body
             EffTerm spine _ = compileSsaToEff emptyEnv Set.empty ssaProc
         case spine of
-          EAssignWithRhs _ _ _ ln _ -> ln @?= 7
+          EAssignWithRhs _ _ _ ln _ _ -> ln @?= 7
           _ -> assertBool "expected EAssignWithRhs" False
     ]
   ]

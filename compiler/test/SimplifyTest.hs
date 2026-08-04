@@ -114,8 +114,8 @@ tests = testGroup "PB.Explain.Simplify"
     ]
 
   , testCase "a store that is the region's own live-out output (per InferredSignature) is kept even with no local read" $
-      let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
-          term = EAssignWithRhs "y" (var "y") (var "x") 2 Nothing . ELetRef "blk1" :: Eff () ()
+      let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
+          term = EAssignWithRhs "y" (var "y") (var "x") 2 Nothing Set.empty . ELetRef "blk1" :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
           sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
@@ -131,7 +131,7 @@ tests = testGroup "PB.Explain.Simplify"
             , ssParams = [Param ["ref"] "long" (SourceSpan 0 0 0 0) (ident "al_x")]
             , ssThrows = Nothing, ssLibrary = Nothing, ssAliasFor = Nothing
             }
-          term = EAssignWithRhs "al_x" (var "al_x") (ExInt "1") 1 Nothing :: Eff () ()
+          term = EAssignWithRhs "al_x" (var "al_x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
           effTerm = extractEffTable term
           sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites (Just (Right refParam)) sigs effTerm
@@ -283,7 +283,7 @@ refPlusStmtPc =
 -- a trivial 'buildPseudocode' call.
 trivialPc :: Pseudocode
 trivialPc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig
-  (extractEffTable (EAssignWithRhs "a" (var "a") (ExInt "1") 1 Nothing :: Eff () ()))
+  (extractEffTable (EAssignWithRhs "a" (var "a") (ExInt "1") 1 Nothing Set.empty :: Eff () ()))
 
 genStmts :: Gen [PStmt]
 genStmts = Gen.list (Range.linear 0 4) (genStmt 2)

@@ -78,12 +78,40 @@ data Region = Region
                                           -- a real region starting at line
                                           -- 0).
   , regionChildren   :: [Region]
+  , regionDirectEffects :: Set.Set EffectTag
+      -- ^ Union of every direct (unresolved, no 'ResolvedCallSiteMap'
+      -- lookup) 'EffectTag' carried by a leaf that stayed inline in this
+      -- region — excludes any cut child's own tags (those live under the
+      -- child's own 'regionDirectEffects'). Feeds 'addContribution'\'s
+      -- effect-gap cut trigger only; a fuller, transitively-resolved
+      -- effect set for *display* is 'PB.Explain.Signatures.InferredSignature'
+      -- 'sigEffects', computed separately since resolving a call's
+      -- transitive effects needs 'PB.Explain.Signatures.ResolvedCallSiteMap'
+      -- \/ 'procEffects', which this module deliberately never resolves
+      -- itself (this module's own header note).
   }
 
 -- | Common McCabe convention; override freely via 'computeRegions'\'s
 -- explicit threshold argument.
 defaultComplexityThreshold :: Int
 defaultComplexityThreshold = 10
+
+-- | How many effect-free leaves may follow the most recent direct effect
+-- before the still-open region cuts, once at least one effect has already
+-- occurred in it (Plan 227 Phase 2). Two effectful leaves separated by
+-- fewer than this many pure statements — including separated by a
+-- structural boundary whose own combined contribution carries an effect,
+-- e.g. an @if@ where one arm calls something effectful — stay in the same
+-- region (a real corpus example: @idw.SetRedraw(false)@ immediately
+-- followed by a multi-arm @choose case@ where only one arm calls
+-- @idw.Find@ stay merged, since the branch's own combined 'regionDirectEffects'
+-- is non-empty). A leaf carrying no direct effect never cuts on its own —
+-- only 'defaultComplexityThreshold' still bounds a pathologically long pure
+-- run (Open Question 3 in doc/plan/227-explain-effect-boundary-regions.md).
+-- Picked empirically against @w_gridfind.if_find@ and re-tunable without
+-- any caller-visible shape change (an 'Int', not a type).
+defaultEffectGapBound :: Int
+defaultEffectGapBound = 4
 
 -- | Non-GADT projection of one atomic 'Eff' contribution — what a
 -- 'computeRegionsWith' caller's accumulator sees. Exists because 'Eff'\'s
@@ -94,7 +122,7 @@ defaultComplexityThreshold = 10
 -- sees it the same way it sees every other read-bearing site.
 data EffLeaf
   = LAssign        Text Int (Maybe PbType)
-  | LAssignWithRhs Text Expr Expr Int (Maybe PbType)
+  | LAssignWithRhs Text Expr Expr Int (Maybe PbType) (Set.Set EffectTag)
   | LCall          Text [Expr] Int (Set.Set EffectTag)
   | LSuspend       Text [Expr] Int (Set.Set EffectTag)
   | LReturn        Expr Int
@@ -135,11 +163,14 @@ data RegionOps acc = RegionOps
 -- map of every region closed so far (this run's cuts and any recursively
 -- closed sub-regions). Fields (positional, no accessors): running
 -- complexity, running line span, children of the still-open portion,
--- already-cut sibling regions, running accumulator, closed-region map.
-data WalkState acc = WalkState Int (Maybe (Int, Int)) [Region] [Region] acc (Map.Map RegionId acc)
+-- already-cut sibling regions, running accumulator, closed-region map,
+-- running direct-effect union for the still-open portion, count of
+-- contributions since the most recent one that carried a direct effect
+-- (see 'defaultEffectGapBound').
+data WalkState acc = WalkState Int (Maybe (Int, Int)) [Region] [Region] acc (Map.Map RegionId acc) (Set.Set EffectTag) Int
 
 initWalkState :: acc -> WalkState acc
-initWalkState accEmpty = WalkState 1 Nothing [] [] accEmpty Map.empty
+initWalkState accEmpty = WalkState 1 Nothing [] [] accEmpty Map.empty Set.empty 0
 
 mergeLines :: Maybe (Int, Int) -> Maybe (Int, Int) -> Maybe (Int, Int)
 mergeLines Nothing y = y
@@ -162,13 +193,14 @@ mkRegionId doneMap = fresh (0 :: Int)
               in if Map.member rid doneMap then fresh (n + 1) else rid
 
 closeState :: WalkState acc -> (Region, acc, Map.Map RegionId acc)
-closeState (WalkState cplx lns ownKids cutKids acc doneMap) =
+closeState (WalkState cplx lns ownKids cutKids acc doneMap directEff _sinceEff) =
   let rid = mkRegionId doneMap
       region = Region
-        { regionId         = rid
-        , regionComplexity = cplx
-        , regionLines      = lns
-        , regionChildren   = cutKids <> ownKids
+        { regionId            = rid
+        , regionComplexity    = cplx
+        , regionLines         = lns
+        , regionChildren      = cutKids <> ownKids
+        , regionDirectEffects = directEff
         }
   in (region, acc, Map.insert rid acc doneMap)
 
@@ -176,24 +208,34 @@ closeState (WalkState cplx lns ownKids cutKids acc doneMap) =
 -- result, or a structural node's already-'RegionOps.opChoice'-combined
 -- result) into the still-open portion, cutting it into a finished sibling
 -- 'Region' when the running complexity exceeds the threshold ("cut at the
--- next statement boundary"). @extraKids@/@subDoneMap@ carry any child
--- regions (and their own accumulators) already closed while computing
--- @subAcc@ (an 'ELetRef'\/'EBranch'\/'ELoop'\/'EFanIn' sub-walk).
-addContribution :: RegionOps acc -> Int -> Int -> Maybe (Int, Int) -> [Region] -> acc -> Map.Map RegionId acc -> WalkState acc -> WalkState acc
-addContribution ops threshold deltaComplexity lns extraKids subAcc subDoneMap (WalkState cplx lns0 ownKids cutKids acc doneMap) =
-  let cplx'    = cplx + deltaComplexity
-      lines'   = mergeLines lns0 lns
-      ownKids' = ownKids <> extraKids
-      acc'     = opSeq ops acc subAcc
-      doneMap0 = Map.union doneMap subDoneMap
-  in if cplx' > threshold
-       then let (closed, _closedAcc, doneMap1) = closeState (WalkState cplx' lines' ownKids' [] acc' doneMap0)
+-- next statement boundary") OR, independently, when the still-open portion
+-- has already seen a direct effect and 'defaultEffectGapBound' effect-free
+-- contributions have gone by since the most recent one (Plan 227 Phase 2) —
+-- either trigger cuts, whichever fires first; a contribution carrying no
+-- direct effect at all never cuts on its own, only the complexity threshold
+-- can. @extraKids@/@subDoneMap@ carry any child regions (and their own
+-- accumulators) already closed while computing @subAcc@ (an
+-- 'ELetRef'\/'EBranch'\/'ELoop'\/'EFanIn' sub-walk); @deltaEffects@ is this
+-- contribution's own direct effect set (a leaf's own tags, or a structural
+-- node's already-combined 'regionDirectEffects' union across its arms).
+addContribution :: RegionOps acc -> Int -> Int -> Maybe (Int, Int) -> [Region] -> acc -> Map.Map RegionId acc -> Set.Set EffectTag -> WalkState acc -> WalkState acc
+addContribution ops threshold deltaComplexity lns extraKids subAcc subDoneMap deltaEffects (WalkState cplx lns0 ownKids cutKids acc doneMap directEff sinceEff) =
+  let cplx'      = cplx + deltaComplexity
+      lines'     = mergeLines lns0 lns
+      ownKids'   = ownKids <> extraKids
+      acc'       = opSeq ops acc subAcc
+      doneMap0   = Map.union doneMap subDoneMap
+      directEff' = directEff <> deltaEffects
+      sinceEff'  = if Set.null deltaEffects then sinceEff + 1 else 0
+      cutOnEffectGap = not (Set.null directEff') && sinceEff' > defaultEffectGapBound
+  in if cplx' > threshold || cutOnEffectGap
+       then let (closed, _closedAcc, doneMap1) = closeState (WalkState cplx' lines' ownKids' [] acc' doneMap0 directEff' sinceEff')
                 -- Seed the next run with a reference to the sibling just cut
                 -- out, so a caller reconstructing a statement sequence can
                 -- mark where it was -- not just that it exists in the tree.
                 freshAcc = opRef ops (regionId closed) (regionLines closed)
-            in WalkState 1 Nothing [] (cutKids <> [closed]) freshAcc doneMap1
-       else WalkState cplx' lines' ownKids' cutKids acc' doneMap0
+            in WalkState 1 Nothing [] (cutKids <> [closed]) freshAcc doneMap1 Set.empty 0
+       else WalkState cplx' lines' ownKids' cutKids acc' doneMap0 directEff' sinceEff'
 
 -- | Per-@bid@ memo cache threaded through one 'computeRegionsWith' call:
 -- once a shared 'ELetRef' binding has been walked, every later occurrence
@@ -234,22 +276,22 @@ walk ops threshold table st eff = case eff of
         result <- regionOf ops threshold table body
         modify' (Map.insert bid result)
         pure result
-    let WalkState cplx lns0 ownKids cutKids acc doneMap = st
+    let WalkState cplx lns0 ownKids cutKids acc doneMap directEff sinceEff = st
         acc' = opSeq ops acc (opRef ops (regionId childRegion) (regionLines childRegion))
-    pure (WalkState cplx lns0 (ownKids <> [childRegion]) cutKids acc' (Map.union doneMap childMap))
+    pure (WalkState cplx lns0 (ownKids <> [childRegion]) cutKids acc' (Map.union doneMap childMap) directEff sinceEff)
   EComp g f -> do
     st' <- walk ops threshold table st f
     walk ops threshold table st' g
   EAssign var ln ty ->
-    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssign var ln ty)) Map.empty st)
-  EAssignWithRhs var lhsE rhsE ln ty ->
-    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssignWithRhs var lhsE rhsE ln ty)) Map.empty st)
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssign var ln ty)) Map.empty Set.empty st)
+  EAssignWithRhs var lhsE rhsE ln ty tags ->
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LAssignWithRhs var lhsE rhsE ln ty tags)) Map.empty tags st)
   ECall n as ln tags ->
-    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LCall n as ln tags)) Map.empty st)
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LCall n as ln tags)) Map.empty tags st)
   ESuspend n as ln tags ->
-    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LSuspend n as ln tags)) Map.empty st)
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LSuspend n as ln tags)) Map.empty tags st)
   EReturn e ln ->
-    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LReturn e ln)) Map.empty st)
+    pure (addContribution ops threshold 0 (Just (ln, ln)) [] (opLeaf ops (LReturn e ln)) Map.empty Set.empty st)
   ESplitValue -> pure st
   EFanIn a b -> do
     (aRegion, aAcc, aMap) <- regionOf ops threshold table a
@@ -258,11 +300,12 @@ walk ops threshold table st eff = case eff of
         lns     = mergeLines (regionLines aRegion) (regionLines bRegion)
         kids    = regionChildren aRegion <> regionChildren bRegion
         subAcc  = opFanIn ops aAcc bAcc
+        deltaEff = regionDirectEffects aRegion <> regionDirectEffects bRegion
         -- aRegion/bRegion themselves are discarded (only their own
         -- children survive into 'kids'), so their own map entries --
         -- inserted by 'closeState' -- must be dropped too, not unioned in.
         subDoneMap = Map.union (Map.delete (regionId aRegion) aMap) (Map.delete (regionId bRegion) bMap)
-    pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
+    pure (addContribution ops threshold delta lns kids subAcc subDoneMap deltaEff st)
   EBranch cond t f ln -> do
     -- An if-without-else's two arms often fall through to the SAME
     -- 2-predecessor merge block, promoted by 'PB.Compile.FromSSA' to a
@@ -281,24 +324,25 @@ walk ops threshold table st eff = case eff of
       ((tSt, Just bid1), (fSt, Just bid2)) | bid1 == bid2 ->
         let (tRegion, tAcc, tMap) = closeState tSt
             (fRegion, fAcc, fMap) = closeState fSt
-            (delta, lns, kids, subAcc, subDoneMap) = combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap
-            st1 = addContribution ops threshold delta lns kids subAcc subDoneMap st
+            (delta, lns, kids, subAcc, subDoneMap, deltaEff) = combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap
+            st1 = addContribution ops threshold delta lns kids subAcc subDoneMap deltaEff st
         in walk ops threshold table st1 (ELetRef bid1)
       _ -> do
         (tRegion, tAcc, tMap) <- foldPendingRef ops threshold table tPending
         (fRegion, fAcc, fMap) <- foldPendingRef ops threshold table fPending
-        let (delta, lns, kids, subAcc, subDoneMap) = combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap
-        pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
+        let (delta, lns, kids, subAcc, subDoneMap, deltaEff) = combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap
+        pure (addContribution ops threshold delta lns kids subAcc subDoneMap deltaEff st)
   ELoop body ln -> do
     (bodyRegion, bodyAcc, bodyMap) <- regionOf ops threshold table body
     let delta   = regionComplexity bodyRegion
         lns     = mergeLines (Just (ln, ln)) (regionLines bodyRegion)
         kids    = regionChildren bodyRegion
         subAcc  = opLoop ops ln bodyAcc
+        deltaEff = regionDirectEffects bodyRegion
         -- see EFanIn's own note: bodyRegion is discarded, keep only its
         -- children's already-closed map entries.
         subDoneMap = Map.delete (regionId bodyRegion) bodyMap
-    pure (addContribution ops threshold delta lns kids subAcc subDoneMap st)
+    pure (addContribution ops threshold delta lns kids subAcc subDoneMap deltaEff st)
 
 -- | The shared "combine two closed arms into one 'RegionOps.opBranch'
 -- contribution" computation behind 'EBranch'\'s two call sites above
@@ -307,7 +351,7 @@ combineBranchContribution
   :: RegionOps acc -> Expr -> Int
   -> Region -> acc -> Map.Map RegionId acc
   -> Region -> acc -> Map.Map RegionId acc
-  -> (Int, Maybe (Int, Int), [Region], acc, Map.Map RegionId acc)
+  -> (Int, Maybe (Int, Int), [Region], acc, Map.Map RegionId acc, Set.Set EffectTag)
 combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap =
   ( regionComplexity tRegion + regionComplexity fRegion - 1
   , mergeLines (Just (ln, ln)) (mergeLines (regionLines tRegion) (regionLines fRegion))
@@ -316,6 +360,7 @@ combineBranchContribution ops cond ln tRegion tAcc tMap fRegion fAcc fMap =
   -- see EFanIn's own note: tRegion/fRegion are discarded, keep only their
   -- children's already-closed map entries.
   , Map.union (Map.delete (regionId tRegion) tMap) (Map.delete (regionId fRegion) fMap)
+  , regionDirectEffects tRegion <> regionDirectEffects fRegion
   )
 
 -- | Mirrors 'regionOf', except: if @eff@\'s right-spine ends in a bare

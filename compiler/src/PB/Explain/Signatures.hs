@@ -19,6 +19,7 @@ module PB.Explain.Signatures
 import PB.Prelude hiding (id, (.))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import PB.AST.Expr (Expr (..))
 import PB.AST.Ident (Ident, IdentMap, identMapLookup, identOrig, mkIdentSynthetic)
@@ -43,21 +44,35 @@ data InferredSignature = InferredSignature
   } deriving (Eq, Show, Generic)
 
 -- | Every corpus-wide resolved call site, keyed by exactly where it's
--- written: @(callerObject, callerProc, callLine) -> (calleeObject,
--- calleeProc)@. Sourced from 'PB.Analysis.Taint.ResolvedCallRow' — the same
--- fact 'PB.Analysis.TypeResolve.resolveVirtual' already computes once,
--- corpus-wide, handling both a dotted receiver-typed call (@dw_1.Retrieve()@)
--- and a bare call to a global function or an unrelated object (via
--- 'resolveVirtual''s own "exactly one other match" fallback) — a
+-- written: @(callerObject, callerProc, callLine, calleeNameLower) ->
+-- (calleeObject, calleeProc)@. Sourced from 'PB.Analysis.Taint.ResolvedCallRow'
+-- — the same fact 'PB.Analysis.TypeResolve.resolveVirtual' already computes
+-- once, corpus-wide, handling both a dotted receiver-typed call
+-- (@dw_1.Retrieve()@) and a bare call to a global function or an unrelated
+-- object (via 'resolveVirtual''s own "exactly one other match" fallback) — a
 -- deliberately more complete resolution than any bare ancestor-chain walk
 -- rooted at the caller's own object could give. A row with no line number or
 -- no resolved target is simply absent, not an error (same "unresolved
 -- degrades to no extra fact" shape the rest of this module already uses).
-type ResolvedCallSiteMap = Map.Map (Text, Text, Int) (Text, Text)
+--
+-- The trailing @calleeNameLower@ component (the as-written callee text,
+-- lowercased) disambiguates two distinct calls sharing one source line — a
+-- very common real shape via a nested call argument, e.g.
+-- @MessageBox(trn(68), trn(161))@, where @MessageBox@ and both @trn@ calls
+-- all resolve on line 103. Without it, @(object, proc, line)@ alone collides
+-- and one call's lookup can return a sibling call's resolved target — a
+-- confirmed real bug (region@1 in @w_gridfind.if_find@ showed a spurious
+-- 'ReadsDb' tag that was actually @trn@'s, misattributed to @MessageBox@ on
+-- the same line). Matching on the as-written text (not the resolved target
+-- name) preserves the existing "resolution doesn't care what the call text
+-- looks like" guarantee for a dotted receiver call — @dw_1.Retrieve()@'s own
+-- leaf and its own resolved-call-row always carry the identical as-written
+-- text, regardless of what the row's resolved target proc is named.
+type ResolvedCallSiteMap = Map.Map (Text, Text, Int, Text) (Text, Text)
 
 buildResolvedCallSiteMap :: [Taint.ResolvedCallRow] -> ResolvedCallSiteMap
 buildResolvedCallSiteMap rows = Map.fromList
-  [ ((Taint.rcrObject r, Taint.rcrFromProc r, ln), (tObj, tProc))
+  [ ((Taint.rcrObject r, Taint.rcrFromProc r, ln, T.toLower (Taint.rcrToName r)), (tObj, tProc))
   | r <- rows
   , Just ln   <- [Taint.rcrCallLine r]
   , Just tObj <- [Taint.rcrTargetObject r]
@@ -112,7 +127,7 @@ sigAccLeaf selfObj selfProc callSiteMap procEffects leaf = case leaf of
   LAssign var _ln _ty ->
     let d = defIdent var Nothing
     in sigAccEmpty { saLocallyDefined = Set.singleton d, saAllDefs = Set.singleton d }
-  LAssignWithRhs var lhsE rhsE _ln _ty ->
+  LAssignWithRhs var lhsE rhsE _ln _ty tags ->
     let d = defIdent var (Just lhsE)
         rs = walkExprIdentsExcludingCallees rhsE <> lhsSubscriptIdents lhsE
     in SigAcc
@@ -120,17 +135,17 @@ sigAccLeaf selfObj selfProc callSiteMap procEffects leaf = case leaf of
         , saFreeReads      = rs
         , saAllDefs        = Set.singleton d
         , saAllUses        = rs
-        , saEffects        = Set.empty
+        , saEffects        = tags
         }
-  LCall _name callArgs ln tags    -> callLeaf callArgs ln tags
-  LSuspend _name callArgs ln tags -> callLeaf callArgs ln tags
+  LCall name callArgs ln tags    -> callLeaf name callArgs ln tags
+  LSuspend name callArgs ln tags -> callLeaf name callArgs ln tags
   LReturn e _ln                -> readsOnly (walkExprIdentsExcludingCallees e)
   LBranchCond cond _ln         -> readsOnly (walkExprIdentsExcludingCallees cond)
   where
     readsOnly rs = sigAccEmpty { saFreeReads = rs, saAllUses = rs }
-    callLeaf callArgs ln tags =
+    callLeaf name callArgs ln tags =
       let rs  = foldMap walkExprIdentsExcludingCallees callArgs
-          resolvedEff = case Map.lookup (selfObj, selfProc, ln) callSiteMap of
+          resolvedEff = case Map.lookup (selfObj, selfProc, ln, T.toLower name) callSiteMap of
             Just target -> Map.findWithDefault Set.empty target procEffects
             Nothing     -> Set.empty
           eff = tags <> resolvedEff

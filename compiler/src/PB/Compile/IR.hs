@@ -223,7 +223,16 @@ data Eff a b where
   -- declared type from 'PB.Analysis.TypeEnv.ScopedTypeEnv', or 'Nothing'
   -- when the SSA temp has no scope entry (never an error).
   EAssign       :: Text -> Int -> Maybe PbType -> Eff (env, Value) env
-  EAssignWithRhs :: Text -> Expr -> Expr -> Int -> Maybe PbType -> Eff env env
+  -- | Trailing 'Set.Set' 'EffectTag': the full effect classification
+  -- ('PB.Analysis.CallClassify.classifyEffects') for a call embedded
+  -- directly in this assign's RHS (e.g. @ll_nrows = idw.rowcount()@) --
+  -- 'Set.empty' when the RHS is not a call at all. Symmetric with
+  -- 'ECall'\/'ESuspend's own trailing tag set below; without this field an
+  -- effectful call whose result is assigned to a named variable (as opposed
+  -- to the discarded @_@ target, which instead compiles straight to
+  -- 'ECall'\/'ESuspend') had no way to carry its classification at all --
+  -- see 'PB.Compile.FromSSA.compileAssignToEff'.
+  EAssignWithRhs :: Text -> Expr -> Expr -> Int -> Maybe PbType -> Set.Set EffectTag -> Eff env env
   -- | Trailing 'Set.Set' 'EffectTag': the full effect classification
   -- ('PB.Analysis.CallClassify.classifyEffects') for this call, threaded
   -- alongside the pre-existing 'Suspends'\/'PureCall' verdict
@@ -285,7 +294,7 @@ instance Effectful Eff where
   ret e           = EReturn e 0
   loopK body      = ELoop body 0
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
-  assignWithRhs var lhs e = EAssignWithRhs var lhs e 0 Nothing
+  assignWithRhs var lhs e = EAssignWithRhs var lhs e 0 Nothing Set.empty
 
 -- ============================================================================
 -- 4. The Eff shared-term table
@@ -359,7 +368,7 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
     -- Direct consumers of provenance (a future 'PB.Explain.*') walk
     -- 'Eff'\/'EffTerm' directly instead of going through this fold.
     go (EAssign var _ln _ty)      m = (assign var, m)
-    go (EAssignWithRhs v lhs e' _ln _ty) m = (assignWithRhs v lhs e', m)
+    go (EAssignWithRhs v lhs e' _ln _ty _tags) m = (assignWithRhs v lhs e', m)
     go (ECall n as _ln tags)   m = (callProc n as tags, m)
     go (ESuspend n as _ln tags) m = (suspend n as tags, m)
     go ESplitValue        m = (splitValue, m)

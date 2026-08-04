@@ -71,8 +71,8 @@ tests = testGroup "PB.Explain.Render.Text"
         renderStmtLine (PReturn (var "x") 9) @?= "return x"
 
     , testCase "renders a PRegionRef as a tail-call-style return" $
-        let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 (Just (PtPrimitive "integer")) :: Eff () ()
-            term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing . ELetRef "blk1" :: Eff () ()
+        let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 (Just (PtPrimitive "integer")) Set.empty :: Eff () ()
+            term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing Set.empty . ELetRef "blk1" :: Eff () ()
             effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
             pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
             rootStmts = Map.findWithDefault [] (pcRootRegion pc) (pcRegions pc)

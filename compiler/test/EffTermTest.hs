@@ -92,7 +92,7 @@ hasEffAssign n (EffTerm spine table) = go spine
   where
     go :: Eff x y -> Bool
     go (EAssign t _ _) = n == t
-    go (EAssignWithRhs t _ _ _ _) = n == t
+    go (EAssignWithRhs t _ _ _ _ _) = n == t
     go (EComp f g) = go f P.|| go g
     go (EFanIn f g) = go f P.|| go g
     go (EBranch _ f g _) = go f P.|| go g
@@ -169,6 +169,22 @@ firstEffTags (EffTerm spine table) = go spine
     go (ELetRef bid) = Map.lookup bid table >>= go
     go _ = Nothing
 
+-- | The 'Set.Set' 'EffectTag' of the first 'EAssignWithRhs' node found in an
+-- 'EffTerm' (depth-first), or 'Nothing' if it has none — mirrors
+-- 'firstEffTags' but for a call embedded in an assignment's RHS rather than
+-- a bare statement-level call.
+firstAssignEffTags :: EffTerm a b -> Maybe (Set.Set EffectTag)
+firstAssignEffTags (EffTerm spine table) = go spine
+  where
+    go :: Eff x y -> Maybe (Set.Set EffectTag)
+    go (EAssignWithRhs _ _ _ _ _ tags) = Just tags
+    go (EComp f g) = go f <|> go g
+    go (EFanIn f g) = go f <|> go g
+    go (EBranch _ f g _) = go f <|> go g
+    go (ELoop f _) = go f
+    go (ELetRef bid) = Map.lookup bid table >>= go
+    go _ = Nothing
+
 -- | The 'Text' name of the first 'ECall'\/'ESuspend' node found in an
 -- 'EffTerm' (depth-first) -- used to assert a 'BsRaw'-derived call's own
 -- display name is a short tag, never the full raw statement text.
@@ -193,7 +209,7 @@ effAssignLhsIdent :: Text -> EffTerm a b -> Maybe Ident
 effAssignLhsIdent n (EffTerm spine table) = go spine
   where
     go :: Eff x y -> Maybe Ident
-    go (EAssignWithRhs t (ExLvalue (Lvalue (LvSegment i Nothing : _))) _ _ _) | t == n = Just i
+    go (EAssignWithRhs t (ExLvalue (Lvalue (LvSegment i Nothing : _))) _ _ _ _) | t == n = Just i
     go (EComp f g) = go f <|> go g
     go (EFanIn f g) = go f <|> go g
     go (EBranch _ f g _) = go f <|> go g
@@ -384,6 +400,23 @@ tests = testGroup "EffTerm"
             result = compileSsaToEff dwEnv Set.empty sa
         in assertBool "should still contain ESuspend" (hasAnyEffSuspend result)
 
+    , testCase "x = dw_foo.retrieve()'s EAssignWithRhs carries the full classifyEffects tag set, not an empty set" $
+        -- Bug A (Plan 227 Phase 2): an effectful call whose result is
+        -- assigned to a real variable used to have no way to carry its
+        -- classification at all -- EAssignWithRhs's tag field fixes it.
+        let callExpr = ExCall
+              { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
+              , callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr) (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff dwEnv Set.empty sa
+        in firstAssignEffTags result @?= Just (Set.fromList [Suspends, ReadsDb])
+
+    , testCase "x = my_func() (pure user function) EAssignWithRhs carries an empty tag set" $
+        let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr) (ExInt "0") 1] (SsaReturn 1 Nothing)
+            result = compileSsaToEff emptyEnv Set.empty sa
+        in firstAssignEffTags result @?= Just Set.empty
+
     , testCase "end-to-end: x = messagebox() matches old compiler's [SAsgn, SRet]" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "messagebox" Nothing], callArgs = [] }
             body     = [Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) callExpr)]
@@ -520,27 +553,27 @@ tests = testGroup "EffTerm"
         isTrace st @?= []
 
     , testCase "runEff EAssignWithRhs updates env and emits TeAssign" $ do
-        let term = EAssignWithRhs "x_1" (ExInt "0") (ExInt "42") 1 Nothing :: Eff () ()
+        let term = EAssignWithRhs "x_1" (ExInt "0") (ExInt "42") 1 Nothing Set.empty :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         Map.lookup "x_1" (isEnv st) @?= Just (VInt 42)
         P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 42)]
 
     , testCase "runEff EComp threads env through both assigns in order" $ do
-        let term = EAssignWithRhs "y_1" (ExInt "0") (ExInt "2") 1 Nothing . EAssignWithRhs "x_1" (ExInt "0") (ExInt "1") 1 Nothing :: Eff () ()
+        let term = EAssignWithRhs "y_1" (ExInt "0") (ExInt "2") 1 Nothing Set.empty . EAssignWithRhs "x_1" (ExInt "0") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 1), TeAssign "y_1" (VInt 2)]
 
     , testCase "runEff branchEff emits TeBranch True and takes the then-arm" $ do
         let term = branchEff (ExBool True)
-                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing)
-                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing) 1 :: Eff () ()
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing Set.empty)
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing Set.empty) 1 :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeBranch True, TeAssign "then_taken" (VInt 1)]
 
     , testCase "runEff branchEff emits TeBranch False and takes the else-arm" $ do
         let term = branchEff (ExBool False)
-                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing)
-                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing) 1 :: Eff () ()
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing Set.empty)
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing Set.empty) 1 :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeBranch False, TeAssign "else_taken" (VInt 2)]
 
@@ -881,7 +914,7 @@ tests = testGroup "EffTerm"
         ienv @?= genv
 
     , testCase "EAssignWithRhs: same assign trace, same env" $ do
-        let term = extractEffTable (EAssignWithRhs "x_1" (ExInt "0") (ExInt "42") 1 Nothing :: Eff () ())
+        let term = extractEffTable (EAssignWithRhs "x_1" (ExInt "0") (ExInt "42") 1 Nothing Set.empty :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= [TeAssign "x_1" (VInt 42)]
@@ -889,7 +922,7 @@ tests = testGroup "EffTerm"
         ienv @?= genv
 
     , testCase "EComp: two assigns execute in the same order" $ do
-        let term = extractEffTable (EAssignWithRhs "y_1" (ExInt "0") (ExInt "2") 1 Nothing . EAssignWithRhs "x_1" (ExInt "0") (ExInt "1") 1 Nothing :: Eff () ())
+        let term = extractEffTable (EAssignWithRhs "y_1" (ExInt "0") (ExInt "2") 1 Nothing Set.empty . EAssignWithRhs "x_1" (ExInt "0") (ExInt "1") 1 Nothing Set.empty :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
@@ -897,8 +930,8 @@ tests = testGroup "EffTerm"
 
     , testCase "branchEff True: then-arm taken on both backends" $ do
         let term = extractEffTable (branchEff (ExBool True)
-                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing)
-                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing) 1 :: Eff () ())
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing Set.empty)
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing Set.empty) 1 :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
@@ -906,8 +939,8 @@ tests = testGroup "EffTerm"
 
     , testCase "branchEff False: else-arm taken on both backends" $ do
         let term = extractEffTable (branchEff (ExBool False)
-                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing)
-                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing) 1 :: Eff () ())
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing Set.empty)
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing Set.empty) 1 :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
@@ -936,7 +969,7 @@ tests = testGroup "EffTerm"
             cond = ExBinOp iVar BopLt (ExInt "3")
             incr = ExBinOp iVar BopAdd (ExInt "1")
             loopBody = branchEff cond
-                         (J PInl . EAssignWithRhs "i" (ExInt "0") incr 1 Nothing)
+                         (J PInl . EAssignWithRhs "i" (ExInt "0") incr 1 Nothing Set.empty)
                          (J PInr) 1 :: Eff () (Either () ())
             term = extractEffTable (ELoop loopBody 1 :: Eff () ())
             initEnv = Map.fromList [("i", VInt 0)]
@@ -1555,8 +1588,8 @@ tests = testGroup "EffTerm"
     -- replaces; these tests are the behavioral proof, not just a
     -- compile-success check.
     [ testCase "branchK matches branchEff's trace for Eff (via foldFreyd/Interp)" $ do
-        let te = EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing :: Eff () ()
-            fe = EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing :: Eff () ()
+        let te = EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
+            fe = EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") 1 Nothing Set.empty :: Eff () ()
             cond = ExBool True
             viaBranchEff = branchEff cond te fe 1
             viaBranchK   = branchK cond te fe :: Eff () ()
@@ -1597,7 +1630,7 @@ tests = testGroup "EffTerm"
             ssaProc  = buildSsa typedEnv "proc" body
             EffTerm spine _ = compileSsaToEff typedEnv Set.empty ssaProc
         case spine of
-          EAssignWithRhs _ _ _ _ mty -> mty @?= Just (PtPrimitive "integer")
+          EAssignWithRhs _ _ _ _ mty _ -> mty @?= Just (PtPrimitive "integer")
           _ -> assertFailure "expected EAssignWithRhs"
 
     , testCase "assigning to an SSA temp with no scope entry -> EAssign carries Nothing" $ do
@@ -1605,7 +1638,7 @@ tests = testGroup "EffTerm"
             ssaProc = buildSsa emptyEnv "proc" body
             EffTerm spine _ = compileSsaToEff emptyEnv Set.empty ssaProc
         case spine of
-          EAssignWithRhs _ _ _ _ mty -> mty @?= Nothing
+          EAssignWithRhs _ _ _ _ mty _ -> mty @?= Nothing
           _ -> assertFailure "expected EAssignWithRhs"
     ]
   ]

@@ -337,7 +337,7 @@ field' _ _          = Null
 testMaterializeProcPseudocodeRowPerProc :: IO ()
 testMaterializeProcPseudocodeRowPerProc = withHandle inMemory $ \conn -> do
   initSchema conn
-  let term = extractEffTable (EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ())
+  let term = extractEffTable (EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ())
       seedRows =
         [ ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")
         , ExplainSeedRow "w_b" "ue_open"    term (envFor "w_b")
@@ -351,7 +351,7 @@ testMaterializeProcPseudocodeRowPerProc = withHandle inMemory $ \conn -> do
 testMaterializeProcPseudocodeJsonShape :: IO ()
 testMaterializeProcPseudocodeJsonShape = withHandle inMemory $ \conn -> do
   initSchema conn
-  let term = extractEffTable (EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ())
+  let term = extractEffTable (EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ())
   materializeProcPseudocode identMapEmpty Map.empty [] [ExplainSeedRow "w_a" "ue_clicked" term (envFor "w_a")] conn
   [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"
   let v = decodeJson raw
@@ -413,8 +413,8 @@ testMaterializeProcPseudocodeStmtText :: IO ()
 testMaterializeProcPseudocodeStmtText = withHandle inMemory $ \conn -> do
   initSchema conn
   let term = branchEff (var "cond")
-               (EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing)
-               (EAssignWithRhs "b" (var "b") (ExInt "2") 3 Nothing) 1 :: Eff () ()
+               (EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing Set.empty)
+               (EAssignWithRhs "b" (var "b") (ExInt "2") 3 Nothing Set.empty) 1 :: Eff () ()
       effTerm = extractEffTable term
   materializeProcPseudocode identMapEmpty Map.empty [] [ExplainSeedRow "w_a" "ue_clicked" effTerm (envFor "w_a")] conn
   [ProcPseudocodeRow _ _ raw] <- queryHandle conn "SELECT object, proc_name, pseudocode_json FROM proc_pseudocode"

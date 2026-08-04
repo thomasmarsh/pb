@@ -26,6 +26,7 @@ module PB.Explain.Pseudocode
 import PB.Prelude hiding (id, (.))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import PB.AST.Expr (Expr (..))
 import PB.AST.Ident (Ident, IdentMap, identOrig)
@@ -94,21 +95,25 @@ collectRegionRefs = concatMap go
     go _                         = []
 
 -- | Resolve a call site's declared signature by keying @(selfObj, selfProc,
--- callLine)@ into @callSiteMap@ ('PB.Explain.Signatures.ResolvedCallSiteMap')
--- to get its real resolved target, then looking that target's declaration up
--- in @sigMap@ via 'PB.Explain.Signatures.lookupDeclaredSig' -- the same
--- corpus-wide resolution 'PB.Explain.Signatures' uses for transitive
--- effect-tag lookup, so a dotted receiver call (@dw_1.Retrieve()@) or a bare
--- call to a global function resolves here too, not just a same-object bare
--- call. An unresolved call site (absent from @callSiteMap@) renders
--- name-only, matching the plan's own Non-Goal that an unresolved call
--- degrades rather than blocks.
+-- callLine, calleeNameLower)@ into @callSiteMap@
+-- ('PB.Explain.Signatures.ResolvedCallSiteMap') to get its real resolved
+-- target, then looking that target's declaration up in @sigMap@ via
+-- 'PB.Explain.Signatures.lookupDeclaredSig' -- the same corpus-wide
+-- resolution 'PB.Explain.Signatures' uses for transitive effect-tag lookup,
+-- so a dotted receiver call (@dw_1.Retrieve()@) or a bare call to a global
+-- function resolves here too, not just a same-object bare call. The trailing
+-- callee-name component (matching 'PB.Explain.Signatures.sigAccLeaf's own
+-- lookup key) disambiguates two distinct calls sharing one line, e.g.
+-- @MessageBox(trn(68), trn(161))@ -- without it, @MessageBox@'s own lookup
+-- could return @trn@'s resolved target. An unresolved call site (absent from
+-- @callSiteMap@) renders name-only, matching the plan's own Non-Goal that an
+-- unresolved call degrades rather than blocks.
 resolveCallSite
   :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig))
-  -> Text -> ResolvedCallSiteMap -> Int
+  -> Text -> ResolvedCallSiteMap -> Int -> Text
   -> Maybe (Either FnSig SubSig)
-resolveCallSite env sigMap selfProc callSiteMap ln =
-  Map.lookup (identOrig (steObject env), selfProc, ln) callSiteMap
+resolveCallSite env sigMap selfProc callSiteMap ln name =
+  Map.lookup (identOrig (steObject env), selfProc, ln, T.toLower name) callSiteMap
     >>= \(tObj, tProc) -> lookupDeclaredSig sigMap tObj tProc
 
 -- | One atomic 'EffLeaf' contribution's own 'PStmt' (a singleton list).
@@ -120,11 +125,11 @@ leafToStmt
   :: ScopedTypeEnv -> IdentMap (Map.Map Ident (Either FnSig SubSig))
   -> Text -> ResolvedCallSiteMap -> EffLeaf -> [PStmt]
 leafToStmt _env _sigMap _selfProc _callSiteMap (LAssign var ln ty) = [PAssign var Nothing ty (ExRaw []) ln]
-leafToStmt _env _sigMap _selfProc _callSiteMap (LAssignWithRhs var lhsE rhsE ln ty) = [PAssign var (Just lhsE) ty rhsE ln]
+leafToStmt _env _sigMap _selfProc _callSiteMap (LAssignWithRhs var lhsE rhsE ln ty _tags) = [PAssign var (Just lhsE) ty rhsE ln]
 leafToStmt env sigMap selfProc callSiteMap (LCall name args ln _tags) =
-  [PCall name (resolveCallSite env sigMap selfProc callSiteMap ln) args ln]
+  [PCall name (resolveCallSite env sigMap selfProc callSiteMap ln name) args ln]
 leafToStmt env sigMap selfProc callSiteMap (LSuspend name args ln _tags) =
-  [PCall name (resolveCallSite env sigMap selfProc callSiteMap ln) args ln]
+  [PCall name (resolveCallSite env sigMap selfProc callSiteMap ln name) args ln]
 leafToStmt _env _sigMap _selfProc _callSiteMap (LReturn e ln) = [PReturn e ln]
 leafToStmt _env _sigMap _selfProc _callSiteMap (LBranchCond _cond _ln) = []
 

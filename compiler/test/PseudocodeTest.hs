@@ -93,19 +93,19 @@ helperSig = SubSig { ssMods = [], ssName = ident "helper", ssParams = [], ssThro
 tests :: TestTree
 tests = testGroup "PB.Explain.Pseudocode"
   [ testCase "EAssign lowers to PAssign carrying its source line and declared type" $
-      let term = EAssignWithRhs "x" (var "x") (ExInt "1") 5 (Just (PtPrimitive "integer")) :: Eff () ()
+      let term = EAssignWithRhs "x" (var "x") (ExInt "1") 5 (Just (PtPrimitive "integer")) Set.empty :: Eff () ()
           pc = build defaultComplexityThreshold term
       in rootStmts pc @?= [PAssign "x" (Just (var "x")) (Just (PtPrimitive "integer")) (ExInt "1") 5]
 
   , testCase "a member/indexed LHS (adw.object.kodypal[row] = ...) carries its full LHS Expr into PAssign, not just the root var name" $
-      let term = EAssignWithRhs "adw" dwPropertyLhs (var "gsc_misth_ypal") 8 Nothing :: Eff () ()
+      let term = EAssignWithRhs "adw" dwPropertyLhs (var "gsc_misth_ypal") 8 Nothing Set.empty :: Eff () ()
           pc = build defaultComplexityThreshold term
       in rootStmts pc @?= [PAssign "adw" (Just dwPropertyLhs) Nothing (var "gsc_misth_ypal") 8]
 
   , testCase "EBranch lowers to PBranch with both arms present" $
       let term = branchEff (var "cond")
-                   (EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing)
-                   (EAssignWithRhs "b" (var "b") (ExInt "2") 3 Nothing) 1 :: Eff () ()
+                   (EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing Set.empty)
+                   (EAssignWithRhs "b" (var "b") (ExInt "2") 3 Nothing Set.empty) 1 :: Eff () ()
           pc = build defaultComplexityThreshold term
       in rootStmts pc @?=
            [ PBranch (var "cond")
@@ -115,7 +115,7 @@ tests = testGroup "PB.Explain.Pseudocode"
            ]
 
   , testCase "ELoop lowers to PLoop" $
-      let loopBody = J PInr . EAssignWithRhs "i" (var "i") (ExBinOp (var "i") BopAdd (ExInt "1")) 2 Nothing
+      let loopBody = J PInr . EAssignWithRhs "i" (var "i") (ExBinOp (var "i") BopAdd (ExInt "1")) 2 Nothing Set.empty
                        :: Eff () (Either () ())
           term = ELoop loopBody 1 :: Eff () ()
           pc = build defaultComplexityThreshold term
@@ -123,7 +123,7 @@ tests = testGroup "PB.Explain.Pseudocode"
            [ PLoop [PAssign "i" (Just (var "i")) Nothing (ExBinOp (var "i") BopAdd (ExInt "1")) 2] 1 ]
 
   , testCase "a cut RegionId lowers to PRegionRef carrying its InferredSignature" $
-      let arm = EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing :: Eff () ()
+      let arm = EAssignWithRhs "a" (var "a") (ExInt "1") 2 Nothing Set.empty :: Eff () ()
           term = branchEff (var "cond") arm arm 1 :: Eff () ()
           sigs = computeSignatures 1 emptyEnv "proc" noCallSites Map.empty (extractEffTable term)
           pc = buildPseudocode 1 emptyEnv emptySigMap "proc" noCallSites Nothing sigs (extractEffTable term)
@@ -143,8 +143,8 @@ tests = testGroup "PB.Explain.Pseudocode"
       -- continuation. Both must resolve to a single PRegionRef hoisted
       -- after the PBranch, not one duplicated inside each arm's own
       -- statement list (doc/plan/226-explain-live-ui-regressions.md Layer 3).
-      let mergeBody = EAssignWithRhs "y" (var "y") (var "x") 5 Nothing :: Eff () ()
-          trueArm   = EComp (ELetRef "merge") (EAssignWithRhs "x" (var "x") (ExInt "1") 2 Nothing) :: Eff () ()
+      let mergeBody = EAssignWithRhs "y" (var "y") (var "x") 5 Nothing Set.empty :: Eff () ()
+          trueArm   = EComp (ELetRef "merge") (EAssignWithRhs "x" (var "x") (ExInt "1") 2 Nothing Set.empty) :: Eff () ()
           falseArm  = ELetRef "merge" :: Eff () ()
           term      = branchEff (var "cond") trueArm falseArm 1 :: Eff () ()
           effTerm   = EffTerm term (Map.fromList [("merge", mergeBody)])
@@ -177,7 +177,7 @@ tests = testGroup "PB.Explain.Pseudocode"
       in assertBool ("expected no PBranch with the same RegionId in both then and else arms, found offenders: " <> show offenders) (null offenders)
 
   , testCase "two occurrences of the same ELetRef resolve to the same PRegionRef, not duplicated bodies" $
-      let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
+      let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
           term = EComp (ELetRef "blk1") (ELetRef "blk1") :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
           sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
@@ -192,7 +192,7 @@ tests = testGroup "PB.Explain.Pseudocode"
   , testCase "a resolved call's PCall carries its callee FnSig/SubSig via the resolved-call-site map" $
       let env = emptyEnv { steObject = ident "myobj" }
           sigMap = identMapInsertWith Map.union (ident "myobj") (Map.singleton (ident "helper") (Right helperSig)) identMapEmpty
-          callSiteMap = Map.singleton ("myobj", "the_proc", 1) ("myobj", "helper")
+          callSiteMap = Map.singleton ("myobj", "the_proc", 1, "helper") ("myobj", "helper")
           term = ECall "helper" [] 1 Set.empty :: Eff () ()
           pc = buildPseudocode defaultComplexityThreshold env sigMap "the_proc" callSiteMap Nothing noSig (extractEffTable term)
       in rootStmts pc @?= [PCall "helper" (Just (Right helperSig)) [] 1]
@@ -200,10 +200,18 @@ tests = testGroup "PB.Explain.Pseudocode"
   , testCase "a dotted-looking call name resolves its declared signature via the same resolved-call-site map, not by parsing the call text" $
       let env = emptyEnv { steObject = ident "myobj" }
           sigMap = identMapInsertWith Map.union (ident "dw_1") (Map.singleton (ident "retrieve") (Right helperSig)) identMapEmpty
-          callSiteMap = Map.singleton ("myobj", "the_proc", 1) ("dw_1", "retrieve")
+          callSiteMap = Map.singleton ("myobj", "the_proc", 1, "dw_1.retrieve") ("dw_1", "retrieve")
           term = ECall "dw_1.retrieve" [] 1 Set.empty :: Eff () ()
           pc = buildPseudocode defaultComplexityThreshold env sigMap "the_proc" callSiteMap Nothing noSig (extractEffTable term)
       in rootStmts pc @?= [PCall "dw_1.retrieve" (Just (Right helperSig)) [] 1]
+
+  , testCase "an unresolved call sharing a line with an unrelated resolved call (a nested arg call, e.g. MessageBox(trn(x))) carries Nothing, not the sibling's target (Bug B, Plan 227 Phase 2)" $
+      let env = emptyEnv { steObject = ident "myobj" }
+          sigMap = identMapInsertWith Map.union (ident "global") (Map.singleton (ident "trn") (Right helperSig)) identMapEmpty
+          callSiteMap = Map.singleton ("myobj", "the_proc", 103, "trn") ("global", "trn")
+          term = ECall "MessageBox" [] 103 Set.empty :: Eff () ()
+          pc = buildPseudocode defaultComplexityThreshold env sigMap "the_proc" callSiteMap Nothing noSig (extractEffTable term)
+      in rootStmts pc @?= [PCall "MessageBox" Nothing [] 103]
 
   , testCase "an unresolved call's PCall carries Nothing, not an error" $
       let env = emptyEnv { steObject = ident "myobj" }
@@ -212,12 +220,12 @@ tests = testGroup "PB.Explain.Pseudocode"
       in rootStmts pc @?= [PCall "unknownproc" Nothing [] 1]
 
   , testCase "the root Pseudocode's pcDeclaredSig is Just the procedure's own FnSig/SubSig" $
-      let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
+      let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites (Just (Right helperSig)) noSig (extractEffTable term)
       in pcDeclaredSig pc @?= Just (Right helperSig)
 
   , testCase "the root Pseudocode's pcRootSig is Just its own InferredSignature from the sigs map" $
-      let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
+      let term = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
           effTerm = extractEffTable term
           sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
@@ -226,8 +234,8 @@ tests = testGroup "PB.Explain.Pseudocode"
            pcRootSig pc @?= Map.lookup (pcRootRegion pc) sigs
   , testGroup "pseudocodeRegions"
     [ testCase "returns the root region first regardless of encounter order" $
-        let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 Nothing :: Eff () ()
-            term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing . ELetRef "blk1" :: Eff () ()
+        let letBody = EAssignWithRhs "result" (var "result") (var "gv") 5 Nothing Set.empty :: Eff () ()
+            term = EAssignWithRhs "y" (var "y") (var "result") 6 Nothing Set.empty . ELetRef "blk1" :: Eff () ()
             effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
             pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
         in case pseudocodeRegions pc of
@@ -235,16 +243,16 @@ tests = testGroup "PB.Explain.Pseudocode"
              []          -> assertFailure "expected at least the root entry"
 
     , testCase "de-duplicates a region referenced twice to a single entry" $
-        let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing :: Eff () ()
+        let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
             term = EComp (ELetRef "blk1") (ELetRef "blk1") :: Eff () ()
             effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
             pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
         in length (pseudocodeRegions pc) @?= 2  -- root + the one shared block, not 3
 
     , testCase "walks into nested PBranch/PLoop bodies to find every referenced region" $
-        let grandchild = EAssignWithRhs "z" (var "z") (ExInt "9") 20 Nothing :: Eff () ()
-            trueArm = EAssignWithRhs "y" (var "y") (var "z") 11 Nothing . ELetRef "gc" :: Eff () ()
-            falseArm = EAssignWithRhs "y" (var "y") (ExInt "0") 12 Nothing :: Eff () ()
+        let grandchild = EAssignWithRhs "z" (var "z") (ExInt "9") 20 Nothing Set.empty :: Eff () ()
+            trueArm = EAssignWithRhs "y" (var "y") (var "z") 11 Nothing Set.empty . ELetRef "gc" :: Eff () ()
+            falseArm = EAssignWithRhs "y" (var "y") (ExInt "0") 12 Nothing Set.empty :: Eff () ()
             term = branchEff (var "cond") trueArm falseArm 10 :: Eff () ()
             effTerm = EffTerm term (Map.fromList [("gc", grandchild)])
             pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
