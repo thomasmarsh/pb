@@ -1949,6 +1949,8 @@ kbd.kbd {
 .explain-stmt--active { background: rgba(99, 102, 241, 0.22); }
 .explain-stmt--region-ref { color: var(--accent); }
 .explain-stmt--region-ref:hover { text-decoration: underline; }
+.explain-stmt--punct { color: var(--text-muted); cursor: default; }
+.explain-stmt--punct:hover { background: none; }
 
 /* ── LinearTrace ──────────────────────────────────────────────────────────── */
 

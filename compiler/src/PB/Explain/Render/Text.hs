@@ -1,133 +1,43 @@
--- | Plainest possible text printer over 'PB.Explain.Pseudocode.Pseudocode'
--- (Plan 218 Layer 4): no access to 'PB.Compile.IR.Eff'\/'PB.Analysis.TypeEnv.ScopedTypeEnv'
--- internals -- every fact shown here (types, signatures, line numbers)
--- already arrived denormalized on 'Pseudocode' itself. Reuses
+-- | The one canonical 'PB.Explain.Pseudocode.PStmt' -> 'Text' single-line
+-- renderer: no access to 'PB.Compile.IR.Eff'\/'PB.Analysis.TypeEnv.ScopedTypeEnv'
+-- internals -- every fact shown here (types, line numbers) already arrived
+-- denormalized on 'PB.Explain.Pseudocode.PStmt' itself. Reuses
 -- 'PB.Grammar.Unparse.unparseExpr' for every 'PB.AST.Expr.Expr' shown and
--- 'PB.AST.Type.renderPbType' for every type shown, same as the plan's own
--- Layer 4 note -- surface-syntax rendering isn't reinvented here.
+-- 'PB.AST.Type.renderPbType' for every type shown.
 --
--- Each 'PB.Explain.Regions.RegionId' this walk encounters (root or cut) is
--- rendered as its own block, in encounter order and de-duplicated by id
--- (a region referenced twice, e.g. a shared 'PB.Compile.IR.ELetRef', prints
--- once): the root block first, then every other referenced region reachable
--- by walking 'PB.Explain.Pseudocode.PStmt' lists recursively (including
--- nested 'PBranch'\/'PLoop' bodies). A region's own label/line-range/
--- signature always comes from the denormalized fields already carried on
--- the 'PB.Explain.Pseudocode.PRegionRef' that first refers to it, never by
--- inspecting 'PB.Explain.Regions.RegionId' itself (opaque, no accessor
--- exists to do so).
+-- Brace-opening convention for a control-structure header ('PBranch'\/
+-- 'PLoop'): this renders only the node's own opening line, never its body
+-- or closing brace -- a live UI consumer (the Explain explorer's
+-- 'ExplainCore.tsx') synthesizes '} else {'\/closing '}' punctuation itself
+-- from the already-structural 'then'\/'else'\/'body' fields it receives, so
+-- there is exactly one renderer of that punctuation, not two.
 module PB.Explain.Render.Text
-  ( renderText
-  , renderStmtLine
-  , renderDeclaredSig
+  ( renderStmtLine
   ) where
 
 import PB.Prelude
-import qualified Data.Set as Set
 import qualified Data.Text as T
 import PB.AST.Expr (Expr)
-import PB.AST.Ident (identOrig)
-import PB.AST.SourceFile (FnSig (..), SubSig (..), renderParams)
 import PB.AST.Type (renderPbType)
-import PB.Analysis.CallClassify (EffectTag)
-import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), RegionEntry (..), pseudocodeRegions)
-import PB.Explain.Regions (RegionId, regionLabel)
-import PB.Explain.Signatures (InferredSignature (..), VarBinding (..))
+import PB.Explain.Pseudocode (PStmt (..))
+import PB.Explain.Regions (regionLabel)
 import PB.Grammar.Unparse (unparseExpr)
-
-renderText :: Pseudocode -> Text
-renderText pc = T.intercalate "\n\n" (map (renderEntry pc) (pseudocodeRegions pc))
-
-renderEntry :: Pseudocode -> RegionEntry -> Text
-renderEntry pc entry
-  | reId entry == pcRootRegion pc =
-      T.intercalate "\n" (rootHeader pc <> concatMap (renderStmt 1) (reStmts entry))
-  | otherwise =
-      T.intercalate "\n" (regionHeader (reId entry) (reLines entry) (reSig entry) : concatMap (renderStmt 1) (reStmts entry))
-
--- | Both facts are shown whenever both exist -- they describe different
--- things (the procedure's own declared syntax vs. its region's inferred
--- data-flow signature, which may disclose a hidden imperative-shell
--- dependency the declaration doesn't) so there is no meaningful "same
--- value, only show once" case to collapse them into.
-rootHeader :: Pseudocode -> [Text]
-rootHeader pc = catMaybes
-  [ ("declared " <>) . renderDeclaredSig <$> pcDeclaredSig pc
-  , ("inferred " <>) . renderInferredSig rootLabel <$> pcRootSig pc
-  ]
-  where
-    rootLabel = maybe "root" declaredName (pcDeclaredSig pc)
-    declaredName (Left fnsig)  = identOrig (fnsName fnsig)
-    declaredName (Right subsig) = identOrig (ssName subsig)
-
-regionHeader :: RegionId -> Maybe (Int, Int) -> Maybe InferredSignature -> Text
-regionHeader rid lns Nothing    = regionLabel rid lns
-regionHeader rid lns (Just sig) = renderInferredSig (regionLabel rid lns) sig
-
-renderInferredSig :: Text -> InferredSignature -> Text
-renderInferredSig name sig =
-  name <> "(" <> renderBindings (sigInputs sig) <> ") -> (" <> renderBindings (sigOutputs sig)
-       <> ") [" <> renderEffects (sigEffects sig) <> "]"
-  where
-    renderBindings = T.intercalate ", " . map renderBinding
-
--- | @[pure]@ for a genuinely effect-free region -- the first place this
--- whole feature delivers "functional core" as a computed label rather than
--- something left to the reader to infer (Plan 218's own stated goal).
-renderEffects :: Set.Set EffectTag -> Text
-renderEffects tags
-  | Set.null tags = "pure"
-  | otherwise     = T.intercalate ", " (map (T.pack . show) (Set.toAscList tags))
-
-renderBinding :: VarBinding -> Text
-renderBinding vb = case vbType vb of
-  Just ty -> identOrig (vbName vb) <> ": " <> renderPbType ty
-  Nothing -> identOrig (vbName vb)
-
-renderDeclaredSig :: Either FnSig SubSig -> Text
-renderDeclaredSig (Left fnsig) =
-  identOrig (fnsName fnsig) <> "(" <> renderParams (fnsParams fnsig) <> "): " <> fnsReturnType fnsig
-renderDeclaredSig (Right subsig) =
-  identOrig (ssName subsig) <> "(" <> renderParams (ssParams subsig) <> ")"
-
-indent :: Int -> Text -> Text
-indent n t = T.replicate (n * 2) " " <> t
-
-backlink :: Int -> Text
-backlink ln = "  -- line " <> T.pack (show ln)
 
 renderArgs :: [Expr] -> Text
 renderArgs = T.intercalate ", " . map unparseExpr
 
 -- | The single-node header text for one 'PStmt' -- no indent, no recursion
--- into a 'PBranch'\/'PLoop' body, and no line-number backlink (the line is
--- already a structured field on the node, not text to re-parse). 'renderStmt'
--- composes this with indent\/backlink\/recursion for the CLI text view;
--- 'PB.Pipeline.Serialise'\'s 'PStmt' JSON encoding calls it directly so every
--- materialized node carries its own pre-rendered display text, and a UI
--- consumer never re-derives 'Expr' -> 'Text' a third way.
+-- into a 'PBranch'\/'PLoop' body. 'PB.Pipeline.Serialise'\'s 'PStmt' JSON
+-- encoding calls this directly so every materialized node carries its own
+-- pre-rendered display text, and a UI consumer never re-derives 'Expr' ->
+-- 'Text' a third way.
 renderStmtLine :: PStmt -> Text
 renderStmtLine (PAssign var mlhs mty rhs _) =
   maybe var unparseExpr mlhs <> maybe "" ((": " <>) . renderPbType) mty <> " = " <> unparseExpr rhs
 renderStmtLine (PCall name _msig args _) =
   name <> "(" <> renderArgs args <> ")"
 renderStmtLine (PBranch cond _ _ _) =
-  "if " <> unparseExpr cond <> " then"
-renderStmtLine (PLoop _ _) = "loop"
+  "if (" <> unparseExpr cond <> ") {"
+renderStmtLine (PLoop _ _) = "loop {"
 renderStmtLine (PReturn e _) = "return " <> unparseExpr e
-renderStmtLine (PRegionRef rid lns _msig) = "-> " <> regionLabel rid lns
-
-renderStmt :: Int -> PStmt -> [Text]
-renderStmt ind stmt@(PAssign _ _ _ _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
-renderStmt ind stmt@(PCall _ _ _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
-renderStmt ind stmt@(PBranch _ t f ln) =
-  [indent ind (renderStmtLine stmt <> backlink ln)]
-    <> concatMap (renderStmt (ind + 1)) t
-    <> (if null f then [] else indent ind "else" : concatMap (renderStmt (ind + 1)) f)
-    <> [indent ind "end if"]
-renderStmt ind stmt@(PLoop body ln) =
-  [indent ind (renderStmtLine stmt <> backlink ln)]
-    <> concatMap (renderStmt (ind + 1)) body
-    <> [indent ind "end loop"]
-renderStmt ind stmt@(PReturn _ ln) = [indent ind (renderStmtLine stmt <> backlink ln)]
-renderStmt ind stmt@(PRegionRef {}) = [indent ind (renderStmtLine stmt <> " (see below)")]
+renderStmtLine (PRegionRef rid lns _msig) = "return " <> regionLabel rid lns

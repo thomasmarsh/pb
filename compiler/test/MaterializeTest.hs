@@ -425,7 +425,7 @@ testMaterializeProcPseudocodeStmtText = withHandle inMemory $ \conn -> do
       rootStmts = case field' rootLabel (field' "regions" v) of Array a -> V.toList a; _ -> []
   case rootStmts of
     [branchNode] -> assertEqual "branch header's own stmtText"
-      (String "if cond then") (field' "stmtText" branchNode)
+      (String "if (cond) {") (field' "stmtText" branchNode)
     other -> error ("expected exactly 1 root statement (the branch), got " <> show other)
 
 var :: Text -> Expr

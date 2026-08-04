@@ -77,9 +77,8 @@ instance NFData EffectTag where
   rnf x = x `seq` ()
 
 -- | Groups the 7 'EffectTag' constructors into a small human-facing
--- capability vocabulary (Plan 225 Layer 3.6) -- for display in
--- 'PB.Explain.Render.Struct' and the corpus-wide @proc_effects@ capability
--- catalog, not a new analysis.
+-- capability vocabulary (Plan 225 Layer 3.6) -- for the corpus-wide
+-- @proc_effects@ capability catalog, not a new analysis.
 capabilityLabel :: EffectTag -> Text
 capabilityLabel ReadsDb             = "DB"
 capabilityLabel WritesDb            = "DB"

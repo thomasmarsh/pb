@@ -104,7 +104,6 @@ library
     PB.Explain.Signatures
     PB.Explain.Pseudocode
     PB.Explain.Render.Text
-    PB.Explain.Render.Struct
     PB.Explain.Simplify
     PB.Explain.Materialize
   build-depends:
@@ -262,7 +261,6 @@ test-suite pb-compiler-test
     , SignaturesTest
     , PseudocodeTest
     , RenderTextTest
-    , RenderStructTest
     , SimplifyTest
   build-depends:
     , base ^>=4.20.1.0

@@ -61,7 +61,6 @@ import qualified RegionsTest
 import qualified SignaturesTest
 import qualified PseudocodeTest
 import qualified RenderTextTest
-import qualified RenderStructTest
 import qualified SimplifyTest
 
 
@@ -134,6 +133,5 @@ tests = testGroup "pb-compiler"
   , SignaturesTest.tests
   , PseudocodeTest.tests
   , RenderTextTest.tests
-  , RenderStructTest.tests
   , SimplifyTest.tests
   ]

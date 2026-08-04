@@ -53,9 +53,8 @@ data Pseudocode = Pseudocode
   } deriving (Eq, Show, Generic)
 
 -- | One region block in root-first, encounter-order, de-duplicated display
--- order -- the same enumeration every renderer over 'Pseudocode' needs
--- ('PB.Explain.Render.Text', 'PB.Explain.Render.Struct'): walk 'PStmt'
--- lists recursively (including nested 'PBranch'\/'PLoop' bodies), find
+-- order -- the same enumeration every consumer walking 'Pseudocode' needs:
+-- walk 'PStmt' lists recursively (including nested 'PBranch'\/'PLoop' bodies), find
 -- every referenced 'RegionId', and emit each one once. A region's own
 -- label\/line-range\/signature always comes from the denormalized fields
 -- already carried on the 'PRegionRef' that first refers to it (the root

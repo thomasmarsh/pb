@@ -1,11 +1,10 @@
 -- | Simplification passes over 'PB.Explain.Pseudocode.Pseudocode' (Plan 218
 -- Layer 3.5): a fixed pipeline of named sub-passes run over every region's
 -- own @[PStmt]@, each independently testable and a no-op when its pattern
--- doesn't match. Applied between Layer 3 and Layer 4
--- (@renderText (simplifyPseudocode locals pc)@), not folded into
--- 'PB.Explain.Render.Text' itself -- every future renderer wants the same
--- cleanup, and 'PB.Explain.Render.Text' stays the plainest possible
--- printer. "Semantics-preserving" here means preserving each region's own
+-- doesn't match. Applied before serialization/rendering, not folded into
+-- 'PB.Explain.Render.Text' itself -- every renderer wants the same cleanup,
+-- and 'PB.Explain.Render.Text' stays the plainest possible printer.
+-- "Semantics-preserving" here means preserving each region's own
 -- 'PB.Explain.Signatures.InferredSignature' and observable PowerScript
 -- behavior, not a formal proof -- enforced by hand-written tests per pass
 -- plus a Hedgehog idempotence property, not a verified equivalence to the

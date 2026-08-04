@@ -27,6 +27,17 @@ export interface ExplainCoreProps {
 // How long a jump-chip's target card stays visually flashed after a click.
 const FLASH_MS = 900;
 
+// A synthesized brace/divider line (`} else {`, closing `}`) for a
+// PBranch/PLoop block — not itself a PStmt, so it carries no hover/click
+// behavior, only the same indentation as the statements it brackets.
+function ControlPunctRow(props: { depth: number; text: string }): JSX.Element {
+  return (
+    <div class="explain-stmt explain-stmt--punct" style={{ "padding-left": `${props.depth * 16}px` }}>
+      {props.text}
+    </div>
+  );
+}
+
 function StmtRow(props: {
   stmt: NormalizedStmt;
   depth: number;
@@ -80,9 +91,13 @@ function StmtRow(props: {
               <For each={s.then}>
                 {(child) => <StmtRow stmt={child} depth={props.depth + 1} isActive={props.isActive} onHover={props.onHover} onPin={props.onPin} onJump={props.onJump} />}
               </For>
-              <For each={s.else}>
-                {(child) => <StmtRow stmt={child} depth={props.depth + 1} isActive={props.isActive} onHover={props.onHover} onPin={props.onPin} onJump={props.onJump} />}
-              </For>
+              <Show when={s.else.length > 0}>
+                <ControlPunctRow depth={props.depth} text="} else {" />
+                <For each={s.else}>
+                  {(child) => <StmtRow stmt={child} depth={props.depth + 1} isActive={props.isActive} onHover={props.onHover} onPin={props.onPin} onJump={props.onJump} />}
+                </For>
+              </Show>
+              <ControlPunctRow depth={props.depth} text="}" />
             </>
           );
         })()}
@@ -91,9 +106,12 @@ function StmtRow(props: {
         {(() => {
           const s = props.stmt as Extract<NormalizedStmt, { kind: "loop" }>;
           return (
-            <For each={s.body}>
-              {(child) => <StmtRow stmt={child} depth={props.depth + 1} isActive={props.isActive} onHover={props.onHover} onPin={props.onPin} onJump={props.onJump} />}
-            </For>
+            <>
+              <For each={s.body}>
+                {(child) => <StmtRow stmt={child} depth={props.depth + 1} isActive={props.isActive} onHover={props.onHover} onPin={props.onPin} onJump={props.onJump} />}
+              </For>
+              <ControlPunctRow depth={props.depth} text="}" />
+            </>
           );
         })()}
       </Show>

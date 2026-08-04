@@ -1,11 +1,9 @@
 // explainLayout.ts — Pure helpers over PB.Explain.Pseudocode's materialized
 // JSON (Plan 222 Phase 4). Two jobs: (1) normalize each PStmt's positional
 // `contents` tuple into named fields, so callers never index into it; (2)
-// walk the region DAG in the same order/dedup shape as PB.Explain.Render.
-// Text's collectRefs/renderRefs (compiler/src/PB/Explain/Render/Text.hs) —
-// root region first, then every PRegionRef reached by recursing into
-// PBranch/PLoop bodies, deduped by regionId, never recursing into a
-// referenced region's own body a second time.
+// walk the region DAG — root region first, then every PRegionRef reached by
+// recursing into PBranch/PLoop bodies, deduped by regionId, never recursing
+// into a referenced region's own body a second time.
 //
 // Only formats already-structured, typed data (VarBinding/PbType/
 // InferredSignature/DeclaredSig) — never unparses an Expr (Plan 222's own
@@ -205,16 +203,17 @@ export function regionDisplayLabel(regionId: string, lineRange: [number, number]
   return lineRange ? `region@${lineRange[0]}` : regionId;
 }
 
-// A region-ref rendered as a call site (name + input arg names) rather than
-// the backend's "-> region@N" arrow text, so it reads like the function call
-// it stands in for; clicking it still jumps to that region's own card.
+// A region-ref rendered as a tail-call return (a PRegionRef is always the
+// tail of its containing statement list — control leaves to another region,
+// it never falls through), using region@N and its own input arg names;
+// clicking it still jumps to that region's own card.
 export function formatRegionCallLabel(
   regionId: string,
   lineRange: [number, number] | null,
   sig: InferredSignature | null,
 ): string {
   const args = sig ? sig.inputs.map((v) => v.name).join(", ") : "";
-  return `${regionDisplayLabel(regionId, lineRange)}(${args})`;
+  return `return ${regionDisplayLabel(regionId, lineRange)}(${args})`;
 }
 
 export function formatParams(params: Param[]): string {

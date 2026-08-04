@@ -221,21 +221,21 @@ describe("regionDisplayLabel", () => {
 });
 
 describe("formatRegionCallLabel", () => {
-  it("renders a region-ref as a call: name(inputArgNames), using region@N", () => {
-    expect(formatRegionCallLabel("region_3", [10, 14], SIG)).toBe("region@10(li_width)");
+  it("renders a region-ref as a return call: return name(inputArgNames), using region@N", () => {
+    expect(formatRegionCallLabel("region_3", [10, 14], SIG)).toBe("return region@10(li_width)");
   });
 
   it("renders an empty arg list when the signature has no inputs", () => {
     const sig: InferredSignature = { inputs: [], outputs: [], effects: [] };
-    expect(formatRegionCallLabel("region_3", [10, 14], sig)).toBe("region@10()");
+    expect(formatRegionCallLabel("region_3", [10, 14], sig)).toBe("return region@10()");
   });
 
   it("renders an empty arg list when the signature is null", () => {
-    expect(formatRegionCallLabel("region_3", [10, 14], null)).toBe("region@10()");
+    expect(formatRegionCallLabel("region_3", [10, 14], null)).toBe("return region@10()");
   });
 
   it("uses the raw regionId when there's no line range", () => {
-    expect(formatRegionCallLabel("region_0", null, SIG)).toBe("region_0(li_width)");
+    expect(formatRegionCallLabel("region_0", null, SIG)).toBe("return region_0(li_width)");
   });
 });
 
