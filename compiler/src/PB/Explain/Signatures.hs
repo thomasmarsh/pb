@@ -10,6 +10,7 @@
 module PB.Explain.Signatures
   ( VarBinding (..)
   , InferredSignature (..)
+  , RegionKind (..)
   , ResolvedCallSiteMap
   , buildResolvedCallSiteMap
   , lookupDeclaredSig
@@ -17,6 +18,8 @@ module PB.Explain.Signatures
   ) where
 
 import PB.Prelude hiding (id, (.))
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -41,7 +44,24 @@ data InferredSignature = InferredSignature
   { sigInputs  :: [VarBinding]
   , sigOutputs :: [VarBinding]
   , sigEffects :: Set.Set EffectTag
+  , sigKind    :: RegionKind
   } deriving (Eq, Show, Generic)
+
+-- | Structural pure\/effectful distinction for a region (Plan 227 Phase 2
+-- Design goal 4) -- computed once, from 'sigEffects', by 'regionKindFromEffects',
+-- rather than re-derived per consumer via a 'Set.null' check every caller
+-- has to remember to make. Ferried alongside 'InferredSignature' across a
+-- 'PB.Explain.Pseudocode.PRegionRef' the same way 'sigEffects' already is.
+data RegionKind
+  = PureRegion
+  | EffectfulRegion (NonEmpty EffectTag)
+  deriving (Eq, Show, Generic)
+
+-- | 'PureRegion' iff the set is empty; otherwise 'EffectfulRegion' carrying
+-- the same tags 'sigEffects' already reports, just structured instead of a
+-- bare 'Set.Set' a consumer has to remember to check.
+regionKindFromEffects :: Set.Set EffectTag -> RegionKind
+regionKindFromEffects effs = maybe PureRegion EffectfulRegion (NE.nonEmpty (Set.toAscList effs))
 
 -- | Every corpus-wide resolved call site, keyed by exactly where it's
 -- written: @(callerObject, callerProc, callLine, calleeNameLower) ->
@@ -254,5 +274,6 @@ computeSignatures threshold env selfProc callSiteMap procEffects term =
                { sigInputs  = map toBinding (Set.toAscList (saFreeReads acc))
                , sigOutputs = map toBinding (Set.toAscList (loopCarried <> liveOut))
                , sigEffects = saEffects acc
+               , sigKind    = regionKindFromEffects (saEffects acc)
                })
        accs

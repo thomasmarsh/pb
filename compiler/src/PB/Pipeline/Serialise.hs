@@ -21,7 +21,7 @@ import PB.Compile.InstrTypes   (InstrNode, InstrGraph)
 import PB.Compile.Flatten (WiringNode (..), WiringGraph (..))
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 import PB.Explain.Regions     (RegionId, regionIdLabel)
-import PB.Explain.Signatures  (VarBinding, InferredSignature)
+import PB.Explain.Signatures  (VarBinding, InferredSignature, RegionKind)
 import PB.Explain.Pseudocode  (PStmt, Pseudocode)
 import PB.Explain.Render.Text (renderStmtLine)
 
@@ -163,6 +163,7 @@ instance ToJSON EffectTag where toJSON = genericToJSON customOptions
 instance ToJSON RegionId where toJSON = toJSON . regionIdLabel
 instance ToJSONKey RegionId where toJSONKey = toJSONKeyText regionIdLabel
 instance ToJSON VarBinding where toJSON = genericToJSON customOptions
+instance ToJSON RegionKind where toJSON = genericToJSON customOptions
 instance ToJSON InferredSignature where toJSON = genericToJSON customOptions
 -- | Gains a sibling "stmtText" key over the generic tag/contents encoding,
 -- computed fresh from the node's own fields via 'renderStmtLine' at

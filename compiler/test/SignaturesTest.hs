@@ -8,8 +8,9 @@ import PB.Analysis.CallClassify (EffectTag (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
-import PB.Explain.Signatures (VarBinding (..), InferredSignature (..), ResolvedCallSiteMap, computeSignatures)
+import PB.Explain.Signatures (VarBinding (..), InferredSignature (..), RegionKind (..), ResolvedCallSiteMap, computeSignatures)
 
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Test.Tasty         (TestTree, testGroup)
@@ -209,6 +210,20 @@ tests = testGroup "PB.Explain.Signatures"
            [sig] -> assertBool
              ("\"ls_var\" must not be a free input, got " <> show (map vbName (sigInputs sig)))
              (not (any (\vb -> nameOf vb == "ls_var") (sigInputs sig)))
+           other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
+
+  , testCase "a region with no effects has sigKind PureRegion (Plan 227 Phase 2 ferry type)" $
+      let term = EAssignWithRhs "y" (var "y") (var "x") 1 Nothing Set.empty :: Eff () ()
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty (extractEffTable term)
+      in case Map.elems sigs of
+           [sig] -> sigKind sig @?= PureRegion
+           other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
+
+  , testCase "a region with a direct effect has sigKind EffectfulRegion carrying exactly its sigEffects tags" $
+      let term = ECall "helper" [] 1 (Set.fromList [WritesDb]) :: Eff () ()
+          sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty (extractEffTable term)
+      in case Map.elems sigs of
+           [sig] -> sigKind sig @?= EffectfulRegion (WritesDb :| [])
            other -> assertFailure ("expected exactly 1 region, got " <> show (length other))
   ]
   where

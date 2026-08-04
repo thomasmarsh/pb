@@ -14,6 +14,7 @@ module PB.Explain.Simplify
   , dropDeadStores
   , collapseBooleanBranch
   , inlineForwardingRegions
+  , inlinePureRegions
   ) where
 
 import PB.Prelude
@@ -24,9 +25,9 @@ import PB.AST.Expr (Expr (..))
 import PB.AST.Ident (Ident, IdentSet, identSetDifference, identSetFromList, identSetMember, identSetToList, mkIdentSynthetic)
 import PB.AST.SourceFile (FnSig (..), Param (..), SubSig (..))
 import PB.Analysis.Dataflow (walkExprIdents)
-import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..))
+import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), collectRegionRefs)
 import PB.Explain.Regions (RegionId)
-import PB.Explain.Signatures (InferredSignature (..), VarBinding (..))
+import PB.Explain.Signatures (InferredSignature (..), RegionKind (..), VarBinding (..))
 
 -- | 'PStmt'\'s own fields carry only a flattened 'Text' var name at this
 -- layer -- there is no other in-memory 'Ident' to recover it from here,
@@ -152,7 +153,7 @@ eligibleFor locals refParams msig =
 -- excluded automatically (see 'refParamNames') even if the caller's
 -- @locals@ includes it.
 simplifyPseudocode :: IdentSet -> Pseudocode -> Pseudocode
-simplifyPseudocode locals pc = inlineForwardingRegions pc'
+simplifyPseudocode locals pc = inlinePureRegions (inlineForwardingRegions pc')
   where
     pc' = pc { pcRegions = Map.mapWithKey simplifyRegion (pcRegions pc) }
     sigs = regionSignatures pc
@@ -217,3 +218,56 @@ inlineForwardingRegions pc = pc
   }
   where
     forwarders = forwardingRegions pc
+
+-- | 'RegionId's this 'Pseudocode' can safely fold back into their single
+-- call site (Plan 227 Phase 2 Design goal 3): 'PB.Explain.Signatures.PureRegion'
+-- kind (per the region's own carried 'InferredSignature'; see 'regionSignatures')
+-- and referenced from exactly one 'PRegionRef' anywhere in the tree,
+-- counted via 'collectRegionRefs' over every region's own (already
+-- per-region-simplified) statement list. A region referenced from more
+-- than one site keeps its own name rather than being duplicated into every
+-- call site (mirrors the plan's own "surviving PureRegion... multiple call
+-- sites" carve-out); a region that (indirectly) references itself is never
+-- eligible either, since 'PB.Explain.Regions'' walk can only ever produce
+-- a DAG, so a genuine self-reference always counts as a second referrer.
+inlinablePureRegions :: Pseudocode -> Map.Map RegionId [PStmt]
+inlinablePureRegions pc = Map.filterWithKey eligible (pcRegions pc)
+  where
+    counts = Map.fromListWith (+)
+      [ (rid, 1 :: Int)
+      | stmts <- Map.elems (pcRegions pc)
+      , (rid, _, _) <- collectRegionRefs stmts
+      ]
+    sigs = regionSignatures pc
+    eligible rid _ =
+      rid /= pcRootRegion pc
+      && Map.findWithDefault 0 rid counts == 1
+      && maybe False ((== PureRegion) . sigKind) (Map.lookup rid sigs)
+
+-- | Recursively substitute every 'PRegionRef' targeting an
+-- 'inlinablePureRegions' entry with that region's own body, expanding the
+-- same way for any further pure region it references in turn -- so a chain
+-- of pure regions collapses in one pass, the same shape 'resolveForwarding'
+-- follows for a chain of pure forwarders.
+expandPureRefs :: Map.Map RegionId [PStmt] -> [PStmt] -> [PStmt]
+expandPureRefs pureBodies = concatMap rewrite
+  where
+    rewrite (PRegionRef rid _ _)
+      | Just body <- Map.lookup rid pureBodies = expandPureRefs pureBodies body
+    rewrite (PBranch cond t f ln) = [PBranch cond (expandPureRefs pureBodies t) (expandPureRefs pureBodies f) ln]
+    rewrite (PLoop body ln)       = [PLoop (expandPureRefs pureBodies body) ln]
+    rewrite stmt                  = [stmt]
+
+-- | Fold every singly-referenced 'PB.Explain.Signatures.PureRegion' cut
+-- back into its own call site's statement list and drop it from
+-- 'pcRegions' entirely, so a pure region the effect-boundary cutter still
+-- produces (Open Question 3 in doc/plan/227-explain-effect-boundary-regions.md:
+-- the complexity-threshold fallback can still cut a long pure run with no
+-- effect boundary to justify it) never surfaces as its own named block in
+-- the rendered output.
+inlinePureRegions :: Pseudocode -> Pseudocode
+inlinePureRegions pc = pc
+  { pcRegions = Map.map (expandPureRefs pureBodies) (Map.withoutKeys (pcRegions pc) (Map.keysSet pureBodies))
+  }
+  where
+    pureBodies = inlinablePureRegions pc

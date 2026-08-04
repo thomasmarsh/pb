@@ -4,12 +4,13 @@ import PB.Prelude hiding (id, (.))
 import PB.AST.Expr        (BinOp (..), Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Ident       (Ident, IdentMap, IdentSet, identMapEmpty, identSetEmpty, identSetFromList, mkIdentSynthetic)
 import PB.AST.SourceFile  (Param (..), SubSig (..))
+import PB.Analysis.CallClassify (EffectTag (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.IR
 import PB.Explain.Regions (defaultComplexityThreshold)
 import PB.Explain.Signatures (ResolvedCallSiteMap, computeSignatures)
 import PB.Explain.Pseudocode (PStmt (..), Pseudocode (..), buildPseudocode)
-import PB.Explain.Simplify (collapseBooleanBranch, dropDeadStores, inlineForwardingRegions, simplifyPseudocode)
+import PB.Explain.Simplify (collapseBooleanBranch, dropDeadStores, inlineForwardingRegions, inlinePureRegions, simplifyPseudocode)
 import PB.Lexing.Token (SourceSpan (..))
 
 import Data.List (partition)
@@ -114,16 +115,23 @@ tests = testGroup "PB.Explain.Simplify"
     ]
 
   , testCase "a store that is the region's own live-out output (per InferredSignature) is kept even with no local read" $
+      -- "blk1" is itself a PureRegion referenced exactly once, so
+      -- simplifyPseudocode's inlinePureRegions (Plan 227 Phase 2) folds it
+      -- straight into root -- the assertion below is still checking that
+      -- dropDeadStores never dropped the live-out "x" store, just against
+      -- its new (also-correct) location once pure-region-inlining runs.
       let letBody = EAssignWithRhs "x" (var "x") (ExInt "1") 1 Nothing Set.empty :: Eff () ()
           term = EAssignWithRhs "y" (var "y") (var "x") 2 Nothing Set.empty . ELetRef "blk1" :: Eff () ()
           effTerm = EffTerm term (Map.fromList [("blk1", letBody)])
           sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
           pc = buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
           simplified = simplifyPseudocode (safeVars ["x"]) pc
-          nonRootRegions = Map.delete (pcRootRegion pc) (pcRegions simplified)
-      in case Map.elems nonRootRegions of
-           [stmts] -> stmts @?= [ PAssign "x" (Just (var "x")) Nothing (ExInt "1") 1 ]
-           other   -> assertFailure ("expected exactly one non-root region, got " <> show other)
+      in do
+           Map.keys (pcRegions simplified) @?= [pcRootRegion pc]
+           Map.lookup (pcRootRegion pc) (pcRegions simplified) @?=
+             Just [ PAssign "x" (Just (var "x")) Nothing (ExInt "1") 1
+                  , PAssign "y" (Just (var "y")) Nothing (var "x") 2
+                  ]
 
   , testCase "simplifyPseudocode never drops a store to a declared ref-mode parameter, even if the caller's locals includes it" $
       let refParam = SubSig
@@ -225,6 +233,39 @@ tests = testGroup "PB.Explain.Simplify"
             twice = inlineForwardingRegions once
         once === twice
     ]
+
+  , testGroup "inlinePureRegions"
+    [ testCase "a singly-referenced PureRegion cut is inlined into its call site and dropped from pcRegions" $
+        let pc = singlePureRefPc
+            rootRid = pcRootRegion pc
+            result = inlinePureRegions pc
+        in do
+             Map.keys (pcRegions result) @?= [rootRid]
+             Map.lookup rootRid (pcRegions result) @?=
+               Just [ PAssign "z" (Just (var "z")) Nothing (ExInt "9") 5, PReturn (var "z") 20 ]
+
+    , testCase "a PureRegion referenced more than once is left as its own named region, not inlined" $
+        let pc = doublyReferencedPurePc
+            result = inlinePureRegions pc
+        in pcRegions result @?= pcRegions pc
+
+    , testCase "an EffectfulRegion is never inlined even when singly-referenced" $
+        let pc = singleEffectfulRefPc
+            result = inlinePureRegions pc
+        in pcRegions result @?= pcRegions pc
+
+    , testCase "a chain of two singly-referenced PureRegions collapses fully into the call site in one pass" $
+        let pc = chainedPureRefPc
+            rootRid = pcRootRegion pc
+            result = inlinePureRegions pc
+        in do
+             Map.keys (pcRegions result) @?= [rootRid]
+             Map.lookup rootRid (pcRegions result) @?=
+               Just [ PAssign "y" (Just (var "y")) Nothing (ExInt "1") 6
+                    , PAssign "z" (Just (var "z")) Nothing (ExInt "9") 5
+                    , PReturn (var "y") 20
+                    ]
+    ]
   ]
 
 -- | A region whose body is exactly one 'PRegionRef' and nothing else -- the
@@ -276,6 +317,56 @@ refPlusStmtPc =
       spine = ELetRef "mixed" :: Eff () ()
       effTerm = EffTerm spine table
   in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing noSig effTerm
+
+-- | root -> a once-referenced pure "target" region (no effect tags) -> a
+-- trailing 'PReturn' -- the exact shape 'inlinePureRegions' should collapse
+-- away entirely, splicing "target"'s own body into the root's call site.
+singlePureRefPc :: Pseudocode
+singlePureRefPc =
+  let table = Map.fromList [ ("target", EAssignWithRhs "z" (var "z") (ExInt "9") 5 Nothing Set.empty) ]
+      spine = EComp (EReturn (var "z") 20) (ELetRef "target") :: Eff () ()
+      effTerm = EffTerm spine table
+      sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+  in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
+
+-- | Same pure "target" as 'singlePureRefPc', referenced twice from the same
+-- straight-line run -- 'inlinePureRegions' must leave it alone, since a
+-- region referenced from more than one site keeps its own name rather than
+-- being duplicated into every call site.
+doublyReferencedPurePc :: Pseudocode
+doublyReferencedPurePc =
+  let table = Map.fromList [ ("target", EAssignWithRhs "z" (var "z") (ExInt "9") 5 Nothing Set.empty) ]
+      spine = EComp (ELetRef "target") (ELetRef "target") :: Eff () ()
+      effTerm = EffTerm spine table
+      sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+  in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
+
+-- | Same single-reference shape as 'singlePureRefPc', but "target" itself
+-- carries a direct effect tag -- 'inlinePureRegions' must leave an
+-- 'PB.Explain.Signatures.EffectfulRegion' alone regardless of its
+-- reference count.
+singleEffectfulRefPc :: Pseudocode
+singleEffectfulRefPc =
+  let table = Map.fromList [ ("target", ECall "helper" [] 5 (Set.fromList [WritesDb])) ]
+      spine = EComp (EReturn (var "z") 20) (ELetRef "target") :: Eff () ()
+      effTerm = EffTerm spine table
+      sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+  in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
+
+-- | root -> once-referenced pure "outer" (itself a plain assign followed by
+-- a reference to once-referenced pure "inner") -> a trailing 'PReturn'.
+-- Both hops must collapse into the root's own call site in a single
+-- 'inlinePureRegions' pass, not just the outermost one.
+chainedPureRefPc :: Pseudocode
+chainedPureRefPc =
+  let table = Map.fromList
+        [ ("outer", EComp (ELetRef "inner") (EAssignWithRhs "y" (var "y") (ExInt "1") 6 Nothing Set.empty))
+        , ("inner", EAssignWithRhs "z" (var "z") (ExInt "9") 5 Nothing Set.empty)
+        ]
+      spine = EComp (EReturn (var "y") 20) (ELetRef "outer") :: Eff () ()
+      effTerm = EffTerm spine table
+      sigs = computeSignatures defaultComplexityThreshold emptyEnv "proc" noCallSites Map.empty effTerm
+  in buildPseudocode defaultComplexityThreshold emptyEnv emptySigMap "proc" noCallSites Nothing sigs effTerm
 
 -- | A real, opaque 'PB.Explain.Regions.RegionId' to build synthetic
 -- fixtures around -- there is no other way to obtain one (the constructor

@@ -20,6 +20,7 @@ module PB.Explain.Pseudocode
   , Pseudocode (..)
   , RegionEntry (..)
   , pseudocodeRegions
+  , collectRegionRefs
   , buildPseudocode
   ) where
 
