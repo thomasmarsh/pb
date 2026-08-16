@@ -1,12 +1,18 @@
 // Diagrams.tsx — Diagrams view with tabs, controls, interactive SVG, and toolbar.
 
-import { Show, For, createSignal, onMount, onCleanup } from "solid-js";
+import { Show, For, createSignal, createEffect, onMount, onCleanup } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
-import { ComboboxInput, SvgToolbar, DiagramTooltip, parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE, DIAGRAM_KINDS } from "@pb/platform";
+import { ComboboxInput, SvgToolbar, DiagramTooltip, createPanZoom, parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE, DIAGRAM_KINDS } from "@pb/platform";
 import type { DiagramKind } from "@pb/platform";
+
+// The Hasse diagram stacks one rank per concept, so it is far taller than it
+// is wide -- fitted into the standard viewport it collapses to an unreadable
+// ribbon. Everything else is roughly square once oversized graphs switch to a
+// force-directed layout.
+const TALL_KINDS = new Set<DiagramKind>(["window-table-lattice"]);
 
 export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
@@ -21,7 +27,25 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const [tooltip, setTooltip] = createSignal<{ x: number; y: number; kind: "object" | "table"; name: string; meta: Record<string, string> } | null>(null);
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
-  onCleanup(() => { if (hideTimer) clearTimeout(hideTimer); });
+  const pan = createPanZoom({ dismissTooltip: () => setTooltip(null) });
+
+  onCleanup(() => {
+    if (hideTimer) clearTimeout(hideTimer);
+    pan.cleanup();
+    pan.removeViewportRef();
+  });
+
+  // A fresh render is a fresh graph: carrying the previous zoom over lands the
+  // viewer somewhere arbitrary in a diagram they have not seen yet.
+  createEffect((prev) => {
+    const svg = dg().job.result;
+    if (svg && svg !== prev) pan.actions.resetView();
+    return svg;
+  });
+
+  function viewportCb(el: HTMLDivElement) {
+    pan.setViewportRef(el);
+  }
 
   onMount(() => {
     const route = snap().nav.route;
@@ -179,15 +203,32 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
           </div>
         </Show>
         <Show when={dg().job.result}>
-          <div style={{ position: "relative" }}>
-            <SvgToolbar onCopy={copySvg} onDownload={downloadSvg} />
+          <div class="diagram-container">
             <div
-              class="diagram-container"
-              innerHTML={dg().job.result!}
-              onClick={handleSvgClick}
-              onMouseOver={handleSvgMouseOver}
-              onMouseOut={handleSvgMouseOut}
-            />
+              ref={viewportCb}
+              class={`diagram-viewport${TALL_KINDS.has(activeTab()) ? " tall" : ""}${pan.state.dragging() ? " grabbing" : ""}`}
+              onMouseDown={pan.handlers.onMouseDown}
+              onMouseMove={pan.handlers.onMouseMove}
+              onMouseUp={pan.handlers.onMouseUp}
+              onMouseLeave={pan.handlers.onMouseLeave}
+            >
+              <SvgToolbar
+                onZoomIn={pan.actions.zoomIn}
+                onZoomOut={pan.actions.zoomOut}
+                onResetView={pan.actions.resetView}
+                scale={pan.state.scale}
+                onCopy={copySvg}
+                onDownload={downloadSvg}
+              />
+              <div
+                class="diagram-svg-wrap"
+                style={{ transform: `translate(${pan.state.offset().x}px, ${pan.state.offset().y}px) scale(${pan.state.scale()})` }}
+                innerHTML={dg().job.result!}
+                onClick={handleSvgClick}
+                onMouseOver={handleSvgMouseOver}
+                onMouseOut={handleSvgMouseOut}
+              />
+            </div>
           </div>
         </Show>
         <Show when={dg().job.error}>

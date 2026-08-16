@@ -4,6 +4,13 @@ interface SvgToolbarProps {
   onCopy?: () => void;
   onDownload?: () => void;
   downloadFilename?: string;
+  // Zoom controls appear only when a viewport is driving them. Diagrams
+  // rendered at their natural size (no pan/zoom wrapper) omit these and get
+  // the copy/download pair alone, as before.
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onResetView?: () => void;
+  scale?: () => number;
 }
 
 export function SvgToolbar(props: SvgToolbarProps) {
@@ -17,6 +24,21 @@ export function SvgToolbar(props: SvgToolbarProps) {
 
   return (
     <div class="diagram-toolbar">
+      {props.onZoomOut && (
+        <button class="icon-btn" onClick={props.onZoomOut} title="Zoom out">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 8h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      )}
+      {props.scale && <span class="diagram-zoom-label">{Math.round(props.scale() * 100)}%</span>}
+      {props.onZoomIn && (
+        <button class="icon-btn" onClick={props.onZoomIn} title="Zoom in">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 4v8M4 8h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      )}
+      {props.onResetView && (
+        <button class="icon-btn reset-btn" onClick={props.onResetView} title="Reset zoom">1:1</button>
+      )}
+      {props.onZoomOut && (props.onCopy || props.onDownload) && <span class="diagram-toolbar-sep" />}
       {props.onCopy && (
         <button class="icon-btn" onClick={handleCopy} title="Copy SVG">
           {copied() ? (
