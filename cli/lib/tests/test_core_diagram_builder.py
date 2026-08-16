@@ -1,5 +1,6 @@
 from pb.lib.diagram_builder import (
     LARGE_GRAPH_NODES,
+    fit_layout_to_size,
     complexity_color,
     kind_color,
     render_calls,
@@ -7,6 +8,7 @@ from pb.lib.diagram_builder import (
     render_fk_graph,
     render_heatmap,
     render_inheritance,
+    render_lattice,
     render_proc_tables,
     render_sql_lineage,
     render_table_lineage,
@@ -103,25 +105,46 @@ def _big_inheritance(n):
     return render_inheritance(edges, {}, None)
 
 
-def test_small_graph_keeps_dot_and_ortho_splines():
-    dot = _big_inheritance(5)
+def test_builders_do_not_relayout_themselves():
+    # The policy is applied centrally by render_dot_to_svg, not per builder,
+    # so a new diagram type gets it without opting in.
+    dot = _big_inheritance(LARGE_GRAPH_NODES + 10)
     assert dot.engine == "dot"
-    assert 'splines=ortho' in "".join(dot.body)
+
+
+def test_small_graph_keeps_dot_and_ortho_splines():
+    dot = fit_layout_to_size(_big_inheritance(5))
+    assert dot.engine == "dot"
+    assert "splines=ortho" in "".join(dot.body)
 
 
 def test_large_graph_switches_to_sfdp():
-    dot = _big_inheritance(LARGE_GRAPH_NODES + 10)
+    dot = fit_layout_to_size(_big_inheritance(LARGE_GRAPH_NODES + 10))
     assert dot.engine == "sfdp"
 
 
 def test_large_graph_drops_ortho_splines():
     # ortho routing aborts under sfdp, so it must not survive the switch.
-    body = "".join(_big_inheritance(LARGE_GRAPH_NODES + 10).body)
-    assert 'splines=line' in body
+    body = "".join(fit_layout_to_size(_big_inheritance(LARGE_GRAPH_NODES + 10)).body)
+    assert "splines=line" in body
 
 
-def test_calls_graph_is_left_alone():
-    # render_calls already uses fdp and is not one of the degenerate shapes.
+def test_never_requests_prism_overlap():
+    # prism needs a triangulation library many graphviz builds omit.
+    body = "".join(fit_layout_to_size(_big_inheritance(LARGE_GRAPH_NODES + 10)).body)
+    assert "prism" not in body
+
+
+def test_force_directed_graph_is_left_alone():
+    # render_calls already uses fdp; re-laying it out would be wrong.
     nodes = {f"o_{i}" for i in range(LARGE_GRAPH_NODES + 10)}
-    dot = render_calls(nodes, [], {}, "o_0")
+    dot = fit_layout_to_size(render_calls(nodes, [], {}, "o_0"))
     assert dot.engine == "fdp"
+
+
+def test_ranked_by_meaning_graph_is_left_alone():
+    # A Hasse diagram's ranks are its partial order, not incidental layout.
+    concepts = [{"extent": [f"w{i}"], "intent": [f"t{i}"]} for i in range(LARGE_GRAPH_NODES + 10)]
+    covers = [{"upper": i + 1, "lower": i} for i in range(len(concepts) - 1)]
+    dot = fit_layout_to_size(render_lattice(concepts, covers))
+    assert dot.engine == "dot"

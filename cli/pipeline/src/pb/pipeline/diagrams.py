@@ -11,6 +11,7 @@ import duckdb
 import graphviz
 import networkx as nx
 from pb.lib.diagram_builder import (
+    fit_layout_to_size,
     render_calls,
     render_dw_tables,
     render_fk_graph,
@@ -67,6 +68,15 @@ def render_dot_to_svg(dot) -> str:
     report a clear 503 instead of silently hiding a missing dependency
     behind a placeholder image.
 
+    It also applies `pb.lib.diagram_builder.fit_layout_to_size`, which
+    switches a graph that has outgrown `dot`'s ranked layout onto `sfdp`.
+    That lives here rather than in the builders so a new diagram type gets it
+    without having to remember to ask: the size at which a ranked layout
+    degenerates is a property of graphviz, not of any one diagram. Builders
+    that need their ranks preserved (a Hasse diagram, where the ranks are the
+    partial order) say so via `RANKED_BY_MEANING`, and graphs that already
+    chose a force-directed engine are left alone.
+
     Public (not `_`-prefixed): every graphviz.Digraph render in the codebase
     must go through this one guarantee. `pb.api.services.diagrams.get_cfg_diagram`
     builds its own `cfg_to_dot(...)` graph outside the `kind`-based builders
@@ -76,7 +86,7 @@ def render_dot_to_svg(dot) -> str:
     took that endpoint down uncaught.
     """
     try:
-        return dot.pipe(format="svg").decode("utf-8")
+        return fit_layout_to_size(dot).pipe(format="svg").decode("utf-8")
     except graphviz.backend.execute.ExecutableNotFound:
         raise
     except Exception:

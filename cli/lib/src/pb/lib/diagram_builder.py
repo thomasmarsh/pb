@@ -64,13 +64,24 @@ def apply_defaults(dot, node_extra=None, edge_extra=None) -> None:
 # `dot`'s ranking is more informative than a force-directed blob.
 LARGE_GRAPH_NODES = 60
 
+# Graphs whose ranked layout carries meaning rather than being incidental. A
+# Hasse diagram's ranks ARE its partial order, so re-laying it out
+# force-directed would destroy the thing it exists to show. Keyed on the
+# graph's own `name`, which every builder here already sets.
+RANKED_BY_MEANING = frozenset({"lattice"})
+
 
 def _node_count(dot) -> int:
     return sum(1 for line in dot.body if "->" not in line and "[" in line)
 
 
-def _relayout_if_large(dot):
-    """Re-lays out a graph that has outgrown `dot`, in place.
+def fit_layout_to_size(dot):
+    """Re-lay out a graph that has outgrown `dot`, in place.
+
+    Applied once, centrally, by `pb.pipeline.diagrams.render_dot_to_svg` --
+    the single point every graphviz render in the codebase goes through. It
+    is deliberately not called by the individual builders: a new diagram type
+    should get this for free rather than having to remember to opt in.
 
     `dot` ranks nodes, which is right for a call graph and degenerate for the
     bipartite ones: once hundreds of nodes share a rank the drawing is a
@@ -82,16 +93,23 @@ def _relayout_if_large(dot):
 
     `sfdp` is designed for this shape and gives 1.29, 1.27 and 1.31
     respectively on the same data. `render_calls` already avoids the problem
-    by using `fdp`, and lands at 1.49.
+    by using `fdp` and lands at 1.49 -- graphs that already chose a
+    force-directed engine are left alone here.
 
     `splines="ortho"` has to go when switching: ortho routing aborts under
     sfdp with `multispline.c:153: findMap: Assertion 'ip' failed`, so straight
-    edges are used instead.
+    edges are used instead. `overlap` is `"false"`, not `"prism"` -- prism
+    needs a triangulation library many graphviz builds omit, exactly the
+    unsupported-default trap `render_dot_to_svg` documents.
     """
+    if getattr(dot, "engine", "dot") != "dot":
+        return dot
+    if getattr(dot, "name", None) in RANKED_BY_MEANING:
+        return dot
     if _node_count(dot) < LARGE_GRAPH_NODES:
         return dot
     dot.engine = "sfdp"
-    dot.attr(splines="line", overlap="prism", sep="+8")
+    dot.attr(splines="line", overlap="false", sep="+8")
     return dot
 
 
@@ -143,7 +161,7 @@ def render_inheritance(
             URL=f"pb://object/{root}#kind={kind}",
         )
 
-    return _relayout_if_large(dot)
+    return dot
 
 
 def render_calls(
@@ -240,7 +258,7 @@ def render_dw_tables(
     for dw, tbl in rows:
         dot.edge(f"dw_{dw}", f"t_{tbl}", color="#56A85D88", arrowsize="0.5", penwidth="0.7")
 
-    return _relayout_if_large(dot)
+    return dot
 
 
 def render_heatmap(
@@ -346,7 +364,7 @@ def render_sql_lineage(
     if not rows:
         dot.node("empty", label="No PowerScript SQL statements found", shape="plaintext", fontcolor="#5c5f72")
 
-    return _relayout_if_large(dot)
+    return dot
 
 
 def render_table_lineage(
@@ -387,7 +405,7 @@ def render_table_lineage(
     if not rows:
         dot.node("empty", label=f"No references found for table: {table_name}", shape="plaintext", fontcolor="#5c5f72")
 
-    return _relayout_if_large(dot)
+    return dot
 
 
 def render_proc_tables(
@@ -429,7 +447,7 @@ def render_proc_tables(
             msg += f" for table: {table_name}"
         dot.node("empty", label=msg, shape="plaintext", fontcolor="#5c5f72")
 
-    return _relayout_if_large(dot)
+    return dot
 
 
 _FK_CATEGORY_STYLE = {
@@ -471,7 +489,7 @@ def render_fk_graph(
     if not edges:
         dot.node("empty", label="No FK relationships found", shape="plaintext", fontcolor="#5c5f72")
 
-    return _relayout_if_large(dot)
+    return dot
 
 
 def render_lattice(
