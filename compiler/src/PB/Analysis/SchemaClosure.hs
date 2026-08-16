@@ -13,10 +13,15 @@
 --     graph with a small seed set). Includes self-pairs via cycles (a node in
 --     a cycle reaches itself).
 --   * 'cosliceClosure' is the forward + backward shortest-path witness
---     reconstruction: for every seed it emits EVERY shortest leg on a path
---     to a target (set semantics through a diamond, bounded 2x), so the
---     downstream 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'
---     ROW_NUMBER tie-break picks one witness per ordinal.
+--     reconstruction: for every (seed, target, ordinal) it emits the ONE
+--     witness leg that 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'
+--     keeps — least (leg_from, leg_to), matching that materializer's
+--     ROW_NUMBER tie-break exactly.
+--
+--     It used to emit every shortest leg and leave the choice to SQL, on the
+--     stated assumption that this was "bounded 2x". It is not: the row count
+--     is |legs on shortest paths| * |targets reachable past them|, which
+--     grows with graph density. See 'emitOneWitnessPerOrdinal'.
 --
 -- All three closures are built on the single 'PB.Algebra.Closure.reachFrom'
 -- primitive (Boolean for reachability, min-plus for hop distances) — there is
@@ -214,37 +219,64 @@ fwdForSeed
   :: Text -> Map Text [(Text, Text)] -> Map Text (Set Text) -> Map Text Int -> [[Text]]
 fwdForSeed s adjFwd reach dist =
   let legs = [ (x, y, k) | (x, ns) <- Map.toList adjFwd, (y, k) <- ns ]
-      emit (lf, lt, k) =
+      contribs (lf, lt, k) =
         case (Map.lookup lf dist, Map.lookup lt dist) of
           (Just o, Just o') | o' == o + 1 ->
-            let finalHop = [s, lt, T.pack (show o), lf, lt, k]
-                inter = [ [s, t, T.pack (show o), lf, lt, k]
-                        | t <- Set.toList (Map.findWithDefault Set.empty lt reach)
-                        , Just dt <- [Map.lookup t dist]
-                        , dt > o + 1 ]
-            in finalHop : inter
+            [ ((t, o), (lf, lt, k))
+            | t <- lt : [ t' | t' <- Set.toList (Map.findWithDefault Set.empty lt reach)
+                             , Just dt <- [Map.lookup t' dist]
+                             , dt > o + 1 ]
+            ]
           _ -> []
-  in concatMap emit legs
+  in emitOneWitnessPerOrdinal s (concatMap contribs legs)
 
 backForSeed
   :: Text -> Map Text [(Text, Text)]
   -> Map Text (Set Text) -> Map Text Int -> [[Text]]
 backForSeed s adjFwd revReach dist =
   let legs = [ (x, y, k) | (x, ns) <- Map.toList adjFwd, (y, k) <- ns ]
-      emit (lf, lt, k) =
+      contribs (lf, lt, k) =
         case (Map.lookup lt dist, Map.lookup lf dist) of
           (Just o, Just o') | o' == o + 1 ->
             -- lf is the FAR node (dist o+1), lt the NEAR node (dist o); the
             -- backward head binds target = lf (path_leg_back(s, t, o, t, lt, kind)
             -- with leg(t, lt)).
-            let finalHop = [s, lf, T.pack (show o), lf, lt, k]
-                inter = [ [s, t, T.pack (show o), lf, lt, k]
-                        | t <- Set.toList (Map.findWithDefault Set.empty lf revReach)
-                        , Just dt <- [Map.lookup t dist]
-                        , dt > o + 1 ]
-            in finalHop : inter
+            [ ((t, o), (lf, lt, k))
+            | t <- lf : [ t' | t' <- Set.toList (Map.findWithDefault Set.empty lf revReach)
+                             , Just dt <- [Map.lookup t' dist]
+                             , dt > o + 1 ]
+            ]
           _ -> []
-  in concatMap emit legs
+  in emitOneWitnessPerOrdinal s (concatMap contribs legs)
+
+-- | Collapse witness candidates to the single one the consumer keeps.
+--
+-- 'materializeDecompositionCoslice' ranks with
+--
+--     ROW_NUMBER() OVER (PARTITION BY seed_key, target_key, direction, leg_ordinal
+--                        ORDER BY leg_from, leg_to)
+--
+-- and takes @rn = 1@ — so per (seed, target, ordinal) exactly one leg
+-- survives, the minimum by (leg_from, leg_to). Choosing it here instead of
+-- emitting every candidate and discarding the rest in SQL is what keeps this
+-- linear in the output rather than in the cross product.
+--
+-- The old code emitted one row per (shortest leg x reachable target), which
+-- the module header described as "bounded 2x". That bound does not hold: the
+-- count is |legs on shortest paths| * |targets reachable past them|, so it
+-- grows with graph density, not with path length. On a real 300-object corpus
+-- it reached 29.8 million rows for ~106k (seed, target) pairs — 281 per pair —
+-- and the downstream window function over that is what exhausted memory.
+emitOneWitnessPerOrdinal :: Text -> [((Text, Int), (Text, Text, Text))] -> [[Text]]
+emitOneWitnessPerOrdinal s cands =
+  [ [s, t, T.pack (show o), lf, lt, k]
+  | ((t, o), (lf, lt, k)) <- Map.toList (Map.fromListWith minWitness cands)
+  ]
+  where
+    -- Matches the SQL tie-break exactly: least (leg_from, leg_to).
+    minWitness a@(lf1, lt1, _) b@(lf2, lt2, _)
+      | (lf1, lt1) <= (lf2, lt2) = a
+      | otherwise                = b
 
 -- | Materialize @reaches@, @path_leg_fwd@, @path_leg_back@ as real DuckDB
 -- tables, computed by 'legPriority' / 'reachClosure' /

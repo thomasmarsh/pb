@@ -128,5 +128,35 @@ tests = testGroup "SchemaClosure (closures, production)"
             targetCount = Set.size (Set.fromList [ t | [_, t, _, _, _, _] <- fwd ])
         in assertBool ("target count " <> show targetCount <> " should stay <= object count " <> show objCount)
                       (targetCount <= objCount)
+
+    , testCase "one witness per (seed, target, ordinal) -- no cross-product fan-out" $
+        -- The assertion the diamond case above was missing. It bounded the
+        -- number of distinct *targets*, which never grew; the blow-up was in
+        -- rows *per* target, because every shortest leg was emitted once for
+        -- every target reachable past it. On a real corpus that reached 281
+        -- rows per (seed, target) pair and 29.8M rows overall.
+        --
+        -- 'materializeDecompositionCoslice' keeps exactly one row per
+        -- (seed, target, direction, ordinal) via ROW_NUMBER, so anything
+        -- beyond one here is built only to be discarded.
+        let n = 15 :: Int
+            tbl (i :: Int) s = "t" <> T.pack (show i) <> s
+            colName = "id"
+            seedKey = "col:" <> tbl 0 "" <> "." <> colName
+            layerFks i =
+              [ CatFkRow Nothing (tbl i "") colName Nothing (tbl i "a") colName
+              , CatFkRow Nothing (tbl i "") colName Nothing (tbl i "b") colName
+              , CatFkRow Nothing (tbl i "a") colName Nothing (tbl (i+1) "") colName
+              , CatFkRow Nothing (tbl i "b") colName Nothing (tbl (i+1) "") colName
+              ]
+            inp = emptyInputs { inCatalogFks = concatMap layerFks [0 .. n-1] }
+            leg = legRowsOf (sgLegs (buildSchema inp))
+            (fwd, back) = cosliceClosure [seedKey] leg
+            keysOf rows = [ (t, o) | [_, t, o, _, _, _] <- rows ]
+            dupes rows = length (keysOf rows) - Set.size (Set.fromList (keysOf rows))
+        in do assertBool ("forward emitted " <> show (dupes fwd) <> " duplicate (target, ordinal) rows")
+                 (dupes fwd == 0)
+              assertBool ("backward emitted " <> show (dupes back) <> " duplicate (target, ordinal) rows")
+                 (dupes back == 0)
     ]
   ]
