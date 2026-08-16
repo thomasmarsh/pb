@@ -35,7 +35,14 @@ jobs:
         uses: haskell-actions/setup@v2
         with:
           ghc-version: "9.10.2"
-          cabal-version: "3.12"
+          # Deliberately not pinned to the runner image's preinstalled cabal.
+          # "3.12" resolves to 3.12.1.0, which ships in the image with ghcup
+          # metadata that disagrees with itself -- `ghcup whereis` finds the
+          # binary while `ghcup set` reports it as not installed, and the
+          # install path then refuses because it is "already installed".
+          # Asking for a version that is not preinstalled takes the clean
+          # install path instead.
+          cabal-version: "latest"
 
       - name: Cache cabal store
         uses: actions/cache@v4
