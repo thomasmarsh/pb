@@ -59,6 +59,42 @@ def apply_defaults(dot, node_extra=None, edge_extra=None) -> None:
     dot.attr("edge", **ee)
 
 
+# Above this many nodes, `dot` produces a degenerate layout for the
+# bipartite-ish graphs and the force-directed `sfdp` does better. Below it,
+# `dot`'s ranking is more informative than a force-directed blob.
+LARGE_GRAPH_NODES = 60
+
+
+def _node_count(dot) -> int:
+    return sum(1 for line in dot.body if "->" not in line and "[" in line)
+
+
+def _relayout_if_large(dot):
+    """Re-lays out a graph that has outgrown `dot`, in place.
+
+    `dot` ranks nodes, which is right for a call graph and degenerate for the
+    bipartite ones: once hundreds of nodes share a rank the drawing is a
+    single long row or column. Measured on a ~475-object project:
+
+        inheritance   29957 x 726 pt   ratio 41:1    -- a smear once fit to width
+        proc_tables     479 x 11444    ratio 0.04    -- a one-node-wide column
+        dw_tables       479 x 5799     ratio 0.08    -- the same
+
+    `sfdp` is designed for this shape and gives 1.29, 1.27 and 1.31
+    respectively on the same data. `render_calls` already avoids the problem
+    by using `fdp`, and lands at 1.49.
+
+    `splines="ortho"` has to go when switching: ortho routing aborts under
+    sfdp with `multispline.c:153: findMap: Assertion 'ip' failed`, so straight
+    edges are used instead.
+    """
+    if _node_count(dot) < LARGE_GRAPH_NODES:
+        return dot
+    dot.engine = "sfdp"
+    dot.attr(splines="line", overlap="prism", sep="+8")
+    return dot
+
+
 _OP_COLORS = {
     "SELECT": "#5B8DD9",
     "INSERT": "#56A85D",
@@ -107,7 +143,7 @@ def render_inheritance(
             URL=f"pb://object/{root}#kind={kind}",
         )
 
-    return dot
+    return _relayout_if_large(dot)
 
 
 def render_calls(
@@ -204,7 +240,7 @@ def render_dw_tables(
     for dw, tbl in rows:
         dot.edge(f"dw_{dw}", f"t_{tbl}", color="#56A85D88", arrowsize="0.5", penwidth="0.7")
 
-    return dot
+    return _relayout_if_large(dot)
 
 
 def render_heatmap(
@@ -310,7 +346,7 @@ def render_sql_lineage(
     if not rows:
         dot.node("empty", label="No PowerScript SQL statements found", shape="plaintext", fontcolor="#5c5f72")
 
-    return dot
+    return _relayout_if_large(dot)
 
 
 def render_table_lineage(
@@ -351,7 +387,7 @@ def render_table_lineage(
     if not rows:
         dot.node("empty", label=f"No references found for table: {table_name}", shape="plaintext", fontcolor="#5c5f72")
 
-    return dot
+    return _relayout_if_large(dot)
 
 
 def render_proc_tables(
@@ -393,7 +429,7 @@ def render_proc_tables(
             msg += f" for table: {table_name}"
         dot.node("empty", label=msg, shape="plaintext", fontcolor="#5c5f72")
 
-    return dot
+    return _relayout_if_large(dot)
 
 
 _FK_CATEGORY_STYLE = {
@@ -435,7 +471,7 @@ def render_fk_graph(
     if not edges:
         dot.node("empty", label="No FK relationships found", shape="plaintext", fontcolor="#5c5f72")
 
-    return dot
+    return _relayout_if_large(dot)
 
 
 def render_lattice(
