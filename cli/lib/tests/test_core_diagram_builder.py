@@ -1,7 +1,7 @@
 from pb.lib.diagram_builder import (
     LARGE_GRAPH_NODES,
-    fit_layout_to_size,
     complexity_color,
+    fit_layout_to_size,
     kind_color,
     render_calls,
     render_dw_tables,
