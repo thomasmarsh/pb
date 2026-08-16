@@ -21,7 +21,8 @@
 --     It used to emit every shortest leg and leave the choice to SQL, on the
 --     stated assumption that this was "bounded 2x". It is not: the row count
 --     is |legs on shortest paths| * |targets reachable past them|, which
---     grows with graph density. See 'emitOneWitnessPerOrdinal'.
+--     grows with graph density. The witness is now chosen during traversal,
+--     which also lets the traversal stop early. See 'witnessesPerOrdinal'.
 --
 -- All three closures are built on the single 'PB.Algebra.Closure.reachFrom'
 -- primitive (Boolean for reachability, min-plus for hop distances) — there is
@@ -218,65 +219,94 @@ cosliceClosureWithFrom (interner, edges, _rel, _succMap) seeds legRows reach =
 fwdForSeed
   :: Text -> Map Text [(Text, Text)] -> Map Text (Set Text) -> Map Text Int -> [[Text]]
 fwdForSeed s adjFwd reach dist =
-  let legs = [ (x, y, k) | (x, ns) <- Map.toList adjFwd, (y, k) <- ns ]
-      contribs (lf, lt, k) =
-        case (Map.lookup lf dist, Map.lookup lt dist) of
-          (Just o, Just o') | o' == o + 1 ->
-            [ ((t, o), (lf, lt, k))
-            | t <- lt : [ t' | t' <- Set.toList (Map.findWithDefault Set.empty lt reach)
-                             , Just dt <- [Map.lookup t' dist]
-                             , dt > o + 1 ]
-            ]
-          _ -> []
-  in emitOneWitnessPerOrdinal s (concatMap contribs legs)
+  witnessesPerOrdinal s dist
+    [ (o, (lf, lt, k))
+    | (lf, ns) <- Map.toList adjFwd
+    , Just o <- [Map.lookup lf dist]
+    , (lt, k) <- ns
+    , Map.lookup lt dist == Just (o + 1)
+    ]
+    (\lt -> Map.findWithDefault Set.empty lt reach)
+    (\(_, lt, _) -> lt)
 
 backForSeed
   :: Text -> Map Text [(Text, Text)]
   -> Map Text (Set Text) -> Map Text Int -> [[Text]]
 backForSeed s adjFwd revReach dist =
-  let legs = [ (x, y, k) | (x, ns) <- Map.toList adjFwd, (y, k) <- ns ]
-      contribs (lf, lt, k) =
-        case (Map.lookup lt dist, Map.lookup lf dist) of
-          (Just o, Just o') | o' == o + 1 ->
-            -- lf is the FAR node (dist o+1), lt the NEAR node (dist o); the
-            -- backward head binds target = lf (path_leg_back(s, t, o, t, lt, kind)
-            -- with leg(t, lt)).
-            [ ((t, o), (lf, lt, k))
-            | t <- lf : [ t' | t' <- Set.toList (Map.findWithDefault Set.empty lf revReach)
-                             , Just dt <- [Map.lookup t' dist]
-                             , dt > o + 1 ]
-            ]
-          _ -> []
-  in emitOneWitnessPerOrdinal s (concatMap contribs legs)
+  -- lf is the FAR node (dist o+1), lt the NEAR node (dist o); the backward
+  -- head binds target = lf (path_leg_back(s, t, o, t, lt, kind) with
+  -- leg(t, lt)), so the reachable-target set is taken from 'lf' via revReach.
+  witnessesPerOrdinal s dist
+    [ (o, (lf, lt, k))
+    | (lf, ns) <- Map.toList adjFwd
+    , Just o' <- [Map.lookup lf dist]
+    , (lt, k) <- ns
+    , Just o <- [Map.lookup lt dist]
+    , o' == o + 1
+    ]
+    (\lf -> Map.findWithDefault Set.empty lf revReach)
+    (\(lf, _, _) -> lf)
 
--- | Collapse witness candidates to the single one the consumer keeps.
+-- | One witness leg per (target, ordinal), computed output-sensitively.
 --
--- 'materializeDecompositionCoslice' ranks with
+-- 'materializeDecompositionCoslice' keeps, per (seed, target, direction,
+-- ordinal), the row with the least (leg_from, leg_to). So a leg only matters
+-- if it is the smallest one at its ordinal that can still reach a target
+-- nothing smaller has already claimed.
 --
---     ROW_NUMBER() OVER (PARTITION BY seed_key, target_key, direction, leg_ordinal
---                        ORDER BY leg_from, leg_to)
+-- That makes early exit sound. Legs are walked in ascending (leg_from,
+-- leg_to) order and the first to claim a target keeps it; once every target
+-- still ahead at that ordinal has been claimed, the remaining legs cannot
+-- change the answer and are not examined. The reachable set of a leg's head
+-- is only consulted while it can still yield something.
 --
--- and takes @rn = 1@ — so per (seed, target, ordinal) exactly one leg
--- survives, the minimum by (leg_from, leg_to). Choosing it here instead of
--- emitting every candidate and discarding the rest in SQL is what keeps this
--- linear in the output rather than in the cross product.
+-- The count of targets "still ahead at ordinal o" is exactly
+-- @|{t : dist t > o}|@: a node farther than o has a shortest path from the
+-- seed crossing ordinal o, so some leg there reaches it. Nodes at exactly
+-- o+1 arrive as the head of their own leg, matching the old code's
+-- @finalHop@; nodes beyond arrive via the head's reachable set, matching its
+-- @inter@.
 --
--- The old code emitted one row per (shortest leg x reachable target), which
--- the module header described as "bounded 2x". That bound does not hold: the
--- count is |legs on shortest paths| * |targets reachable past them|, so it
--- grows with graph density, not with path length. On a real 300-object corpus
--- it reached 29.8 million rows for ~106k (seed, target) pairs — 281 per pair —
--- and the downstream window function over that is what exhausted memory.
-emitOneWitnessPerOrdinal :: Text -> [((Text, Int), (Text, Text, Text))] -> [[Text]]
-emitOneWitnessPerOrdinal s cands =
-  [ [s, t, T.pack (show o), lf, lt, k]
-  | ((t, o), (lf, lt, k)) <- Map.toList (Map.fromListWith minWitness cands)
-  ]
+-- The previous formulation walked every leg for every seed and expanded the
+-- full reachable set of each, then discarded all but the minimum. On a
+-- 2,000-file corpus that was 68,683,933 leg-visits to produce 57,968 rows.
+witnessesPerOrdinal
+  :: Text                                  -- ^ seed
+  -> Map Text Int                          -- ^ distances from the seed
+  -> [(Int, (Text, Text, Text))]           -- ^ (ordinal, leg) on a shortest path
+  -> (Text -> Set Text)                    -- ^ reachable set of a leg's head
+  -> ((Text, Text, Text) -> Text)          -- ^ which endpoint is that head
+  -> [[Text]]
+witnessesPerOrdinal s dist ordLegs reachOf headOf =
+  concatMap forOrdinal (Map.toList byOrdinal)
   where
-    -- Matches the SQL tie-break exactly: least (leg_from, leg_to).
-    minWitness a@(lf1, lt1, _) b@(lf2, lt2, _)
-      | (lf1, lt1) <= (lf2, lt2) = a
-      | otherwise                = b
+    byOrdinal = Map.fromListWith (++) [ (o, [leg]) | (o, leg) <- ordLegs ]
+
+    -- |{t : dist t > o}|, a suffix count over the distance histogram.
+    -- Every ordinal reaching this is itself some node's distance, so a
+    -- missing key cannot occur.
+    aheadOf :: Int -> Int
+    aheadOf o = IM.findWithDefault 0 o ahead
+    ahead =
+      let hist = IM.fromListWith (+) [ (d, 1 :: Int) | d <- Map.elems dist ]
+          -- Walk distances high to low: before adding a bucket, the running
+          -- total is exactly how many nodes lie strictly beyond it.
+          step (acc, out) (d, n) = (acc + n, (d, acc) : out)
+      in IM.fromList (snd (L.foldl' step (0, []) (reverse (IM.toAscList hist))))
+
+    forOrdinal (o, legs) =
+      let sorted = L.sortOn (\(lf, lt, _) -> (lf, lt)) legs
+          target = aheadOf o
+          step acc leg@(_, _, _)
+            | Map.size acc >= target = acc
+            | otherwise =
+                let hd = headOf leg
+                    cands = hd : [ t | t <- Set.toList (reachOf hd)
+                                     , Just dt <- [Map.lookup t dist]
+                                     , dt > o + 1 ]
+                in L.foldl' (\a t -> Map.insertWith (\_ old -> old) t leg a) acc cands
+          claimed = L.foldl' step Map.empty sorted
+      in [ [s, t, T.pack (show o), lf, lt, k] | (t, (lf, lt, k)) <- Map.toList claimed ]
 
 -- | Materialize @reaches@, @path_leg_fwd@, @path_leg_back@ as real DuckDB
 -- tables, computed by 'legPriority' / 'reachClosure' /
