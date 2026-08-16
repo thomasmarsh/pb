@@ -1,4 +1,5 @@
 from pb.lib.diagram_builder import (
+    LARGE_GRAPH_NODES,
     complexity_color,
     kind_color,
     render_calls,
@@ -95,3 +96,32 @@ def test_render_fk_graph_colors_by_category():
     # three distinct edge styles, one per category
     assert "dashed" in dot.source
     assert "dotted" in dot.source
+
+
+def _big_inheritance(n):
+    edges = [(f"w_{i}", f"w_{i + 1}") for i in range(n)]
+    return render_inheritance(edges, {}, None)
+
+
+def test_small_graph_keeps_dot_and_ortho_splines():
+    dot = _big_inheritance(5)
+    assert dot.engine == "dot"
+    assert 'splines=ortho' in "".join(dot.body)
+
+
+def test_large_graph_switches_to_sfdp():
+    dot = _big_inheritance(LARGE_GRAPH_NODES + 10)
+    assert dot.engine == "sfdp"
+
+
+def test_large_graph_drops_ortho_splines():
+    # ortho routing aborts under sfdp, so it must not survive the switch.
+    body = "".join(_big_inheritance(LARGE_GRAPH_NODES + 10).body)
+    assert 'splines=line' in body
+
+
+def test_calls_graph_is_left_alone():
+    # render_calls already uses fdp and is not one of the degenerate shapes.
+    nodes = {f"o_{i}" for i in range(LARGE_GRAPH_NODES + 10)}
+    dot = render_calls(nodes, [], {}, "o_0")
+    assert dot.engine == "fdp"
