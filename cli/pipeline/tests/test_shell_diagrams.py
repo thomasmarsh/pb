@@ -324,6 +324,15 @@ class FakeDot:
         """exc=None means .pipe() succeeds; otherwise every call raises exc."""
         self.exc = exc
         self.calls = 0
+        # render_dot_to_svg also runs the graph through fit_layout_to_size,
+        # which inspects these. An empty body is below LARGE_GRAPH_NODES, so
+        # the layout is left alone and these tests stay about failure handling.
+        self.body: list[str] = []
+        self.engine = "dot"
+        self.name = "fake"
+
+    def attr(self, **_kwargs) -> None:
+        pass
 
     def pipe(self, format: str) -> bytes:  # noqa: A002
         self.calls += 1
