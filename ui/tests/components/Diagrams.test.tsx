@@ -41,15 +41,24 @@ describe("Diagrams component", () => {
     expect(screen.getByText("Generating diagram...")).toBeDefined();
   });
 
-  it("shows SVG output with copy/download icon buttons", () => {
+  it("shows SVG output with zoom, copy and download icon buttons", () => {
     const { container } = renderWithStore(Diagrams, {
       diagrams: { ...callsDiagrams, job: { ...initialJobPollState<string>(), status: "done", result: '<svg viewBox="0 0 100 100"><rect/></svg>' } },
     });
-    const svg = container.querySelector(".diagram-container svg");
+    // Scoped to the pan/zoom wrapper: the toolbar's own icons are <svg> too.
+    const svg = container.querySelector(".diagram-svg-wrap svg");
     expect(svg).not.toBeNull();
     expect(svg!.getAttribute("viewBox")).toBe("0 0 100 100");
     const iconBtns = container.querySelectorAll(".icon-btn");
-    expect(iconBtns.length).toBe(2);
+    expect(iconBtns.length).toBe(5); // zoom out, zoom in, 1:1, copy, download
+  });
+
+  it("renders the lattice in a taller viewport", () => {
+    const svg = '<svg viewBox="0 0 100 100"><rect/></svg>';
+    const { container } = renderWithStore(Diagrams, {
+      diagrams: { ...callsDiagrams, active: "window-table-lattice", job: { ...initialJobPollState<string>(), status: "done", result: svg } },
+    });
+    expect(container.querySelector(".diagram-viewport.tall")).not.toBeNull();
   });
 
   it("hides Generate button for auto-generate diagrams", () => {

@@ -281,6 +281,9 @@ body {
     border-radius: 4px;
 }
 .diagram-viewport.grabbing { cursor: grabbing; }
+/* Hasse-style diagrams are much taller than wide; the default viewport fits
+   them down to an illegible ribbon. */
+.diagram-viewport.tall { min-height: 840px; }
 .diagram-viewport .diagram-svg-wrap {
     transform-origin: 0 0;
     display: inline-block;
