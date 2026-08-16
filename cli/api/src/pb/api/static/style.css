@@ -284,6 +284,16 @@ body {
 /* Hasse-style diagrams are much taller than wide; the default viewport fits
    them down to an illegible ribbon. */
 .diagram-viewport.tall { min-height: 840px; }
+
+/* Focus search: everything outside the match's neighbourhood fades back so the
+   relevant subgraph reads clearly, while the surrounding shape stays visible
+   as context. Filtering nodes out entirely would lose that. */
+.diagram-svg-wrap g.node,
+.diagram-svg-wrap g.edge { transition: opacity .15s ease; }
+.diagram-svg-wrap g.diagram-dim { opacity: 0.07; }
+.diagram-svg-wrap g.diagram-hit ellipse,
+.diagram-svg-wrap g.diagram-hit polygon,
+.diagram-svg-wrap g.diagram-hit path { stroke: #FFD700; stroke-width: 2.5; }
 .diagram-viewport .diagram-svg-wrap {
     transform-origin: 0 0;
     display: inline-block;

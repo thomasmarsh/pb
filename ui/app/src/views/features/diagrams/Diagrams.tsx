@@ -22,6 +22,9 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const [focalInput, setFocalInput] = createSignal("");
   const [depthInput, setDepthInput] = createSignal("2");
   const [tableInput, setTableInput] = createSignal("");
+  const [focusQuery, setFocusQuery] = createSignal("");
+  const [focusHits, setFocusHits] = createSignal<number | null>(null);
+  let svgWrapEl: HTMLDivElement | undefined;
 
   // Hover tooltip state
   const [tooltip, setTooltip] = createSignal<{ x: number; y: number; kind: "object" | "table"; name: string; meta: Record<string, string> } | null>(null);
@@ -155,6 +158,78 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
     navigator.clipboard.writeText(svg);
   }
 
+  // --- Focus search: dim everything not adjacent to the match ---------------
+  //
+  // Graphviz writes the graph's structure into the SVG it emits: every node is
+  // a <g class="node"> whose <title> is the node name, and every edge a
+  // <g class="edge"> whose <title> is "from->to". That is enough to rebuild
+  // adjacency in the browser, with no extra request and no server support.
+  //
+  // At the sizes these diagrams reach, reading them is limited by everything
+  // that is NOT relevant being drawn at full strength. Dimming is preferred to
+  // filtering because the surrounding shape stays visible as context.
+
+  const titleOf = (g: Element) => g.querySelector("title")?.textContent?.trim() ?? "";
+
+  // Digraph edges render as "a->b", undirected as "a--b".
+  const edgeEnds = (g: Element): [string, string] | null => {
+    const parts = titleOf(g).split(/->|--/);
+    const [from, to] = parts;
+    if (parts.length !== 2 || from === undefined || to === undefined) return null;
+    return [from.trim(), to.trim()];
+  };
+
+  function applyFocus(query: string) {
+    const root = svgWrapEl;
+    if (!root) return;
+    const nodes = Array.from(root.querySelectorAll("g.node"));
+    const edges = Array.from(root.querySelectorAll("g.edge"));
+    const clear = () => {
+      for (const g of [...nodes, ...edges]) g.classList.remove("diagram-dim", "diagram-hit");
+    };
+
+    const needle = query.trim().toLowerCase();
+    if (!needle) { clear(); setFocusHits(null); return; }
+
+    const matched = new Set<string>();
+    for (const g of nodes) {
+      const name = titleOf(g);
+      if (name.toLowerCase().includes(needle)) matched.add(name);
+    }
+    setFocusHits(matched.size);
+    if (!matched.size) { clear(); return; }
+
+    // Keep the matches plus anything one hop away, so a match is shown with
+    // the context that explains it rather than stranded on its own.
+    const keep = new Set(matched);
+    for (const g of edges) {
+      const ends = edgeEnds(g);
+      if (!ends) continue;
+      const [a, b] = ends;
+      if (matched.has(a)) keep.add(b);
+      if (matched.has(b)) keep.add(a);
+    }
+
+    for (const g of nodes) {
+      const name = titleOf(g);
+      g.classList.toggle("diagram-dim", !keep.has(name));
+      g.classList.toggle("diagram-hit", matched.has(name));
+    }
+    for (const g of edges) {
+      const ends = edgeEnds(g);
+      const live = !!ends && (matched.has(ends[0]) || matched.has(ends[1]));
+      g.classList.toggle("diagram-dim", !live);
+    }
+  }
+
+  // Re-apply whenever the query changes or a new diagram arrives. The SVG is
+  // replaced wholesale by innerHTML, so the classes have to be re-stamped.
+  createEffect(() => {
+    const q = focusQuery();
+    dg().job.result;
+    queueMicrotask(() => applyFocus(q));
+  });
+
   const needsGenerate = () => !AUTO_GENERATE.has(activeTab());
 
   return (
@@ -196,6 +271,29 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
         </div>
       </Show>
 
+      <Show when={dg().job.result}>
+        <div class="card" style={{ padding: "10px 20px" }}>
+          <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+            <input
+              class="search-input"
+              type="search"
+              placeholder="Focus\u2026 dim everything not connected"
+              value={focusQuery()}
+              style={{ flex: "1", "max-width": "26rem" }}
+              onInput={(e) => setFocusQuery(e.currentTarget.value)}
+            />
+            <Show when={focusHits() !== null}>
+              <span style={{ color: "var(--text-secondary)", "font-size": ".85rem" }}>
+                {focusHits() === 0 ? "no match" : `${focusHits()} match${focusHits() === 1 ? "" : "es"} + neighbours`}
+              </span>
+            </Show>
+            <Show when={focusQuery()}>
+              <button class="filter-pill" onClick={() => setFocusQuery("")}>clear</button>
+            </Show>
+          </div>
+        </div>
+      </Show>
+
       <div class="card">
         <Show when={dg().job.status === "pending"}>
           <div class="diagram-container">
@@ -221,6 +319,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
                 onDownload={downloadSvg}
               />
               <div
+                ref={(el) => { svgWrapEl = el; }}
                 class="diagram-svg-wrap"
                 style={{ transform: `translate(${pan.state.offset().x}px, ${pan.state.offset().y}px) scale(${pan.state.scale()})` }}
                 innerHTML={dg().job.result!}
